@@ -162,24 +162,27 @@ modules test and this suite pass (17 files, 285 tests). Nothing in the kinematic
 
 - **Kinematics**: done since. `src/so101/kinematics/limits.ts` is the one-line re-export, so one `JointLimits`
   remains (`tests/modules.test.ts` holds the two names to one class).
-- **Hardware**: `SO101ArmState` is an interface and `armFeedback()` a function, where the joint layer has the class
-  `ArmState` with `check()` and `feedback()` (PEAR's `SO101ArmState` extends it and adds `servo`); `ArmFeedback`
-  exists in `hardware/arm_state.ts` and in `schemas.ts`. `ServoFault` extends `Error`; PEAR's is a `RuntimeError`.
-  `SO101Driver` fits `JointDriver` except that `read()` may return `null` for the arm. Its `PositionBounds` is a
-  `JointLimits`, its `monotonic` option a `MonotonicClock.monotonic`, and `ARM` is defined twice. `HardwareSection`
-  now checks what `SO101HardwareOptions` and `FollowerConfig` take unchecked.
+- **Hardware**: done since (`docs/progress/common.md`, parts 3 and 4), from the hardware side alone. `SO101ArmState`
+  is a class that extends `ArmState` and adds the servos' status to its `feedback()`; the hardware's `ArmFeedback`
+  extends the one of `schemas.ts`; `ServoFault` is a `RuntimeError`; `SO101Driver` extends `JointDriver`; its
+  `PositionBounds` are the bounds of `JointLimitValues`, its clock a `MonotonicClock`; `ARM` is the layout's; and
+  the arm, its follower and the driver are made from `HardwareSection`, `SO101RobotConfig` and `ControlConfig`
+  (`SO101Hardware.fromConfig`, `makeFollower`, `SO101Driver.fromConfig`). `read()` is typed as PEAR annotates it;
+  the `null` of an arm that was commanded before it was ever read is PEAR's `None`.
 - **Protocol**: `ActionFormat` and `Camera` (`schemas.ts`) describe what `FORMAT_NAME`, `SCHEMA`, `DECIMALS`,
   `CAMERA_NAMES`, `parseAction` and `executionFeedback` are for the SO-101; nothing builds one yet.
-- **Python's wording, in three places**: `kinematics/text.ts` (`formatFixed`, `formatGeneral`, `formatTemplate`,
-  `pythonRound`), `protocol/python_float.ts` (`pythonRound`, `pythonFloatRepr`), `station/joint/numeric.ts`
-  (`pythonStr`, `pythonNumber`, `pythonStrRepr`). One module should hold them; this layer imports the first two.
+- **Python's wording, in three places**: done since (`docs/progress/common.md`, part 2). One module holds them,
+  `src/python`; the three files re-export. The two `pythonRound` were shown to agree and are one. `pythonStrRepr`
+  was not merged with the client's `pythonStringRepr`: the two differ on the code points assigned after Unicode
+  15.0.0, where Python sides with the client's (see "Not verified" above, which this measures).
 - **Ruckig / trajectory**: `JointLimits.checkTrajectory` takes `{ positionExtrema: { min, max }[] }`; `motionCaps()`
   returns `[velocity[], acceleration[], jerk[]]`, `brakingCaps()` `[acceleration[], jerk[]]`, `bounds(start)`
   `[lower[], upper[]]`.
 - **Shared files**: done since. `src/station/index.ts` gives `joint` and `schemas`, `src/so101/index.ts` gives
-  `joint`, `src/index.ts` gives `station`; the module map of `docs/DESIGN.md` lists them. Still open:
-  `OperatorPaused` is in `joint/errors.ts` and again in `src/agent/exceptions.ts`; PEAR has one, in
-  `station/exceptions.py`.
+  `joint`, `src/index.ts` gives `station`; the module map of `docs/DESIGN.md` lists them. Done since
+  (`docs/progress/common.md`, part 1): `OperatorPaused` is one class, in `src/station/exceptions.ts` as in PEAR;
+  `joint/errors.ts` and `src/agent/exceptions.ts` re-export it, and the built-in exceptions of `joint/errors.ts`
+  are the library's one set (`src/python/errors.ts`).
 - **Formatting**: no Python formatter is installed in the station environment and none was downloaded. The fixture
   script was wrapped to PEAR's 120 columns by a scratch tool that kept each wrap only if the file's syntax tree stayed
   the same, and the wrapped script writes the committed fixtures byte for byte; `ruff format` would lay some

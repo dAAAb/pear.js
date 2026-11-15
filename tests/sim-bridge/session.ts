@@ -57,7 +57,8 @@ export interface Reading {
 }
 
 export interface StepError {
-  /** The error's class: Python's on the reference side, the JavaScript class's name here. */
+  /** The error's class by Python's name: type(error).__name__ on the reference side, the error's `name` here,
+   * which pear.js's hardware layer sets to the name of the class the reference raises at the same place. */
   type: string;
   message: string;
 }

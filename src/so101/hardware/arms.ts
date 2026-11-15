@@ -1,15 +1,24 @@
 // Ports pear/deploy/station/control/robots/so101/hardware/arms.py.
 
-import { FeetechCommError } from "../../feetech/bus";
-import { type ServoStatus, ServoFault, type SO101ArmState } from "./arm_state";
+import { type BusOptions, FeetechCommError, type MotorCalibration } from "../../feetech/bus";
+import type { Transport } from "../../feetech/transport";
+import { ConnectionError, RuntimeError, ValueError } from "../../python/errors";
+import { secondsClock, type MonotonicClock } from "../../station/joint/clock";
+import type { ControlConfig } from "../../station/joint/config";
+import type { HardwareSection, SO101RobotConfig } from "../config";
+import { type ServoStatus, ServoFault, SO101ArmState } from "./arm_state";
 import type { SO101Follower } from "./follower";
 import { GRIPPER_INDEX, JOINTS, MOTORS, VECTOR_LENGTH } from "./motors";
-import { connectChecked, servoFaults } from "./startup";
+import { connectChecked, makeFollower, servoFaults } from "./startup";
 
 const RAD_PER_DEGREE = Math.PI / 180; // numpy's radians() multiplies by this
 const DEGREES_PER_RAD = 180 / Math.PI; // and its degrees() by this
 
-/** What PEAR's settings give the arm (HardwareConfig, ControlConfig) and what stands for its process's clock. */
+/**
+ * What PEAR's settings give the arm (HardwareConfig, ControlConfig) and what stands for its process's clock, as
+ * plain values that nothing has checked. SO101Hardware.fromConfig takes them from the station's checked settings, as
+ * PEAR's constructor does; open() is given them directly.
+ */
 export interface SO101HardwareOptions {
   /** A software zero correction on top of lerobot's calibration, rad for each of the five joints: a joint's
    * angle is lerobot's reading plus it. */
@@ -18,10 +27,29 @@ export interface SO101HardwareOptions {
   statusPollTicks: number;
   /** The age past which a reading of the joints is stale, s: a velocity is not taken over a longer gap. */
   stateTimeoutS: number;
-  /** A monotonic clock, s; the page's by default. */
-  monotonic?: () => number;
+  /** The clock a reading is stamped on: the joint layer's, in seconds; the page's by default. */
+  clock?: Pick<MonotonicClock, "monotonic">;
+  /** A reading of that clock alone, MonotonicClock's `monotonic`, where no clock is at hand; it goes before
+   * `clock`. */
+  monotonic?: MonotonicClock["monotonic"];
   /** Told when enabling the arm is tried again. */
   onWarning?: (message: string) => void;
+}
+
+/** What an arm made from the station's settings is given besides them: the line to the servos and the arm's
+ * calibration, which PEAR finds through its settings (a serial device, a calibration file). */
+export interface SO101Line {
+  /** The line to the servos, already open. */
+  transport: Transport;
+  /** The arm's calibration file, parseCalibration(); null when there is none. */
+  calibration: Record<string, MotorCalibration> | null;
+  /** The line's baud rate and the clock of the bus's packet timeouts; the line's name is the settings' port. */
+  busOptions?: Omit<BusOptions, "port">;
+  /** The clock PEAR's process would read (time.monotonic): the joint layer's, in seconds; the page's by default. */
+  clock?: Pick<MonotonicClock, "monotonic">;
+  /** Told what PEAR logs as a warning: enabling tried again, and by the driver a reading kept and a hold without
+   * its gravity offset. */
+  onWarning?: (message: string, error?: unknown) => void;
 }
 
 /** Returns a mapping of servo values as Python prints a dict. */
@@ -55,8 +83,31 @@ export class SO101Hardware {
     this.jointOffsets = [...options.jointOffsets];
     this.statusPollTicks = options.statusPollTicks;
     this.stateTimeoutS = options.stateTimeoutS;
-    this.monotonic = options.monotonic ?? (() => performance.now() / 1000);
+    const clock = options.clock ?? secondsClock();
+    this.monotonic = options.monotonic ?? (() => clock.monotonic());
     this.onWarning = options.onWarning ?? (() => undefined);
+  }
+
+  /**
+   * Returns the arm PEAR's SO101Hardware(control_config, robot_config) is, made from the station's checked settings
+   * on ``line``: settings under which the real arm must not move are refused before anything is sent
+   * (require_commissioned), the follower is lerobot's for the settings' hardware section (make_follower), and the
+   * arm is connected, enabled and checked as open() does it. PEAR's lock of the serial device has no counterpart:
+   * the line is handed open.
+   */
+  static async fromConfig(controlConfig: ControlConfig, robotConfig: SO101RobotConfig, line: SO101Line): Promise<SO101Hardware> {
+    robotConfig.requireCommissioned();
+
+    const hardwareConfig = robotConfig.hardware as HardwareSection; // (commissioned settings have the section)
+    const follower = makeFollower(hardwareConfig, line.transport, line.calibration, line.busOptions);
+
+    return SO101Hardware.open(follower, {
+      jointOffsets: hardwareConfig.joint_offsets,
+      statusPollTicks: hardwareConfig.status_poll_ticks,
+      stateTimeoutS: controlConfig.state_timeout_s,
+      clock: line.clock,
+      onWarning: line.onWarning,
+    });
   }
 
   /** Connects the arm with its calibration checked, holds its current pose with torque on and checks its servos.
@@ -85,7 +136,7 @@ export class SO101Hardware {
 
   /** Returns the arm's reading, polling the servos' status at a low rate. */
   async read(): Promise<SO101ArmState> {
-    if (this.isClosed) throw new Error("Hardware is closed");
+    if (this.isClosed) throw new RuntimeError("Hardware is closed");
 
     const values = await this.follower.bus.syncRead("Present_Position", null, { numRetry: SO101Hardware.RUN_RETRIES });
     const now = this.monotonic();
@@ -103,13 +154,7 @@ export class SO101Hardware {
 
     this.readCount += 1;
     await this.poll();
-    return {
-      position: [...position],
-      velocity,
-      sampledMonotonicS: now,
-      sampleId: this.readCount,
-      servoStatus: { ...this.servoStatus },
-    };
+    return new SO101ArmState([...position], velocity, now, this.readCount, { ...this.servoStatus });
   }
 
   /** Returns the arm's reading after checking that every servo is healthy and still holds torque. */
@@ -121,10 +166,10 @@ export class SO101Hardware {
 
   /** Commands the joint vector ``target``. */
   async send(target: readonly number[]): Promise<void> {
-    if (this.isClosed) throw new Error("Hardware is closed");
+    if (this.isClosed) throw new RuntimeError("Hardware is closed");
 
     if (target.length !== VECTOR_LENGTH || !target.every((coordinate) => Number.isFinite(coordinate))) {
-      throw new RangeError("Expected a finite 6D target");
+      throw new ValueError("Expected a finite 6D target");
     }
     const goal: Record<string, number> = {};
     JOINTS.forEach((joint, index) => {
@@ -173,7 +218,9 @@ export class SO101Hardware {
         await this.follower.configure(); // the servos' settings; it ends by enabling torque
         return;
       } catch (error) {
-        if (!(error instanceof FeetechCommError) || attempt === SO101Hardware.ENABLE_ATTEMPTS) throw error;
+        // PEAR: except ConnectionError, which a failed exchange is, and lerobot's two errors of a bus that is or
+        // is not connected
+        if (!(error instanceof ConnectionError) || attempt === SO101Hardware.ENABLE_ATTEMPTS) throw error;
         this.onWarning(`Enable attempt ${attempt} failed, retrying: ${error.message}`);
       }
     }

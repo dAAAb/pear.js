@@ -7,10 +7,12 @@
  *   so101      the SO-101 arm: joint layout and default settings, kinematics, servo layer, feedforward
  *   feetech    the Feetech STS3215 serial protocol and bus, over an abstract transport
  *   ruckig     the trajectory generator PEAR's station uses (a port of Ruckig, community edition)
+ *   python     what every module shares of Python itself: its exceptions under their names, how it writes a value
  */
 export * as agent from "./agent/index";
 export * as feetech from "./feetech/index";
 export * as protocol from "./protocol/index";
+export * as python from "./python/index";
 export * as ruckig from "./ruckig/index";
 export * as so101 from "./so101/index";
 export * as station from "./station/index";

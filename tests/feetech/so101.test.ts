@@ -4,6 +4,7 @@ import { FeetechMotorsBus } from "../../src/feetech/bus";
 import { SimServo, SimServoChain } from "../../src/feetech/sim";
 import type { RegisterName } from "../../src/feetech/tables";
 import { ManualClock, type Transport } from "../../src/feetech/transport";
+import { ValueError } from "../../src/python/errors";
 import { armFeedback, ServoFault, type SO101ArmState } from "../../src/so101/hardware/arm_state";
 import { SO101Hardware } from "../../src/so101/hardware/arms";
 import {
@@ -190,8 +191,8 @@ describe("positions are lerobot's degrees and percent and PEAR's joint vector", 
   test("a range of no width is refused", () => {
     const { calibration, normalize, unnormalize } = normalization.invalid;
     const bus = new FeetechMotorsBus(noTransport, followerMotors(), calibrationOf(calibration));
-    expect(() => bus.normalize(new Map([[6, 2000]]))).toThrow(new RangeError(normalize.message));
-    expect(() => bus.unnormalize(new Map([[6, 2000]]))).toThrow(new RangeError(unnormalize.message));
+    expect(() => bus.normalize(new Map([[6, 2000]]))).toThrow(new ValueError(normalize.message));
+    expect(() => bus.unnormalize(new Map([[6, 2000]]))).toThrow(new ValueError(unnormalize.message));
   });
 });
 

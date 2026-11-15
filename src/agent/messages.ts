@@ -5,7 +5,7 @@
 // PEAR saves each frame as "<attempt id>-<camera name>.jpg" in the task's folder, JPEG at quality 90, and a turn
 // carries the file. Here a frame is already JPEG bytes and the turn carries them, under the name of PEAR's file.
 
-import { PythonError } from "../protocol/python_json";
+import { KeyError } from "../python/errors";
 import { pythonStringRepr } from "./clients/python_repr";
 import { modelInput, type CameraImage, type ModelInput, type ReferenceImage } from "./clients/schemas";
 import { ValueError } from "./exceptions";
@@ -24,7 +24,7 @@ export function uuid4(): string {
  * whose text is the role in quotes. */
 function roleItem<T>(items: Readonly<Record<string, T>>, role: string): T {
   if (!Object.hasOwn(items, role)) {
-    throw new PythonError("KeyError", pythonStringRepr(role), false);
+    throw new KeyError(pythonStringRepr(role));
   }
 
   return items[role]!;

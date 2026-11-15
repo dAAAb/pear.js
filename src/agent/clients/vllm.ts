@@ -8,8 +8,8 @@
 // messages. The key is given when the client is made or read from a function at each request, and is sent as a
 // bearer token; nothing here stores or logs it.
 
-import { PythonError } from "../../protocol/python_json";
-import { pythonStrip } from "../../protocol/python_text";
+import { PythonException, PythonTypeError } from "../../python/errors";
+import { pythonStrip } from "../../python/whitespace";
 import type { Clock } from "../clock";
 import { OperatorPaused, pythonErrorMessage, ValueError } from "../exceptions";
 import { checkScope, ContextLimit, ModelClient, RequestCancelled, TurnProgress } from "./client";
@@ -46,7 +46,7 @@ import {
 
 /** Raised for a conversation the server refuses before any output because its cache lost an image that was sent by
  * its UUID alone. */
-export class ImageCacheMiss extends Error {
+export class ImageCacheMiss extends PythonException {
   override readonly name: string = "ImageCacheMiss";
 }
 
@@ -238,7 +238,7 @@ export class VLLMClient extends ModelClient {
     const served = iterate(attribute(models, "data")).map((servedModel) => {
       const id = attribute(servedModel, "id");
       if (typeof id === "object" && id !== null) {
-        throw new PythonError("TypeError", `unhashable type: '${pythonTypeName(id)}'`, false); // the ids make a set
+        throw new PythonTypeError(`unhashable type: '${pythonTypeName(id)}'`); // the ids make a set
       }
       return id;
     });
@@ -653,7 +653,7 @@ export class VLLMClient extends ModelClient {
     try {
       return decodeJson(text);
     } catch (error) {
-      if (!(error instanceof PythonError)) {
+      if (!(error instanceof PythonException)) {
         throw error;
       }
       return text;
@@ -664,7 +664,7 @@ export class VLLMClient extends ModelClient {
 /** Python's `text += more` of two strings; raises TypeError for a ``more`` that is no string. */
 function concatenated(text: string, more: JsonValue): string {
   if (typeof more !== "string") {
-    throw new PythonError("TypeError", `can only concatenate str (not "${pythonTypeName(more)}") to str`, false);
+    throw new PythonTypeError(`can only concatenate str (not "${pythonTypeName(more)}") to str`);
   }
 
   return text + more;

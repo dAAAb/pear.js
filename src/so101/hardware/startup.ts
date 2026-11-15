@@ -2,7 +2,11 @@
 // precede any motion. Not ported: preflight() and inventory(), which serve the command line, and lock_bus(), whose
 // lock file keeps two processes off one serial device.
 
-import type { SO101Follower } from "./follower";
+import type { BusOptions, MotorCalibration } from "../../feetech/bus";
+import type { Transport } from "../../feetech/transport";
+import { RuntimeError } from "../../python/errors";
+import type { HardwareSection } from "../config";
+import { SO101Follower } from "./follower";
 
 /** The bits of the Feetech STS servos' Status register. */
 export const STATUS_BITS: ReadonlyMap<number, string> = new Map([
@@ -15,12 +19,31 @@ export const STATUS_BITS: ReadonlyMap<number, string> = new Map([
 /** A jaw squeezing an object at its torque limit may legitimately report these. */
 export const GRIPPER_LOAD_BITS = 0x08 | 0x20;
 
+/**
+ * Returns lerobot's SO-101 follower without cameras for the arm of ``hardwareConfig``, the hardware section of a
+ * station's checked settings; it opens nothing yet. PEAR's finds the serial device and the calibration file through
+ * the section; here the line is handed open and the calibration parsed, and the section names the line.
+ */
+export function makeFollower(
+  hardwareConfig: HardwareSection,
+  transport: Transport,
+  calibration: Record<string, MotorCalibration> | null,
+  busOptions: Omit<BusOptions, "port"> = {},
+): SO101Follower {
+  return new SO101Follower(
+    transport,
+    calibration,
+    { useDegrees: true, positionPCoefficient: hardwareConfig.position_p_coefficient },
+    { ...busOptions, port: hardwareConfig.port },
+  );
+}
+
 /** Opens the bus, pings every servo and requires the arm's calibration to match the servos' registers; a mismatch
  * closes the bus with torque left as found. */
 export async function connectChecked(follower: SO101Follower): Promise<void> {
   if (follower.calibration === null || Object.keys(follower.calibration).length === 0) {
     // PEAR names the missing file and its own calibrate command here
-    throw new Error("No calibration: calibrate the arm with lerobot and give its calibration file");
+    throw new RuntimeError("No calibration: calibrate the arm with lerobot and give its calibration file");
   }
 
   await follower.bus.connect(true);
@@ -33,7 +56,7 @@ export async function connectChecked(follower: SO101Follower): Promise<void> {
   }
   if (!isCalibrated) {
     await follower.bus.disconnect(false);
-    throw new Error("Servo calibration registers differ from the calibration file");
+    throw new RuntimeError("Servo calibration registers differ from the calibration file");
   }
 }
 

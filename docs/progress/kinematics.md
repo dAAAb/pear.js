@@ -130,13 +130,14 @@ PEAR's loop the two always coincide, and the port computes both from the same jo
   `DECIMALS` are the protocol module's (`src/protocol/types.ts`); the kinematics import them, and `jointTarget` takes
   the arm's part of an action (`ArmDelta`). The station's rejection code is the error's `name`, which
   `tests/modules.test.ts` holds equal to the protocol's `UNREACHABLE_POSE_ERROR`.
-- **Protocol** (open): Python's number formats exist twice, in `kinematics/text.ts` (`pythonRound`, `formatFixed`,
-  `formatGeneral`, the `str.format` templates) and in `protocol/python_float.ts` (`round`, `repr`). Each is tested
-  against PEAR; one of each should remain.
+- **Protocol** (done since, `docs/progress/common.md`, parts 1 and 2): Python's number formats are in `src/python`
+  (`format.ts`, `float.ts`), and `kinematics/text.ts` re-exports them. The two `pythonRound` agreed on every value
+  compared and are one: this module's, which is Python's own method. `ValueError` is the library's one class
+  (`src/python/errors.ts`); `kinematics/errors.ts` re-exports it and keeps `UnreachablePoseError`.
 - **Feetech / hardware** (done): `JOINTS`, `MOTORS`, `VECTOR_LENGTH`, `GRIPPER_INDEX` are the layout's
-  (`src/so101/layout.ts`) and the servo layer re-exports them. Open: the `hardware` defaults (`joint_offsets`,
-  `position_p_coefficient`, `status_poll_ticks`) and `HardwareConfig` of `src/so101/config.ts` are not yet what
-  `SO101Hardware` is built from.
+  (`src/so101/layout.ts`) and the servo layer re-exports them. Done since (`docs/progress/common.md`, part 4):
+  `SO101Hardware.fromConfig` builds the arm from the checked `hardware` section (`joint_offsets`,
+  `position_p_coefficient`, `status_poll_ticks`) and the control settings, as PEAR's constructor does.
 
 ## Observations about PEAR worth knowing downstream
 

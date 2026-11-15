@@ -1,6 +1,9 @@
 import { describe, expect, test } from "vitest";
 
-import { compareResults, describeComparison, jsErrorName } from "./compare";
+import { FeetechCommError, FeetechStatusError } from "../../src/feetech/bus";
+import { RuntimeError, ValueError } from "../../src/python/errors";
+import { ServoFault } from "../../src/so101/hardware/arm_state";
+import { compareResults, describeComparison } from "./compare";
 import type { RunResult } from "./session";
 
 // The comparison must be able to fail: these tests give it two results that are the same, then change one thing
@@ -84,15 +87,16 @@ function sample(): RunResult {
   };
 }
 
-/** The same run as pear.js reports it: its own name for the line, its own error classes. */
+/** The same run as pear.js reports it: its own name for the line; its errors carry the names of Python's
+ * classes. */
 function candidate(): RunResult {
   const result = structuredClone(sample());
   result.side = "pear.js";
   result.port_name = "tcp://127.0.0.1:1";
   const steps = result.sessions[0].steps;
-  steps[1].error = { type: "FeetechCommError", message: "\nCould not connect on port 'tcp://127.0.0.1:1'." };
+  steps[1].error = { type: "ConnectionError", message: "\nCould not connect on port 'tcp://127.0.0.1:1'." };
   steps[1].warnings = ["Enable attempt 1 failed, retrying: nothing on 'tcp://127.0.0.1:1'"];
-  steps[5].error = { type: "FeetechStatusError", message: steps[5].error?.message ?? "" };
+  steps[5].error = { type: "RuntimeError", message: steps[5].error?.message ?? "" };
 
   return result;
 }
@@ -106,8 +110,8 @@ describe("the comparison of two runs", () => {
     expect(comparison.servoPackets).toEqual({ reference: 2, candidate: 2, differing: 0, listed: [] });
     expect(comparison.readingsBetween).toEqual({ compared: 1, identical: 1, maxCounts: 0, statusDiffering: 0 });
     expect(comparison.readingsCommanded).toEqual({ compared: 1, identical: 1, maxCounts: 0, statusDiffering: 0 });
-    // the class names are pear.js's own for two of the three: that is counted, not hidden
-    expect(comparison.refusals).toEqual({ compared: 3, sameMessage: 3, sameType: 1, sameMappedType: 3, differing: [] });
+    // the class names are Python's on both sides, and are compared as they are
+    expect(comparison.refusals).toEqual({ compared: 3, sameMessage: 3, sameType: 3, sameMappedType: 3, differing: [] });
     expect(comparison.warnings).toEqual({ reference: 1, candidate: 1, differing: [] });
   });
 
@@ -175,8 +179,8 @@ describe("the comparison of two runs", () => {
     const classed = candidate();
     classed.sessions[0].steps[4].error = { type: "Error", message: "Servo error: elbow_flex: overload" };
     const refusals = compareResults(sample(), classed).refusals;
-    expect(refusals).toMatchObject({ compared: 3, sameMessage: 3, sameType: 0, sameMappedType: 2 });
-    expect(refusals.differing).toEqual(["a session, step 4 (read): class ServoFault (pear.js: ServoFault) against Error"]);
+    expect(refusals).toMatchObject({ compared: 3, sameMessage: 3, sameType: 2, sameMappedType: 2 });
+    expect(refusals.differing).toEqual(["a session, step 4 (read): class ServoFault against Error"]);
 
     const silent = candidate();
     delete silent.sessions[0].steps[4].error;
@@ -196,11 +200,45 @@ describe("the comparison of two runs", () => {
     expect(comparison.steps.differing).toHaveLength(2); // the kind of outcome, and a reading on one side only
   });
 
-  test("names the pear.js class of each Python exception of the hardware layer", () => {
-    expect(jsErrorName({ type: "ConnectionError", message: "x" })).toBe("FeetechCommError");
-    expect(jsErrorName({ type: "RuntimeError", message: "x [RxPacketError] Overload error!" })).toBe("FeetechStatusError");
-    expect(jsErrorName({ type: "RuntimeError", message: "Servo calibration registers differ" })).toBe("Error");
-    expect(jsErrorName({ type: "ServoFault", message: "x" })).toBe("ServoFault");
-    expect(jsErrorName({ type: "ValueError", message: "x" })).toBe("RangeError");
+  test("takes a class for the same only under Python's name, which each error of the hardware layer carries", () => {
+    // what the hardware layer throws for each Python exception of the reference, by the name it reports
+    expect(new FeetechCommError("x").name).toBe("ConnectionError");
+    expect(new FeetechStatusError("x [RxPacketError] Overload error!", 0x20).name).toBe("RuntimeError");
+    expect(new RuntimeError("Servo calibration registers differ").name).toBe("RuntimeError");
+    expect(new ServoFault("x").name).toBe("ServoFault");
+    expect(new ValueError("x").name).toBe("ValueError");
+
+    // the names pear.js's classes had before they carried Python's: each is a difference now, found and named
+    const former: Array<[string, string, string]> = [
+      ["ConnectionError", "x", "FeetechCommError"],
+      ["RuntimeError", "x [RxPacketError] Overload error!", "FeetechStatusError"],
+      ["RuntimeError", "Servo calibration registers differ", "Error"],
+      ["ServoFault", "x", "Error"],
+      ["ValueError", "x", "RangeError"],
+    ];
+    for (const [pythonName, message, formerName] of former) {
+      const reference = sample();
+      reference.sessions[0].steps[4].error = { type: pythonName, message };
+
+      const same = candidate();
+      same.sessions[0].steps[4].error = { type: pythonName, message };
+      expect(compareResults(reference, same).refusals).toEqual({
+        compared: 3,
+        sameMessage: 3,
+        sameType: 3,
+        sameMappedType: 3,
+        differing: [],
+      });
+
+      const renamed = candidate();
+      renamed.sessions[0].steps[4].error = { type: formerName, message };
+      expect(compareResults(reference, renamed).refusals).toEqual({
+        compared: 3,
+        sameMessage: 3,
+        sameType: 2,
+        sameMappedType: 2,
+        differing: [`a session, step 4 (read): class ${pythonName} against ${formerName}`],
+      });
+    }
   });
 });

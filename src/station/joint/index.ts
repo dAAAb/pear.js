@@ -19,6 +19,17 @@ export {
   type RangeBounds,
   type RobotSettings,
 } from "./config";
+export {
+  Braking,
+  JointControlLoop,
+  LoopLock,
+  type ControlFeedback,
+  type ControlLog,
+  type ControlLoopOptions,
+  type GripperOperationClass,
+  type RecoveryPolicyClass,
+  type WaitForHoldOptions,
+} from "./control_loop";
 export { JointDriver, type ArmVectors } from "./driver";
 export {
   IndexError,
@@ -42,6 +53,24 @@ export {
   type TrajectoryExtrema,
 } from "./limits";
 export { integerPower, pythonStr, pythonStrRepr } from "./numeric";
+export {
+  GripperEndpointTimeout,
+  GripperOperation,
+  JointMoveOperation,
+  Operation,
+  OperationInterrupted,
+  SequenceOperation,
+  TargetOperation,
+  type ArmStates,
+  type ArmTargets,
+} from "./operations";
+export {
+  MeasuredHoldRecovery,
+  RecoveryPolicy,
+  RecoveryRequest,
+  ReleaseRecovery,
+  type RecoveryRequestOptions,
+} from "./recovery";
 export {
   SnapshotCheck,
   type FaultSnapshot,
@@ -75,3 +104,11 @@ export {
   type TrackingRobotSettings,
   type TrackingViolation,
 } from "./tracking";
+export {
+  CommandSample,
+  GripperProfile,
+  JointMove,
+  JointTrajectory,
+  type BrakingCaps,
+  type JointMoveOptions,
+} from "./trajectory";

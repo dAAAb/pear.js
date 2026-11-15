@@ -127,6 +127,7 @@ describe("the driver does what PEAR's SO101Driver does", () => {
           expect([label, result ?? null]).toEqual([label, step.result ?? null]);
         } else {
           expect([label, (thrown as Error | undefined)?.message]).toEqual([label, step.error.message]);
+          expect([label, (thrown as Error | undefined)?.name]).toEqual([label, step.error.type]);
           expect(thrown instanceof ServoFault).toBe(step.error.type === "ServoFault");
         }
         expect([label, hardware.sent]).toEqual([label, step.sent]);

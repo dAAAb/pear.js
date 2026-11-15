@@ -7,9 +7,8 @@
 //   openai/_streaming.py                         the decoding of a server-sent event stream
 //   openai/_models.py                            what a decoded chunk reads as (a model built without validation)
 
-import { PythonError } from "../../protocol/python_json";
-import { pythonStrip } from "../../protocol/python_text";
-import { PythonException } from "../exceptions";
+import { AttributeError, PythonException, PythonTypeError } from "../../python/errors";
+import { pythonStrip } from "../../python/whitespace";
 import { checkScope } from "./client";
 import {
   plainOf,
@@ -109,7 +108,7 @@ export function statusError(status: number, text: string): APIStatusError {
   try {
     message = `Error code: ${status} - ${pythonStr(pythonJsonDecode(errorText))}`;
   } catch (error) {
-    if (!(error instanceof PythonError)) {
+    if (!(error instanceof PythonException)) {
       throw error;
     }
     message = errorText || `Error code: ${status}`;
@@ -354,7 +353,7 @@ export function isMapping(value: unknown): value is { [key: string]: JsonValue }
  */
 export function attribute(value: unknown, name: string): JsonValue {
   if (!isMapping(value)) {
-    throw new PythonError("AttributeError", `'${pythonTypeName(value)}' object has no attribute '${name}'`, false);
+    throw new AttributeError(`'${pythonTypeName(value)}' object has no attribute '${name}'`);
   }
 
   return Object.hasOwn(value, name) ? value[name]! : null;
@@ -378,5 +377,5 @@ export function iterate(value: unknown): JsonValue[] {
     return Object.keys(value);
   }
 
-  throw new PythonError("TypeError", `'${pythonTypeName(value)}' object is not iterable`, false);
+  throw new PythonTypeError(`'${pythonTypeName(value)}' object is not iterable`);
 }

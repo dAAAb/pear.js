@@ -2,6 +2,8 @@
 // constants and enumerations of lerobot/motors/feetech/feetech.py, and the sign-magnitude encoding of
 // lerobot/motors/encoding_utils.py.
 
+import { KeyError, ValueError } from "../python/errors";
+
 export const MODEL = "sts3215";
 
 export const FIRMWARE_MAJOR_VERSION = [0, 1] as const;
@@ -117,7 +119,7 @@ export const TorqueMode = { ENABLED: 1, DISABLED: 0 } as const;
 export function getAddress(dataName: string): readonly [number, number] {
   const entry = (CONTROL_TABLE as Record<string, readonly [number, number]>)[dataName];
   if (entry === undefined || !Object.hasOwn(CONTROL_TABLE, dataName)) {
-    throw new Error(`Address for '${dataName}' not found in ${MODEL} control table.`);
+    throw new KeyError(`Address for '${dataName}' not found in ${MODEL} control table.`);
   }
 
   return entry;
@@ -128,7 +130,7 @@ export function encodeSignMagnitude(value: number, signBitIndex: number): number
   const maxMagnitude = (1 << signBitIndex) - 1;
   const magnitude = Math.abs(value);
   if (magnitude > maxMagnitude) {
-    throw new RangeError(`Magnitude ${magnitude} exceeds ${maxMagnitude} (max for sign_bit_index=${signBitIndex})`);
+    throw new ValueError(`Magnitude ${magnitude} exceeds ${maxMagnitude} (max for sign_bit_index=${signBitIndex})`);
   }
 
   const directionBit = value < 0 ? 1 : 0;

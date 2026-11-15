@@ -37,9 +37,10 @@ its decoder of a server-sent event stream. The SDK is Copyright OpenAI and licen
 Version 2.0.
 
 Where a text the model reads depends on how CPython 3.12 writes a value (the rounding and the text of a number,
-JSON, the repr of a string), pear.js reproduces that behaviour in new code; no code of CPython is included.
-src/agent/clients/python_printable.ts holds a table derived from the Unicode Character Database, version 15.0.0,
-Copyright (c) 1991-2022 Unicode, Inc., used under the Unicode License (https://www.unicode.org/license.txt).
+JSON, the repr of a string) or names an exception, pear.js reproduces that behaviour in new code (src/python); no
+code of CPython is included. src/python/printable.ts holds a table derived from the Unicode Character Database,
+version 15.0.0, Copyright (c) 1991-2022 Unicode, Inc., used under the Unicode License
+(https://www.unicode.org/license.txt).
 
 pear.js is not affiliated with or endorsed by the PEAR project or its authors, Hugging Face, TheRobotStudio,
 Feetech, the Rhoban team, the author of Ruckig, or OpenAI.

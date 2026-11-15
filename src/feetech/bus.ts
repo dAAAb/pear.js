@@ -3,6 +3,16 @@
 // the packet timeout lerobot patches into it (patch_setPacketTimeout) and the SDK's GroupSyncRead and GroupSyncWrite.
 
 import {
+  ConnectionError,
+  KeyError,
+  NotImplementedError,
+  OSError,
+  OverflowError,
+  RuntimeError,
+  StopIteration,
+  ValueError,
+} from "../python/errors";
+import {
   COMM_NOT_AVAILABLE,
   COMM_SUCCESS,
   getRxPacketError,
@@ -13,6 +23,7 @@ import {
   ping,
   readRx,
   readTxRx,
+  RXPACKET_MAX_LEN,
   splitIntoByteChunks,
   syncReadParameters,
   syncReadTx,
@@ -73,42 +84,41 @@ export interface BusOptions {
   port?: string;
 }
 
-/** A packet exchange failed: nothing or something corrupt came back. lerobot raises ConnectionError. */
-export class FeetechCommError extends Error {
+// The errors of this file are the exceptions lerobot raises at the same places, under Python's names
+// (src/python/errors.ts): what a station reports of a failed action is the name of its error's class.
+
+/** A packet exchange failed: nothing or something corrupt came back. lerobot raises Python's ConnectionError, and
+ * this is one: its `name` is "ConnectionError". It also keeps the SDK's result. */
+export class FeetechCommError extends ConnectionError {
   constructor(
     message: string,
     /** The SDK's result of the exchange, COMM_*. */
     readonly result: number | null = null,
   ) {
     super(message);
-    this.name = "FeetechCommError";
   }
 }
 
-/** A servo answered with error bits in its status packet. lerobot raises RuntimeError. */
-export class FeetechStatusError extends Error {
+/** A servo answered with error bits in its status packet. lerobot raises Python's RuntimeError, and this is one:
+ * its `name` is "RuntimeError". It also keeps the error byte. */
+export class FeetechStatusError extends RuntimeError {
   constructor(
     message: string,
     /** The status packet's error byte. */
     readonly error: number,
   ) {
     super(message);
-    this.name = "FeetechStatusError";
   }
 }
 
-export class DeviceAlreadyConnectedError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "DeviceAlreadyConnectedError";
-  }
+/** lerobot's DeviceAlreadyConnectedError (lerobot/utils/errors.py): a ConnectionError. */
+export class DeviceAlreadyConnectedError extends ConnectionError {
+  override readonly name: string = "DeviceAlreadyConnectedError";
 }
 
-export class DeviceNotConnectedError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "DeviceNotConnectedError";
-  }
+/** lerobot's DeviceNotConnectedError (lerobot/utils/errors.py): a ConnectionError. */
+export class DeviceNotConnectedError extends ConnectionError {
+  override readonly name: string = "DeviceNotConnectedError";
 }
 
 const NO_BYTES = new Uint8Array(0);
@@ -121,6 +131,9 @@ export class PortHandler implements PacketPort {
   packetTimeout = 0;
   /** How long one byte takes on the line, ms: a start bit, eight data bits and a stop bit. */
   readonly txTimePerByte: number;
+  /** Whether clearPort() discards what waits in the input. The SDK never does: with false the line is read as the
+   * SDK reads it, which a replay of the SDK's own traffic needs. */
+  discardsInput = true;
   private packetDeadline = 0; // on the clock, ms
 
   constructor(
@@ -132,7 +145,12 @@ export class PortHandler implements PacketPort {
   }
 
   async clearPort(): Promise<void> {
-    // pyserial's flush() waits for the bytes written to leave; a transport's write() resolves when they have
+    // pyserial's flush() waits for the bytes written to leave; a transport's write() resolves when they have.
+    // Not the SDK's, which never empties its input: bytes that wait there when an instruction packet is about to
+    // be written answer an earlier one, came too late for it and would be taken for this one's answer, so they
+    // are discarded (docs/progress/feetech.md, "Deliberate differences"). A read of no time only looks
+    if (!this.discardsInput) return;
+    while ((await this.transport.read(RXPACKET_MAX_LEN, 0)).length > 0);
   }
 
   async closePort(): Promise<void> {
@@ -176,9 +194,11 @@ export class PortHandler implements PacketPort {
   }
 }
 
-/** Returns the integer Python's int() makes of ``value``: toward zero, and never a negative zero. */
+/** Returns the integer Python's int() makes of ``value``: toward zero, and never a negative zero. Of a NaN
+ * int() raises ValueError, of an infinity OverflowError. */
 function toInt(value: number): number {
-  if (!Number.isFinite(value)) throw new RangeError(`cannot convert ${value} to integer`);
+  if (Number.isNaN(value)) throw new ValueError(`cannot convert ${value} to integer`);
+  if (!Number.isFinite(value)) throw new OverflowError(`cannot convert ${value} to integer`);
 
   return Math.trunc(value) + 0;
 }
@@ -217,7 +237,7 @@ export class FeetechMotorsBus {
     this.port = options.port ?? "serial";
     this.portHandler = new PortHandler(transport, options.baudrate ?? DEFAULT_BAUDRATE, options.clock ?? systemClock);
     for (const [name, motor] of Object.entries(motors)) this.idToName.set(motor.id, name);
-    if (this.idToName.size !== Object.keys(motors).length) throw new RangeError("Some motors have the same id!");
+    if (this.idToName.size !== Object.keys(motors).length) throw new ValueError("Some motors have the same id!");
   }
 
   get ids(): number[] {
@@ -239,11 +259,13 @@ export class FeetechMotorsBus {
         await this.assertMotorsExist();
         await this.assertSameFirmware();
       } catch (error) {
-        if (!(error instanceof FeetechCommError)) throw error;
+        // lerobot: except (FileNotFoundError, OSError, serial.SerialException), which the ConnectionError of a
+        // failed exchange is; a motor check that failed (RuntimeError) is not
+        if (!(error instanceof OSError)) throw error;
         throw new FeetechCommError(
           `\nCould not connect on port '${this.port}'. Make sure you are using the correct port.` +
             "\nTry running `lerobot-find-port`\n",
-          error.result,
+          error instanceof FeetechCommError ? error.result : null,
         );
       }
     }
@@ -322,7 +344,7 @@ export class FeetechMotorsBus {
     this.checkConnected();
     const { normalize = true, numRetry = 0 } = options;
     const ids = this.getMotorsList(motors).map((name) => this.motorOf(name).id);
-    if (ids.length === 0) throw new Error("A sync read needs a motor"); // lerobot fails with StopIteration
+    if (ids.length === 0) throw new StopIteration("A sync read needs a motor"); // lerobot's next() of no model
     const [address, length] = getAddress(dataName);
 
     const errMsg = `Failed to sync read '${dataName}' on ids=[${ids.join(", ")}] after ${numRetry + 1} tries.`;
@@ -343,7 +365,7 @@ export class FeetechMotorsBus {
     this.checkConnected();
     const { normalize = true, numRetry = 0 } = options;
     const rawIdsValues = this.getIdsValues(values);
-    if (rawIdsValues.size === 0) throw new Error("A sync write needs a motor"); // lerobot fails with StopIteration
+    if (rawIdsValues.size === 0) throw new StopIteration("A sync write needs a motor"); // lerobot's next() of no model
     const [address, length] = getAddress(dataName);
 
     let intIdsValues = new Map([...rawIdsValues].map(([id, value]) => [id, toInt(value)]));
@@ -447,7 +469,7 @@ export class FeetechMotorsBus {
       const { rangeMin, rangeMax, driveMode } = this.calibrationOf(motor);
       const isInverted = FeetechMotorsBus.APPLY_DRIVE_MODE && driveMode !== 0;
       if (rangeMax === rangeMin) {
-        throw new RangeError(`Invalid calibration for motor '${motor}': min and max are equal.`);
+        throw new ValueError(`Invalid calibration for motor '${motor}': min and max are equal.`);
       }
 
       const bounded = Math.min(rangeMax, Math.max(rangeMin, value));
@@ -483,7 +505,7 @@ export class FeetechMotorsBus {
       const { rangeMin, rangeMax, driveMode } = this.calibrationOf(motor);
       const isInverted = FeetechMotorsBus.APPLY_DRIVE_MODE && driveMode !== 0;
       if (rangeMax === rangeMin) {
-        throw new RangeError(`Invalid calibration for motor '${motor}': min and max are equal.`);
+        throw new ValueError(`Invalid calibration for motor '${motor}': min and max are equal.`);
       }
 
       switch (this.motors[motor].normMode) {
@@ -510,12 +532,12 @@ export class FeetechMotorsBus {
 
   /** Returns the bytes of ``value`` for a register of ``length`` bytes; a value that does not fit throws. */
   serializeData(value: number, length: number): number[] {
-    if (value < 0) throw new RangeError(`Negative values are not allowed: ${value}`);
+    if (value < 0) throw new ValueError(`Negative values are not allowed: ${value}`);
 
     const maxValue = length === 1 ? 0xff : length === 2 ? 0xffff : length === 4 ? 0xffffffff : null;
-    if (maxValue === null) throw new Error(`Unsupported byte size: ${length}. Expected [1, 2, 4].`);
+    if (maxValue === null) throw new NotImplementedError(`Unsupported byte size: ${length}. Expected [1, 2, 4].`);
     if (value > maxValue) {
-      throw new RangeError(`Value ${value} exceeds the maximum for ${length} bytes (${maxValue}).`);
+      throw new ValueError(`Value ${value} exceeds the maximum for ${length} bytes (${maxValue}).`);
     }
 
     return splitIntoByteChunks(value, length);
@@ -529,25 +551,25 @@ export class FeetechMotorsBus {
 
   private checkCalibration(): void {
     if (Object.keys(this.calibration).length === 0) {
-      throw new Error("FeetechMotorsBus has no calibration registered.");
+      throw new RuntimeError("FeetechMotorsBus has no calibration registered.");
     }
   }
 
   private motorOf(motor: string): Motor {
-    if (!Object.hasOwn(this.motors, motor)) throw new Error(`Unknown motor '${motor}'`);
+    if (!Object.hasOwn(this.motors, motor)) throw new KeyError(`Unknown motor '${motor}'`); // self.motors[motor]
 
     return this.motors[motor];
   }
 
   private calibrationOf(motor: string): MotorCalibration {
-    if (!Object.hasOwn(this.calibration, motor)) throw new Error(`No calibration for motor '${motor}'`);
+    if (!Object.hasOwn(this.calibration, motor)) throw new KeyError(`No calibration for motor '${motor}'`);
 
     return this.calibration[motor];
   }
 
   private nameOf(id: number): string {
     const name = this.idToName.get(id);
-    if (name === undefined) throw new Error(`Unknown motor id ${id}`);
+    if (name === undefined) throw new KeyError(`Unknown motor id ${id}`); // self._id_to_name_dict[id]
 
     return name;
   }
@@ -607,7 +629,7 @@ export class FeetechMotorsBus {
     raiseOnError = true,
     errMsg = "",
   ): Promise<{ value: number; result: number; error: number }> {
-    if (length !== 1 && length !== 2 && length !== 4) throw new RangeError(String(length));
+    if (length !== 1 && length !== 2 && length !== 4) throw new ValueError(String(length));
 
     const read = await this.exchange(numRetry, async () => {
       const { data, result, error } = await readTxRx(this.portHandler, motorId, address, length);
@@ -741,7 +763,7 @@ export class FeetechMotorsBus {
     lines.push("\nFull expected motor list (id: model_number):", formatDict(expectedModels));
     lines.push("\nFull found motor list (id: model_number):", formatDict(foundModels));
 
-    throw new Error(lines.join("\n"));
+    throw new RuntimeError(lines.join("\n"));
   }
 
   private async assertSameFirmware(): Promise<void> {
@@ -753,7 +775,7 @@ export class FeetechMotorsBus {
     }
 
     if (new Set(firmwareVersions.values()).size !== 1) {
-      throw new Error(
+      throw new RuntimeError(
         "Some Motors use different firmware versions:" +
           `\n${formatDict(firmwareVersions)}\n` +
           "Update their firmware first using Feetech's software. " +

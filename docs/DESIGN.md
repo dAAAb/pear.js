@@ -47,9 +47,10 @@ One turn of the station, as PEAR defines it and pear.js keeps it:
 | `src/station/joint/`, `src/station/schemas.ts` | `deploy/station/control/schemas.py`; `deploy/station/control/joint/` `config.py`, `limits.py`, `layout.py`, `texts.py`, `arm_state.py`, `stability.py`, `tracking.py`, `action_guard.py`, `snapshot_checks.py`, `feedforward.py`, `driver.py`; `deploy/station/exceptions.py` |
 | `src/so101/joint/` | `deploy/station/control/robots/so101/joint/feedforward.py`; the checks of `deploy/station/control/robots/so101/config.py` are in `src/so101/config.ts` |
 | `src/agent/` | `deploy/station/agent_loop/` `agent_loop.py`, `schemas.py`, `config.py`, `messages.py` (the frames of a turn); `deploy/station/agent_loop/clients/` `client.py`, `vllm.py`, `schemas.py`, `metrics.py`, `health_checks.py`; what those run of the OpenAI Python SDK |
-| `src/station/` (next) | `deploy/station/control/joint/` `trajectory.py`, `operations.py`, `control_loop.py`, `recovery.py`; `deploy/station/control/motion/` `execution.py`, `planning.py`, `homing.py`; `deploy/station/control/robot.py`, `cameras.py`; the SO-101's `joint/grippers.py`, `joint/control_loop.py`, `motion/planning.py`, `motion/homing.py`, `robot.py` |
-| `web/` (next) | Not in PEAR: a page that reaches the arm through Web Serial and the wrist camera through the browser |
-| `tests/sim-bridge/` | Not in PEAR: the servo layer on a simulated SO-101 servo chain over TCP, compared packet by packet with PEAR's Python on the same chain |
+| `src/python/` | Not PEAR's own code: what PEAR's texts and results take from Python itself (CPython 3.12), in one place for every module: the built-in exceptions under their names and bases, with how PEAR reads an error it caught (`type(error).__name__`, `isinstance(error, ValueError)`); `repr` of a float, `round` and the format specifications, `json.dumps` and `json.loads`, `repr` and `str` of a value, `str.isprintable`, whitespace |
+| `src/station/` (in progress) | `deploy/station/control/joint/` `trajectory.py`, `operations.py`, `control_loop.py`, `recovery.py`; `deploy/station/control/motion/` `execution.py`, `planning.py`, `homing.py`; `deploy/station/control/robot.py`, `cameras.py`; the SO-101's `joint/grippers.py`, `joint/control_loop.py`, `motion/planning.py`, `motion/homing.py`, `robot.py` |
+| `web/` | Not in PEAR: the page, which GitHub Pages builds from this directory. It reaches the arm through Web Serial and the wrist camera through the browser. Its first version only reads: a guard between the bus and the port lets only PING, READ and SYNC READ through (`docs/progress/web.md`) |
+| `tests/sim-bridge/` | Not in PEAR: the servo layer on a simulated SO-101 servo chain over TCP, compared packet by packet with PEAR's Python on the same chain; and PEAR's own robot stepped on that chain, recorded as the reference for step 4 of the ladder (`docs/progress/station-reference.md`) |
 
 ## Verification ladder
 
@@ -73,7 +74,13 @@ library:
   the model reads of a refused action (`error.code`).
 - The inverse kinematics solve the same optimisation problem as PEAR's solver (placo) with code of their own, and
   no robot description is read at run time: the kinematic chain is a constant, checked against the URDF by a test.
-- A transport is handed to the bus already open; pear.js never scans for ports or changes baud rates.
+- A transport is handed to the bus already open; the library never scans for ports or changes baud rates. (The page
+  looks for servos at the other baud rates when none answers, by reopening the port and pinging; it writes nothing.)
+- Before a command the bus drops bytes left over from an answer that came late. The Feetech SDK does not, so after
+  one stalled moment PEAR's Python reads every later answer one behind, and a page stalls more often than a process
+  does (`docs/progress/feetech.md`). No packet that is sent changes.
+- A camera frame is encoded by the browser, not by PIL. In Chromium the decoded picture is the same, pixel for
+  pixel, and the file's bytes differ (`docs/progress/web.md`).
 
 The control loop: PEAR streams joint targets from a 50 Hz loop in its own process. pear.js ports that loop as it is,
 with the trajectory generator it calls (`src/ruckig`), and takes its clock as a parameter. PEAR's loop advances a
@@ -81,7 +88,9 @@ motion by one control period at each step, whatever the wall clock says, and nev
 after a stall: a period that comes late stretches the motion and skips none of it. That holds in a page too, where
 a hidden tab's timers are slowed, and between two steps the servos hold the last target they were sent. Measured in
 Node on a simulated servo chain, a period's read and send take about 1 ms of the 20 ms
-(`docs/progress/sim-bridge.md`); what a page's timers and Web Serial add is still to be measured on a real adapter.
+(`docs/progress/sim-bridge.md`). In a visible page in headless Chromium a 20 ms timer held its period within about
+3 ms at the 99th percentile and 6 ms at worst, and no period was skipped (`docs/progress/web.md`); a hidden tab, and
+what Web Serial on a real adapter adds, are still to be measured.
 
 ## Safety
 

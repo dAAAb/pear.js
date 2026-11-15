@@ -1,0 +1,623 @@
+// The page's words, in English and in Traditional Chinese as written in Taiwan. A text may hold {names} that
+// i18n.ts fills in. Words that are PEAR's or lerobot's own (a joint's name, a servo's status bit, an error
+// message of the library) are shown as they are in both languages: they are what a person will search for.
+
+export const EN = {
+  "page.title": "pear.js: PEAR's robot station in the browser",
+  "page.tagline": "PEAR's robot station in the browser, for a LeRobot SO-101.",
+  "page.notice":
+    "pear.js is an unofficial, experimental port of PEAR's robot station (MIT Han Lab). This first version only reads: it shows your arm, your camera and your model service, and it cannot move the arm.",
+  "page.skip": "Skip to the arm",
+  "page.language": "Language",
+  "page.noscript": "This page needs JavaScript.",
+
+  "arm.title": "Arm",
+  "arm.lead":
+    "Plug the SO-101's USB cable into this computer and switch on the servos' power supply. Then press Connect and choose the arm's serial port. The page only reads from the servos, and you can move the arm by hand while it does.",
+  "arm.connect": "Connect",
+  "arm.sim": "Try without an arm",
+  "arm.retry": "Try the same port again",
+  "arm.disconnect": "Disconnect",
+  "arm.status.idle": "Not connected.",
+  "arm.status.opening": "Opening the port…",
+  "arm.status.handshake": "Looking for the six servos…",
+  "arm.status.probing":
+    "Not all six servos answered. Looking for servos with other ids and at other baud rates; this can take about ten seconds…",
+  "arm.status.registers": "Reading the servos' registers…",
+  "arm.status.reading": "Connected. The joints are read about ten times a second.",
+  "arm.status.readingSim": "Connected to the simulated arm. The joints are read about ten times a second.",
+  "arm.status.stalled": "The servos have stopped answering. Is their power supply still on? The page keeps trying.",
+  "arm.status.failed": "Not connected. The reason is below.",
+  "arm.readings": "reading {count}",
+
+  "fail.insecure.title": "This page cannot use Web Serial here",
+  "fail.insecure.body":
+    "A browser offers Web Serial only to a page served over https, from localhost, or opened from a folder on this computer. Open this page in one of these ways. The simulated arm works here all the same.",
+  "fail.noSerial.title": "This browser has no Web Serial",
+  "fail.noSerial.body":
+    "The page reaches the arm through Web Serial. Chrome, Edge and Opera have it on a computer (macOS, Windows, Linux, ChromeOS). Firefox and Safari do not, and neither do the browsers of an iPhone or iPad. Open this page in Chrome or Edge. The simulated arm works here all the same.",
+  "fail.noPort.title": "No port was chosen",
+  "fail.noPort.body":
+    "Press Connect again and pick the arm's USB adapter in the browser's list. It appears once the arm's USB cable is plugged in: pull the cable and plug it back while the list is open, and you see which entry it is. If nothing appears, try another USB cable (some carry power only) or another USB socket.",
+  "fail.open.title": "The port could not be opened",
+  "fail.open.body":
+    "Another program is probably using it. Close whatever else talks to the arm (a lerobot script such as calibrate or teleoperate, a serial monitor, another tab with this page) and try again. If it still fails, pull the USB cable, plug it back in and press Connect.",
+  "fail.silent.title": "Nothing answers on this port",
+  "fail.silent.body": "The port opened, but none of the six servos answered. The usual reasons:",
+  "fail.silent.power":
+    "The servos have no power. The USB cable powers only the adapter board; the servos need their own power supply, plugged into the board and switched on.",
+  "fail.silent.port": "This is not the arm's port. Press Connect and choose another entry.",
+  "fail.silent.setup":
+    "The servos were never set up. lerobot's motor setup gives each servo its ID (1 to 6) and sets 1,000,000 baud; servos fresh from the box all have ID 1.",
+  "fail.silent.cable": "The cable from the adapter board to the first servo is loose.",
+  "fail.silent.scanned":
+    "The page also asked every servo at once, at 1,000,000 baud and at each other baud rate a servo can be set to, so that servos with other ids or another baud rate would have shown: nothing answered.",
+  "fail.silent.notUsb":
+    "The port you chose is not a USB adapter: it has no USB vendor id. It is most likely not the arm's port (on a Mac, the Bluetooth port is such an entry). Press Connect and choose another entry.",
+  "fail.partial.title": "Some servos answer and some do not",
+  "fail.partial.body": "Answering: {answering}. Not answering: {missing}.",
+  "fail.partial.advice":
+    "The servos are chained one after another, from the base to the gripper. Check the three-wire cable on both sides of the first servo that does not answer ({first}) and push its plugs all the way in. If one servo in the middle is silent and the ones after it answer, its ID may be wrong or it may be damaged.",
+  "fail.partial.others":
+    "Servos with other ids answer as well: {others}. A servo of this arm may have been given a wrong id; lerobot's motor setup sets it.",
+  "fail.garbled.title": "The answers are damaged",
+  "fail.garbled.body":
+    "Something answers, but the bytes make no valid packets. Most often several servos share one ID (servos fresh from the box all have ID 1: run lerobot's motor setup first). It may also be another device than the arm on this port: then press Connect and choose another entry. The log at the bottom of the page shows the bytes.",
+  "fail.ids.title": "Servos answer, but not as the ids 1 to 6",
+  "fail.ids.body":
+    "None of the ids 1 to 6 answered when asked by itself, yet when every servo was asked at once these ids answered: {found}. PEAR expects six servos with the ids 1 to 6, from the base to the gripper; lerobot's motor setup gives each servo its id. If the ids listed are among 1 to 6, the line is unreliable or several servos share an id: check the cables and the power supply.",
+  "fail.baud.title": "The servos are set to another baud rate",
+  "fail.baud.body":
+    "Nothing answered at 1,000,000 baud, but at {baud} baud these ids answered when every servo was asked at once: {found}. PEAR and lerobot talk to the servos at 1,000,000 baud; lerobot's motor setup sets each servo to it.",
+  "fail.echo.title": "The adapter sends the page's own bytes back",
+  "fail.echo.body":
+    "The page received what it had just sent. The servos use one wire for both directions, and this adapter does not take its own bytes off the line. pear.js cannot work with such an adapter yet. The adapter board that comes with the SO-101 does not do this.",
+  "fail.model.title": "These are not the servos PEAR expects",
+  "fail.model.body": "PEAR drives Feetech STS3215 servos, whose model number is 777. Found: {found}.",
+  "fail.lost.title": "The connection to the arm was lost",
+  "fail.lost.body":
+    "The USB cable was pulled, or the adapter disappeared. Plug it back in and press Connect. The page does not need to be reloaded.",
+  "fail.unexpected.title": "Something unexpected happened",
+  "fail.unexpected.body": "This is probably a defect in pear.js. Please copy the log at the bottom of the page and report it.",
+  "fail.browserSaid": "The browser said: {detail}",
+  "fail.detail": "Detail: {detail}",
+
+  "warn.servoError.title": "A servo reports an error",
+  "warn.servoError.body":
+    "{faults}. PEAR does not start while a servo reports an error. Look at the voltage and temperature in the table: “voltage” usually means a power supply of the wrong voltage or one that sags, “overload” that a joint was blocked, “temperature” that a servo is hot. Switching the servos' power off and on clears most errors.",
+  "warn.firmware":
+    "The servos run different firmware versions ({versions}). lerobot refuses such an arm; update the servos with Feetech's software until all run the same version.",
+  "warn.handshake":
+    "The first handshake failed, but every servo answered when asked again. The connection may be unreliable: check the cables. lerobot said: {message}",
+  "warn.torque":
+    "Torque is on for {motors}. Another program left it on, so these joints resist your hand. This page does not change it; switching the servos' power off and on releases them.",
+  "warn.uncalibrated.title": "This arm was never calibrated",
+  "warn.uncalibrated.body":
+    "All six servos hold the values they left the factory with (offset 0, range 0 to 4095). PEAR needs lerobot's calibration: run lerobot's calibration of the SO-101 follower once (it stores the values in the servos and writes a calibration file), then connect again. Until then the page can show raw positions only.",
+  "warn.partlyFactory":
+    "{motors} hold factory values (offset 0, range 0 to 4095) while the other servos are calibrated. The calibration looks incomplete: run lerobot's calibration again.",
+  "warn.bounds.title": "A joint is outside PEAR's limits",
+  "warn.bounds.body":
+    "PEAR would refuse to move from this pose: {message}. Move the marked joint back inside its limits. If the arm rests outside them whatever you do, its calibration is probably off.",
+  "warn.reading": "The joint values cannot be computed from these registers: {message}",
+  "warn.line":
+    "The serial line reported an error ({name}; {count} so far) and reading went on. This happens when the servos' power is switched on or off, or when a plug moves. If it keeps happening, check the power supply and the cables.",
+
+  "servos.title": "Servos",
+  "servos.id": "ID",
+  "servos.joint": "Joint",
+  "servos.answer": "Answer",
+  "servos.model": "Model",
+  "servos.firmware": "Firmware",
+  "servos.status": "Status",
+  "servos.voltage": "Voltage",
+  "servos.temperature": "Temperature",
+  "servos.torque": "Torque",
+  "servos.answer.ok": "answers",
+  "servos.answer.silent": "no answer",
+  "servos.answer.garbled": "damaged answer",
+  "servos.answer.error": "answers with an error",
+  "servos.status.ok": "no error",
+  "servos.torque.on": "on",
+  "servos.torque.off": "off",
+
+  "cal.title": "Calibration",
+  "cal.lead":
+    "lerobot's calibration stores each servo's homing offset and range in the servo itself and in a calibration file. The table shows what the servos hold. Load your calibration file to compare the two: PEAR starts only when they are equal.",
+  "cal.id": "ID",
+  "cal.joint": "Joint",
+  "cal.offset": "Homing offset",
+  "cal.range": "Range (steps)",
+  "cal.file": "In the file",
+  "cal.same": "Same?",
+  "cal.same.yes": "same",
+  "cal.same.no": "differs",
+  "cal.same.missing": "not in the file",
+  "cal.fileLabel": "lerobot calibration file (.json)",
+  "cal.fileHint":
+    "lerobot keeps it under ~/.cache/huggingface/lerobot/calibration/robots/, in a folder named after the robot type, as <id>.json. In the macOS file dialog press Cmd+Shift+G to type that path; folders that begin with a dot are hidden, and Cmd+Shift+. shows them. The file stays on this computer.",
+  "cal.remove": "Remove the file",
+  "cal.verdict.equal": "{name} is equal to the servos' registers. PEAR's start-up check passes.",
+  "cal.verdict.different":
+    "{name} differs from the servos' registers. PEAR would stop with “Servo calibration registers differ from the calibration file”. Either this is another arm's file, or the arm was calibrated again after the file was written. Use the file of the last calibration, or calibrate again.",
+  "cal.verdict.missing": "The file has no entry for: {motors}.",
+  "cal.verdict.unchecked": "{name} could not be compared: {problem}",
+  "cal.verdict.waiting": "{name} is loaded. It is compared as soon as an arm is read.",
+  "cal.verdict.invalid": "This is not a lerobot calibration file: {problem}",
+
+  "joints.title": "Joints, live",
+  "joints.lead":
+    "Move the arm by hand and the numbers follow. PEAR's value of a joint is lerobot's reading in radians; the gripper's is its opening, from 0 (closed) to 1 (open).",
+  "joints.joint": "Joint",
+  "joints.raw": "Raw position (steps)",
+  "joints.value": "PEAR's value",
+  "joints.limits": "PEAR's limits",
+  "joints.within": "Within the limits?",
+  "joints.unit.rad": "rad",
+  "joints.unit.opening": "opening",
+  "joints.mark.inside": "inside",
+  "joints.mark.tolerated": "outside, within tolerance",
+  "joints.mark.outside": "outside",
+
+  "state.title": "What the model would be shown",
+  "state.lead":
+    "The fingertip's position in cm, its pitch and roll in rad, and the gripper's width, as PEAR computes them from these joints. The width assumes PEAR's default jaw, 0 to 6 cm; a station measures its own.",
+  "state.none": "Not available without calibrated joint values.",
+  "state.turn": "The text of the turn",
+
+  "sim.title": "Simulated arm",
+  "sim.lead":
+    "Six simulated servos behind a simulated serial port. The page reads them exactly as it reads a real arm. The sliders move the servos directly, as your hand would.",
+  "sim.scenario": "What is wrong with it",
+  "sim.scenario.normal": "Nothing: a calibrated arm",
+  "sim.scenario.missing": "One servo does not answer (elbow_flex)",
+  "sim.scenario.error": "One servo reports an error (wrist_flex: overload)",
+  "sim.scenario.factory": "Never calibrated (factory registers)",
+  "sim.scenario.silent": "Nothing answers (servo power off)",
+  "sim.scenario.ids": "The servos have other ids (11 to 16)",
+  "sim.scenario.baud": "The servos are set to 115,200 baud",
+  "sim.scenario.echo": "The adapter sends bytes back",
+  "sim.scenarioHint": "Choosing one connects again.",
+  "sim.unplug": "Pull the USB cable",
+  "sim.plug": "Plug the cable back in",
+  "sim.steps": "{value} steps",
+
+  "guard.line": "Read-only: {sent} packets sent to the servos, every one a ping or a read ({detail}). Writes refused: {refused}.",
+  "guard.idle": "Read-only: nothing has been sent to a servo yet.",
+  "guard.selftest":
+    "Self-test of the read-only guard when the page loaded: {reading} of {readingTried} kinds of reading packets passed, {writing} of {writingTried} writing or malformed ones refused.",
+  "guard.broken.title": "The read-only guard failed its self-test",
+  "guard.broken.body": "Do not connect an arm with this page. {failures}",
+
+  "camera.title": "Camera",
+  "camera.lead":
+    "PEAR looks through one camera on the wrist. It asks the camera for 640 × 480 at 30 frames a second, and each turn it sends the model one frame as a JPEG of quality 90, neither rotated nor cropped.",
+  "camera.select": "Camera",
+  "camera.option.default": "The browser's choice",
+  "camera.option.unnamed": "Camera {number}",
+  "camera.option.test": "Test picture (no camera needed)",
+  "camera.start": "Start the camera",
+  "camera.stop": "Stop the camera",
+  "camera.capture": "Capture a frame",
+  "camera.hint":
+    "The wrist camera is usually the one in the list that is not your laptop's own. The browser asks for permission the first time.",
+  "camera.status.off": "The camera is off.",
+  "camera.status.starting": "Starting the camera…",
+  "camera.status.live": "{label}: {width} × {height}{rate}.",
+  "camera.status.rate": ", {fps} frames a second",
+  "camera.status.test": "Test picture",
+  "camera.status.unnamed": "Camera",
+  "camera.size.ok": "This is the frame size PEAR asks for.",
+  "camera.size.rescaled":
+    "This camera has no 640 × 480 mode of its own: the browser crops and scales its picture to that size. PEAR's own station would refuse this camera.",
+  "camera.size.other":
+    "This camera delivers {width} × {height}, not the 640 × 480 PEAR asks for. A captured frame keeps the camera's size. PEAR's own station would refuse this camera.",
+  "camera.preview": "Preview",
+  "camera.captured": "The frame a turn would send",
+  "camera.capturedNone": "No frame captured yet.",
+  "camera.info": "JPEG, {width} × {height}, {bytes} bytes, quality {quality}, {subsampling}",
+  "camera.encoder":
+    "The frame is encoded by this browser; PEAR encodes with PIL. Size and quality setting are the same, the bytes are not.",
+  "camera.fail.unavailable":
+    "This page cannot use a camera here: a browser offers cameras only to a page served over https, from localhost, or opened from a folder on this computer. The test picture works all the same.",
+  "camera.fail.NotAllowedError":
+    "The camera was not allowed. Allow it for this page in the browser (the camera icon in the address bar, or the site's settings). On macOS the browser itself needs permission too: System Settings › Privacy & Security › Camera.",
+  "camera.fail.NotFoundError": "No camera was found. Plug in the wrist camera's USB cable; it then appears in the list.",
+  "camera.fail.NotReadableError":
+    "The camera could not be started. Another program is probably using it (a video call, lerobot, another tab): close it and try again.",
+  "camera.fail.TrackEnded":
+    "The camera stopped delivering frames. Was its cable pulled? Plug it back in and start the camera again.",
+  "camera.fail.other": "The camera could not be started: {name}: {message}",
+  "camera.captureProblem": "No frame could be captured: {problem}",
+
+  "model.title": "Model",
+  "model.lead":
+    "pear.js needs a service that serves a PEAR model through the OpenAI-compatible API, such as PEAR's own vLLM server. Check here that this page can reach it.",
+  "model.baseUrl": "Base URL",
+  "model.baseUrlHint": "The address up to the API version, ending in /v1.",
+  "model.name": "Model name (optional)",
+  "model.nameHint": "The name the service serves the model under. Leave it empty if the service serves one model.",
+  "model.key": "API key",
+  "model.keyHint":
+    "Kept in this page's memory only, until you close or reload it. It is never stored and never written to the log. Leave it empty for a service that asks for none.",
+  "model.check": "Check",
+  "model.checking": "Checking…",
+  "model.unchecked": "Not checked yet.",
+  "model.ok": "The service answers, accepts the key and serves {model}.",
+  "model.okFound": "The name was taken from the service's own list.",
+  "model.notServed": "The service answers and accepts the key, but serves no model named {model}. It serves:",
+  "model.choose": "The service answers and accepts the key. It serves several models; choose one:",
+  "model.none": "The service answers and accepts the key, but its list of models is empty.",
+  "model.use": "Use {model}",
+  "model.key.refused":
+    "The service refused the key (HTTP {status}). Check the key. For a service that asks for none, leave the field empty.",
+  "model.notFound":
+    "The address answers, but there is no model list at {where} (HTTP 404). A base URL usually ends in /v1.",
+  "model.http": "The service answered with an error (HTTP {status}).",
+  "model.timeout":
+    "No answer within 3 seconds. The service may still be starting, be overloaded, or be out of reach of this computer.",
+  "model.blocked.title": "The service is there, but the browser withheld its answer",
+  "model.blocked.body":
+    "Something answers at this address, yet the browser did not let this page read the answer, and a browser does not say why. There are two usual reasons:",
+  "model.blocked.origin":
+    "The service does not allow this page's origin ({origin}). Its operator must allow requests from that origin: the methods GET and POST, the headers Authorization and Content-Type, and the browser's preflight request (OPTIONS) without a key. A vLLM server allows every origin unless it was started with --allowed-origins.",
+  "model.blocked.key":
+    "The key is wrong. A vLLM server refuses a wrong key without the header a browser needs before it shows a refusal to a page, so from here a wrong key looks exactly like this.",
+  "model.blocked.folder":
+    "This page was opened from a folder, so its origin is “null”: only a service that allows every origin (*) can be reached from it.",
+  "model.unreachable.title": "Nothing answers at this address",
+  "model.unreachable.body":
+    "The browser could not reach {where}. Check the address and the port, that the service is running, and that this computer can reach it (same network, VPN, firewall).",
+  "model.mixed.title": "This page is on https, and the address is plain http",
+  "model.mixed.body":
+    "The browser gave this page no answer from {where}. A page loaded over https is normally not allowed to ask a plain http address on another machine: the browser refuses the request before it is sent, and tells the page only that it failed. There are two ways out:",
+  "model.mixed.https":
+    "Give the service an https:// address, for example with a reverse proxy or a tunnel that has a certificate, and enter that.",
+  "model.mixed.same":
+    "Or open this page on the same machine as the service and enter http://127.0.0.1 or http://localhost with the service's port: a browser lets an https page ask this computer itself.",
+  "model.mixed.local":
+    "This address is on a local network. Newer versions of Chrome let an https page ask such an address when it is written as numbers, once you allow the page to reach the local network; other browsers refuse it.",
+  "model.permission.prompt":
+    "If the service is on this computer, on your local network or behind a VPN, Chrome asks whether this page may connect to devices on the local network. Allow it. If the question did not appear or you closed it, press Check again.",
+  "model.permission.denied":
+    "Chrome's permission for this page to connect to devices on the local network is set to block. Open the site's settings (the icon to the left of the address), allow it and press Check again.",
+  "model.refused": "This address or key cannot be used. Give an http:// or https:// address without a user name or password in it.",
+  "model.notService":
+    "The address answers, but not as a model service does: {where} did not return a list of models. Is the address right?",
+  "model.clientSaid": "The client said: {message}",
+
+  "task.title": "Task",
+  "task.notice":
+    "This version cannot move the arm, so a task cannot be started yet. This is where you will write the instruction, start the task and stop it.",
+  "task.instruction": "Instruction",
+  "task.placeholder": "Put the red block into the box.",
+  "task.start": "Start",
+  "task.stop": "Stop",
+  "task.stopNote": "Stop stays here whenever the arm can move. In this version it cannot.",
+
+  "log.title": "Log",
+  "log.lead":
+    "What the page did and what it found, for a report when something does not work. It holds no key and no address of your model service. The log is in English.",
+  "log.copy": "Copy the log",
+  "log.copied": "Copied.",
+  "log.copyFailed": "Could not copy. Select the text and copy it yourself.",
+  "log.label": "Log",
+  "timing.button": "Measure timing",
+  "timing.lead":
+    "Measures how long a read of the six positions takes and how regular a 20 ms timer is in this browser. It takes about half a minute, and the numbers go to the log.",
+  "timing.running": "Measuring… ({step})",
+  "timing.needsArm": "Connect an arm first; the simulated one will do.",
+  "timing.done": "Done. The numbers are in the log.",
+
+  "footer.about":
+    "pear.js is an independent, unofficial project. It is not affiliated with or endorsed by the PEAR project or its authors. Experimental software, provided without warranty, under the Apache-2.0 licence.",
+  "footer.network":
+    "This page loads nothing from other sites and sends nothing anywhere, except its requests to the model service you name.",
+  "footer.commit": "pear.js build {build}. Ports PEAR at commit {commit}.",
+  "footer.pearjs": "pear.js on GitHub",
+  "footer.pear": "PEAR on GitHub",
+} as const;
+
+export type TextKey = keyof typeof EN;
+
+export const ZH_TW: Record<TextKey, string> = {
+  "page.title": "pear.js：在瀏覽器裡執行的 PEAR robot station",
+  "page.tagline": "在瀏覽器裡執行的 PEAR robot station，搭配 LeRobot SO-101 使用。",
+  "page.notice":
+    "pear.js 是 PEAR（MIT Han Lab）robot station 的非官方移植，仍在實驗階段。目前這個版本只讀不寫：它會顯示手臂、攝影機與模型服務的狀態，但不會讓手臂動。",
+  "page.skip": "跳到手臂區塊",
+  "page.language": "語言",
+  "page.noscript": "這個頁面需要 JavaScript 才能運作。",
+
+  "arm.title": "手臂",
+  "arm.lead":
+    "把 SO-101 的 USB 線接上這台電腦，打開伺服馬達的電源，再按「連線」並選擇手臂的序列埠。本頁只會讀取伺服馬達的資料，讀取的同時可以用手扳動手臂。",
+  "arm.connect": "連線",
+  "arm.sim": "沒有手臂，先用模擬的試試",
+  "arm.retry": "用同一個埠再試一次",
+  "arm.disconnect": "中斷連線",
+  "arm.status.idle": "尚未連線。",
+  "arm.status.opening": "正在開啟序列埠…",
+  "arm.status.handshake": "正在尋找六顆伺服馬達…",
+  "arm.status.probing": "六顆伺服馬達沒有全部回應。正在尋找其他 ID 的伺服馬達，並改用其他鮑率再問一次，大約需要十秒…",
+  "arm.status.registers": "正在讀取伺服馬達的暫存器…",
+  "arm.status.reading": "已連線，每秒大約讀取十次關節位置。",
+  "arm.status.readingSim": "已連上模擬手臂，每秒大約讀取十次關節位置。",
+  "arm.status.stalled": "伺服馬達沒有回應了。電源還開著嗎？頁面會持續重試。",
+  "arm.status.failed": "沒有連上，原因請看下方。",
+  "arm.readings": "第 {count} 次讀取",
+
+  "fail.insecure.title": "這個頁面目前無法使用 Web Serial",
+  "fail.insecure.body":
+    "瀏覽器只讓透過 https、localhost，或直接從這台電腦的資料夾開啟的頁面使用 Web Serial。請改用其中一種方式開啟本頁。模擬手臂在這裡照樣可以用。",
+  "fail.noSerial.title": "這個瀏覽器不支援 Web Serial",
+  "fail.noSerial.body":
+    "本頁透過 Web Serial 和手臂通訊。電腦版的 Chrome、Edge 與 Opera（macOS、Windows、Linux、ChromeOS）才有這項功能；Firefox、Safari，以及 iPhone、iPad 上的瀏覽器都沒有。請改用 Chrome 或 Edge 開啟本頁。模擬手臂在這裡照樣可以用。",
+  "fail.noPort.title": "沒有選擇序列埠",
+  "fail.noPort.body":
+    "請再按一次「連線」，在瀏覽器跳出的清單裡選擇手臂的 USB 轉接板。接上手臂的 USB 線之後它才會出現：清單開著的時候把線拔掉再插回去，就能看出是哪一項。如果什麼都沒出現，換一條 USB 線（有些線只能充電）或換一個 USB 孔試試。",
+  "fail.open.title": "無法開啟序列埠",
+  "fail.open.body":
+    "很可能有別的程式正在使用它。請先關掉其他會和手臂通訊的程式（lerobot 的校正或遙控腳本、序列埠監控視窗、另一個開著本頁的分頁），再試一次。還是不行的話，把 USB 線拔掉重插，再按「連線」。",
+  "fail.silent.title": "這個埠沒有任何回應",
+  "fail.silent.body": "序列埠開啟了，但六顆伺服馬達都沒有回應。常見的原因：",
+  "fail.silent.power":
+    "伺服馬達沒有電。USB 線只供電給轉接板，伺服馬達要靠另外的電源供應器：請確認它已經接上轉接板並打開開關。",
+  "fail.silent.port": "選到的不是手臂的埠。請按「連線」，改選清單裡的其他項目。",
+  "fail.silent.setup":
+    "伺服馬達還沒有設定過。lerobot 的馬達設定（setup motors）會替每顆馬達指定 ID（1 到 6），並把鮑率設成 1,000,000；全新的馬達 ID 都是 1。",
+  "fail.silent.cable": "轉接板到第一顆伺服馬達的線鬆了。",
+  "fail.silent.scanned":
+    "頁面也同時詢問了線上所有的伺服馬達，先用 1,000,000 的鮑率，再用伺服馬達可以設定的其他每一種鮑率；如果馬達的 ID 或鮑率不對，這樣就會現身。結果都沒有任何回應。",
+  "fail.silent.notUsb":
+    "你選的埠不是 USB 轉接板：它沒有 USB 廠商代碼，多半不是手臂的埠（Mac 上的藍牙埠就是這種項目）。請按「連線」，改選清單裡的其他項目。",
+  "fail.partial.title": "有些伺服馬達有回應，有些沒有",
+  "fail.partial.body": "有回應：{answering}。沒有回應：{missing}。",
+  "fail.partial.advice":
+    "伺服馬達是從底座一顆接一顆串到夾爪的。請檢查第一顆沒有回應的馬達（{first}）兩側的三線排線，把接頭壓到底。如果只有中間某一顆沒回應、後面的卻都有回應，可能是它的 ID 設錯了，或是馬達本身故障。",
+  "fail.partial.others":
+    "另外還有其他 ID 的伺服馬達有回應：{others}。這支手臂可能有某顆馬達的 ID 設錯了；lerobot 的馬達設定（setup motors）可以重新指定。",
+  "fail.garbled.title": "收到的回應是壞的",
+  "fail.garbled.body":
+    "有東西在回應，但收到的位元組拼不成正確的封包。最常見的原因是好幾顆伺服馬達共用同一個 ID（全新的馬達 ID 都是 1，請先執行 lerobot 的馬達設定）。也可能這個埠接的根本不是手臂，而是別的裝置：請按「連線」，改選清單裡的其他項目。頁面最下方的紀錄裡有收到的位元組。",
+  "fail.ids.title": "有伺服馬達回應，但不是 ID 1 到 6",
+  "fail.ids.body":
+    "逐一詢問 ID 1 到 6 時都沒有回應，但同時詢問所有伺服馬達時，有這些 ID 回應：{found}。PEAR 預期六顆伺服馬達的 ID 是 1 到 6，從底座排到夾爪；lerobot 的馬達設定（setup motors）會替每顆馬達指定 ID。如果列出的 ID 就在 1 到 6 之間，表示線路不穩，或是有好幾顆馬達共用同一個 ID：請檢查接線與電源。",
+  "fail.baud.title": "伺服馬達設定的是其他鮑率",
+  "fail.baud.body":
+    "用 1,000,000 的鮑率詢問時沒有任何回應；改用 {baud} 的鮑率同時詢問所有伺服馬達，則有這些 ID 回應：{found}。PEAR 與 lerobot 都用 1,000,000 的鮑率和伺服馬達通訊；lerobot 的馬達設定（setup motors）會把每顆馬達設成這個鮑率。",
+  "fail.echo.title": "轉接板把頁面送出的資料又傳了回來",
+  "fail.echo.body":
+    "頁面收到了自己剛送出去的位元組。伺服馬達收發共用同一條訊號線，而這塊轉接板不會把自己送出的資料從線上濾掉。pear.js 目前還不支援這種轉接板；SO-101 套件附的轉接板不會這樣。",
+  "fail.model.title": "這不是 PEAR 預期的伺服馬達",
+  "fail.model.body": "PEAR 使用的是 Feetech STS3215，型號代碼為 777。實際讀到的是：{found}。",
+  "fail.lost.title": "和手臂的連線中斷了",
+  "fail.lost.body": "USB 線被拔掉了，或是轉接板從系統裡消失了。請把線插回去，再按「連線」，不需要重新整理頁面。",
+  "fail.unexpected.title": "發生了預期之外的狀況",
+  "fail.unexpected.body": "這多半是 pear.js 本身的問題。請複製頁面最下方的紀錄並回報。",
+  "fail.browserSaid": "瀏覽器回報：{detail}",
+  "fail.detail": "詳細訊息：{detail}",
+
+  "warn.servoError.title": "有伺服馬達回報錯誤",
+  "warn.servoError.body":
+    "{faults}。只要有伺服馬達回報錯誤，PEAR 就不會啟動。請看表格裡的電壓與溫度：「voltage」通常表示電源供應器的電壓不對或供電不穩，「overload」表示關節被卡住，「temperature」表示馬達過熱。把伺服馬達的電源關掉再打開，多數錯誤就會消失。",
+  "warn.firmware":
+    "伺服馬達的韌體版本不一致（{versions}）。lerobot 不接受這樣的手臂；請用 Feetech 的軟體把所有馬達更新到同一個版本。",
+  "warn.handshake":
+    "第一次交握（handshake）失敗，但再問一次時每顆伺服馬達都有回應。連線可能不穩定，請檢查接線。lerobot 的訊息：{message}",
+  "warn.torque":
+    "{motors} 的扭力目前是開著的。先前有其他程式沒把它關掉，所以這幾個關節用手扳不太動。本頁不會去更動它；把伺服馬達的電源關掉再打開，關節就會放鬆。",
+  "warn.uncalibrated.title": "這支手臂還沒有校正過",
+  "warn.uncalibrated.body":
+    "六顆伺服馬達存的都是出廠值（偏移 0、範圍 0 到 4095）。PEAR 需要 lerobot 的校正結果：請先對 SO-101 follower 執行一次 lerobot 的校正（它會把數值寫進伺服馬達，並產生一份校正檔），再重新連線。在那之前，本頁只能顯示原始位置。",
+  "warn.partlyFactory":
+    "{motors} 存的是出廠值（偏移 0、範圍 0 到 4095），其他馬達則已經校正。校正看起來沒有做完，請重新執行 lerobot 的校正。",
+  "warn.bounds.title": "有關節超出 PEAR 的限制範圍",
+  "warn.bounds.body":
+    "從這個姿勢開始，PEAR 會拒絕動作：{message}。請把標示出來的關節扳回範圍內。如果怎麼擺都在範圍外，多半是校正有偏差。",
+  "warn.reading": "無法從這些暫存器算出關節值：{message}",
+  "warn.line":
+    "序列線路回報了錯誤（{name}，目前累計 {count} 次），頁面仍繼續讀取。開關伺服馬達的電源，或是接頭晃動時，都可能出現這種狀況；如果一直發生，請檢查電源供應器與接線。",
+
+  "servos.title": "伺服馬達",
+  "servos.id": "ID",
+  "servos.joint": "關節",
+  "servos.answer": "回應",
+  "servos.model": "型號",
+  "servos.firmware": "韌體",
+  "servos.status": "狀態",
+  "servos.voltage": "電壓",
+  "servos.temperature": "溫度",
+  "servos.torque": "扭力",
+  "servos.answer.ok": "有回應",
+  "servos.answer.silent": "沒有回應",
+  "servos.answer.garbled": "回應損壞",
+  "servos.answer.error": "有回應，但回報錯誤",
+  "servos.status.ok": "沒有錯誤",
+  "servos.torque.on": "開",
+  "servos.torque.off": "關",
+
+  "cal.title": "校正",
+  "cal.lead":
+    "lerobot 校正時，會把每顆伺服馬達的歸零偏移（homing offset）與活動範圍同時寫進馬達本身和一份校正檔。下表是馬達裡存的數值。載入你的校正檔就能比對兩者：必須完全一致，PEAR 才會啟動。",
+  "cal.id": "ID",
+  "cal.joint": "關節",
+  "cal.offset": "歸零偏移",
+  "cal.range": "範圍（步）",
+  "cal.file": "校正檔裡的值",
+  "cal.same": "一致嗎？",
+  "cal.same.yes": "一致",
+  "cal.same.no": "不同",
+  "cal.same.missing": "校正檔裡沒有",
+  "cal.fileLabel": "lerobot 校正檔（.json）",
+  "cal.fileHint":
+    "lerobot 預設把它放在 ~/.cache/huggingface/lerobot/calibration/robots/ 底下、以機器人類型命名的資料夾裡，檔名是 <id>.json。在 macOS 的選檔視窗按 Cmd+Shift+G 可以直接輸入這個路徑；以點開頭的資料夾預設是隱藏的，按 Cmd+Shift+. 就會顯示。檔案只會留在這台電腦上。",
+  "cal.remove": "移除校正檔",
+  "cal.verdict.equal": "{name} 和伺服馬達裡的數值一致，PEAR 的啟動檢查可以通過。",
+  "cal.verdict.different":
+    "{name} 和伺服馬達裡的數值不一致。PEAR 會停下來並顯示「Servo calibration registers differ from the calibration file」。可能是拿到了別支手臂的校正檔，也可能是這份檔案產生之後手臂又重新校正過。請改用最後一次校正產生的檔案，或重新校正。",
+  "cal.verdict.missing": "校正檔裡沒有這些項目：{motors}。",
+  "cal.verdict.unchecked": "無法比對 {name}：{problem}",
+  "cal.verdict.waiting": "已載入 {name}。一讀到手臂就會開始比對。",
+  "cal.verdict.invalid": "這不是 lerobot 的校正檔：{problem}",
+
+  "joints.title": "即時關節讀數",
+  "joints.lead":
+    "用手扳動手臂，數值會跟著變。PEAR 的關節值就是 lerobot 的讀數換算成弧度；夾爪則是開合程度，從 0（全關）到 1（全開）。",
+  "joints.joint": "關節",
+  "joints.raw": "原始位置（步）",
+  "joints.value": "PEAR 的關節值",
+  "joints.limits": "PEAR 的限制範圍",
+  "joints.within": "在範圍內嗎？",
+  "joints.unit.rad": "rad",
+  "joints.unit.opening": "開合",
+  "joints.mark.inside": "在範圍內",
+  "joints.mark.tolerated": "超出，但在容許誤差內",
+  "joints.mark.outside": "超出範圍",
+
+  "state.title": "模型會看到的狀態",
+  "state.lead":
+    "指尖的位置（公分）、俯仰角 pitch 與翻滾角 roll（弧度），以及夾爪的開口寬度，都是 PEAR 依目前的關節值算出來的。開口寬度用的是 PEAR 預設的夾爪尺寸（0 到 6 公分），實際數值要自己量。",
+  "state.none": "要有校正過的關節值才能計算。",
+  "state.turn": "這一回合送給模型的文字",
+
+  "sim.title": "模擬手臂",
+  "sim.lead":
+    "六顆模擬伺服馬達，接在一個模擬的序列埠後面。頁面讀取它的方式和讀取真實手臂完全相同。拉動滑桿就像用手扳動關節，會直接改變馬達的位置。",
+  "sim.scenario": "要模擬的狀況",
+  "sim.scenario.normal": "一切正常：已校正的手臂",
+  "sim.scenario.missing": "有一顆馬達沒有回應（elbow_flex）",
+  "sim.scenario.error": "有一顆馬達回報錯誤（wrist_flex：overload）",
+  "sim.scenario.factory": "從未校正（暫存器是出廠值）",
+  "sim.scenario.silent": "完全沒有回應（伺服馬達沒電）",
+  "sim.scenario.ids": "伺服馬達的 ID 不對（11 到 16）",
+  "sim.scenario.baud": "伺服馬達的鮑率設成 115,200",
+  "sim.scenario.echo": "轉接板會把資料傳回來",
+  "sim.scenarioHint": "選擇之後會重新連線。",
+  "sim.unplug": "拔掉 USB 線",
+  "sim.plug": "把 USB 線插回去",
+  "sim.steps": "{value} 步",
+
+  "guard.line": "唯讀保護：已送出 {sent} 個封包給伺服馬達，全部是 ping 或讀取（{detail}）。擋下的寫入：{refused}。",
+  "guard.idle": "唯讀保護：還沒有送出任何封包給伺服馬達。",
+  "guard.selftest":
+    "頁面載入時對唯讀保護做的自我檢查：{readingTried} 種讀取封包放行 {reading} 種，{writingTried} 種寫入或格式錯誤的封包擋下 {writing} 種。",
+  "guard.broken.title": "唯讀保護沒有通過自我檢查",
+  "guard.broken.body": "請不要用這個頁面連接手臂。{failures}",
+
+  "camera.title": "攝影機",
+  "camera.lead":
+    "PEAR 只用手腕上的一支攝影機。它向攝影機要求 640 × 480、每秒 30 張的畫面，每一回合把一張畫面壓成品質 90 的 JPEG 送給模型，不旋轉也不裁切。",
+  "camera.select": "攝影機",
+  "camera.option.default": "由瀏覽器決定",
+  "camera.option.unnamed": "攝影機 {number}",
+  "camera.option.test": "測試圖（不需要攝影機）",
+  "camera.start": "開啟攝影機",
+  "camera.stop": "關閉攝影機",
+  "camera.capture": "擷取一張畫面",
+  "camera.hint": "手腕攝影機通常是清單裡不屬於筆電內建鏡頭的那一支。第一次使用時，瀏覽器會詢問是否允許。",
+  "camera.status.off": "攝影機尚未開啟。",
+  "camera.status.starting": "正在開啟攝影機…",
+  "camera.status.live": "{label}：{width} × {height}{rate}。",
+  "camera.status.rate": "，每秒 {fps} 張",
+  "camera.status.test": "測試圖",
+  "camera.status.unnamed": "攝影機",
+  "camera.size.ok": "這正是 PEAR 要求的畫面大小。",
+  "camera.size.rescaled":
+    "這支攝影機本身沒有 640 × 480 的模式，畫面是瀏覽器裁切、縮放出來的。PEAR 原本的 station 不會接受這支攝影機。",
+  "camera.size.other":
+    "這支攝影機給的是 {width} × {height}，不是 PEAR 要求的 640 × 480。擷取的畫面會維持攝影機的大小。PEAR 原本的 station 不會接受這支攝影機。",
+  "camera.preview": "預覽",
+  "camera.captured": "這一回合會送出的畫面",
+  "camera.capturedNone": "還沒有擷取畫面。",
+  "camera.info": "JPEG，{width} × {height}，{bytes} 位元組，品質 {quality}，{subsampling}",
+  "camera.encoder": "畫面由這個瀏覽器編碼，PEAR 則是用 PIL。兩者的大小與品質設定相同，但位元組不會完全一樣。",
+  "camera.fail.unavailable":
+    "這個頁面目前無法使用攝影機：瀏覽器只讓透過 https、localhost，或直接從這台電腦的資料夾開啟的頁面使用攝影機。測試圖照樣可以用。",
+  "camera.fail.NotAllowedError":
+    "攝影機沒有獲得允許。請在瀏覽器裡允許本頁使用攝影機（網址列上的攝影機圖示，或網站設定）。在 macOS 上，瀏覽器本身也需要權限：系統設定 › 隱私權與安全性 › 相機。",
+  "camera.fail.NotFoundError": "找不到攝影機。請接上手腕攝影機的 USB 線，它就會出現在清單裡。",
+  "camera.fail.NotReadableError":
+    "攝影機無法啟動。很可能有別的程式正在使用它（視訊通話、lerobot、其他分頁），請關掉之後再試一次。",
+  "camera.fail.TrackEnded": "攝影機不再送出畫面。是不是線被拔掉了？請插回去，再重新開啟攝影機。",
+  "camera.fail.other": "攝影機無法啟動：{name}: {message}",
+  "camera.captureProblem": "無法擷取畫面：{problem}",
+
+  "model.title": "模型",
+  "model.lead":
+    "pear.js 需要一個透過 OpenAI 相容 API 提供 PEAR 模型的服務，例如 PEAR 自己的 vLLM 伺服器。可以在這裡檢查本頁連不連得上它。",
+  "model.baseUrl": "服務網址（Base URL）",
+  "model.baseUrlHint": "寫到 API 版本為止，以 /v1 結尾。",
+  "model.name": "模型名稱（可不填）",
+  "model.nameHint": "服務對外提供這個模型時所用的名稱。如果服務只提供一個模型，可以留空。",
+  "model.key": "API 金鑰",
+  "model.keyHint":
+    "只會留在這個頁面的記憶體裡，關閉或重新整理頁面就消失；不會被儲存，也不會寫進紀錄。服務不需要金鑰的話請留空。",
+  "model.check": "檢查",
+  "model.checking": "檢查中…",
+  "model.unchecked": "尚未檢查。",
+  "model.ok": "服務有回應、接受這把金鑰，而且提供 {model}。",
+  "model.okFound": "模型名稱取自服務回傳的清單。",
+  "model.notServed": "服務有回應，也接受這把金鑰，但沒有名為 {model} 的模型。它提供的是：",
+  "model.choose": "服務有回應，也接受這把金鑰。它提供好幾個模型，請選一個：",
+  "model.none": "服務有回應，也接受這把金鑰，但它的模型清單是空的。",
+  "model.use": "使用 {model}",
+  "model.key.refused": "服務拒絕了這把金鑰（HTTP {status}）。請檢查金鑰是否正確；如果服務不需要金鑰，請把欄位留空。",
+  "model.notFound": "這個網址有回應，但 {where} 沒有模型清單（HTTP 404）。服務網址通常以 /v1 結尾。",
+  "model.http": "服務回傳了錯誤（HTTP {status}）。",
+  "model.timeout": "3 秒內沒有回應。服務可能還在啟動、負載過高，或是從這台電腦連不過去。",
+  "model.blocked.title": "服務是通的，但瀏覽器不讓本頁讀取回應",
+  "model.blocked.body": "這個網址確實有東西在回應，瀏覽器卻沒有把回應交給本頁，也不會說明原因。常見的原因有兩個：",
+  "model.blocked.origin":
+    "服務不允許本頁的來源（{origin}）。服務的管理者必須開放這個來源的請求：允許 GET 與 POST 方法、Authorization 與 Content-Type 標頭，並且讓瀏覽器的預檢請求（OPTIONS）不帶金鑰也能通過。vLLM 伺服器預設允許所有來源，除非啟動時加了 --allowed-origins。",
+  "model.blocked.key":
+    "金鑰不對。vLLM 伺服器拒絕錯誤的金鑰時，回應裡少了瀏覽器要求的標頭，瀏覽器因此不會把這個拒絕交給網頁；從這裡看起來，就和現在的狀況一模一樣。",
+  "model.blocked.folder": "本頁是直接從資料夾開啟的，來源會是「null」：只有允許所有來源（*）的服務才連得上。",
+  "model.unreachable.title": "這個網址沒有任何回應",
+  "model.unreachable.body":
+    "瀏覽器連不上 {where}。請檢查網址與連接埠、服務是否正在執行，以及這台電腦能不能連到它（是否在同一個網路、VPN、防火牆）。",
+  "model.mixed.title": "本頁使用 https，但服務網址是一般的 http",
+  "model.mixed.body":
+    "瀏覽器沒有讓本頁取得 {where} 的回應。透過 https 載入的頁面，通常不能連到另一台電腦上的一般 http 網址：瀏覽器會在請求送出之前就擋下來，而且只告訴頁面「請求失敗」。有兩種解法：",
+  "model.mixed.https": "讓服務提供 https:// 開頭的網址（例如在服務前面加一層有憑證的反向代理或通道），再把那個網址填進來。",
+  "model.mixed.same":
+    "或者在執行服務的那台電腦上開啟本頁，網址填 http://127.0.0.1 或 http://localhost，再加上服務的連接埠：瀏覽器允許 https 頁面連到這台電腦本身。",
+  "model.mixed.local":
+    "這個網址位在區域網路內。較新版本的 Chrome 在你允許本頁連線到區域網路之後，會放行以數字寫成的這類網址；其他瀏覽器則會直接擋下。",
+  "model.permission.prompt":
+    "如果服務就在這台電腦上、在你的區域網路裡，或是要透過 VPN 才連得到，Chrome 會詢問是否允許本頁連線到區域網路上的裝置，請選擇允許。如果沒有跳出詢問，或是你把它關掉了，請再按一次「檢查」。",
+  "model.permission.denied":
+    "Chrome 目前封鎖了本頁連線到區域網路上裝置的權限。請打開網站設定（網址左邊的圖示），改成允許，再按一次「檢查」。",
+  "model.refused": "這個網址或金鑰無法使用。請填寫 http:// 或 https:// 開頭的網址，裡面不要帶帳號或密碼。",
+  "model.notService": "這個網址有回應，但不像模型服務：{where} 回傳的不是模型清單。網址填對了嗎？",
+  "model.clientSaid": "用戶端回報：{message}",
+
+  "task.title": "任務",
+  "task.notice": "這個版本還不能讓手臂動，所以目前無法開始任務。之後會在這裡輸入指令、開始任務，以及停止任務。",
+  "task.instruction": "指令",
+  "task.placeholder": "把紅色積木放進盒子裡。",
+  "task.start": "開始",
+  "task.stop": "停止",
+  "task.stopNote": "只要手臂有可能動作，停止鈕就會一直留在這裡。這個版本的手臂不會動。",
+
+  "log.title": "紀錄",
+  "log.lead":
+    "頁面做了什麼、發現了什麼，都記在這裡，遇到問題時可以附在回報裡。裡面沒有金鑰，也沒有模型服務的位址。紀錄內容是英文。",
+  "log.copy": "複製紀錄",
+  "log.copied": "已複製。",
+  "log.copyFailed": "無法自動複製，請自行選取文字後複製。",
+  "log.label": "紀錄",
+  "timing.button": "測量時間",
+  "timing.lead":
+    "測量讀取六個位置要花多久，以及 20 毫秒的計時器在這個瀏覽器裡有多穩定。大約需要半分鐘，結果會寫進紀錄。",
+  "timing.running": "測量中…（{step}）",
+  "timing.needsArm": "請先連上手臂，模擬手臂也可以。",
+  "timing.done": "測量完成，結果已寫進紀錄。",
+
+  "footer.about":
+    "pear.js 是獨立的非官方專案，與 PEAR 專案及其作者沒有隸屬關係，也未獲其背書。本軟體仍屬實驗性質，不提供任何擔保，以 Apache-2.0 授權釋出。",
+  "footer.network": "本頁不會從其他網站載入任何東西，也不會把資料送到任何地方；唯一的例外，是送往你所填模型服務的請求。",
+  "footer.commit": "pear.js 建置版本 {build}。移植自 PEAR 的 commit {commit}。",
+  "footer.pearjs": "GitHub 上的 pear.js",
+  "footer.pear": "GitHub 上的 PEAR",
+};

@@ -2,7 +2,7 @@
 // (pear.js), both run on the same simulated servo chain: the packets each put on the wire, what each read, what
 // each refused and warned of. Nothing is tolerated here: every difference is counted, and the caller decides.
 
-import type { Reading, RunResult, StepError } from "./session";
+import type { Reading, RunResult } from "./session";
 
 const COUNTS_PER_RAD = 4096 / (2 * Math.PI); // of the STS3215's encoder
 const GRIPPER_INDEX = 5;
@@ -53,29 +53,15 @@ export interface Comparison {
   refusals: {
     compared: number;
     sameMessage: number;
-    /** The class names are the same string. */
+    /** The class names are the same string: pear.js's errors carry the names of Python's classes
+     * (type(error).__name__), so nothing stands between the two. */
     sameType: number;
-    /** The candidate's class is the one pear.js documents for the reference's (jsErrorName). */
+    /** The same count as sameType, under the name it had while pear.js's own class names were mapped to Python's;
+     * sim-bridge.test.ts reads it. */
     sameMappedType: number;
     differing: string[];
   };
   warnings: { reference: number; candidate: number; differing: string[] };
-}
-
-/** Returns the name of the pear.js error class that stands for a Python exception of the reference, as
- * docs/progress/feetech.md lists them: a failed packet exchange, an error byte, a servo's fault, anything else. */
-export function jsErrorName(error: StepError): string {
-  switch (error.type) {
-    case "ConnectionError":
-      return "FeetechCommError";
-    case "RuntimeError":
-      return error.message.includes("[RxPacketError]") ? "FeetechStatusError" : "Error";
-    case "ValueError":
-    case "IndexError":
-      return "RangeError";
-    default:
-      return error.type;
-  }
 }
 
 function packetsOf(result: RunResult, sessionIndex: number, direction: "h" | "s"): Map<string, string[]> {
@@ -203,14 +189,11 @@ export function compareResults(reference: RunResult, candidate: RunResult): Comp
             `${where}: message ${JSON.stringify(expectedMessage)} against ${JSON.stringify(foundMessage)}`,
           );
         }
-        if (step.error.type === found.error.type) refusals.sameType += 1;
-        const documented = jsErrorName(step.error);
-        if (documented === found.error.type) {
+        if (step.error.type === found.error.type) {
+          refusals.sameType += 1;
           refusals.sameMappedType += 1;
         } else {
-          refusals.differing.push(
-            `${where}: class ${step.error.type} (pear.js: ${documented}) against ${found.error.type}`,
-          );
+          refusals.differing.push(`${where}: class ${step.error.type} against ${found.error.type}`);
         }
       }
 
@@ -250,8 +233,7 @@ export function describeComparison(comparison: Comparison): string[] {
     ...packets("servo to host packets", comparison.servoPackets),
     readings("readings between commands", comparison.readingsBetween),
     readings("readings while commanded", comparison.readingsCommanded),
-    `refusals: compared ${refusals.compared}, same message ${refusals.sameMessage}, same class name ${refusals.sameType}, ` +
-      `the class pear.js documents for the reference's ${refusals.sameMappedType}`,
+    `refusals: compared ${refusals.compared}, same message ${refusals.sameMessage}, same class name ${refusals.sameType}`,
     ...refusals.differing.slice(0, LISTED).map((line) => `  ${line}`),
     `warnings: reference ${warnings.reference}, candidate ${warnings.candidate}, differing ${warnings.differing.length}`,
     ...warnings.differing.slice(0, LISTED).map((line) => `  ${line}`),

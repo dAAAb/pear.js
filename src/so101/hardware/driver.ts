@@ -1,16 +1,27 @@
-// Ports pear/deploy/station/control/robots/so101/hardware/driver.py. The feedforward it adds to a target
-// (pear/deploy/station/control/robots/so101/joint/feedforward.py) is given to it, not built here.
+// Ports pear/deploy/station/control/robots/so101/hardware/driver.py: the SO-101's driver of the joint layer
+// (pear/deploy/station/control/joint/driver.py, src/station/joint/driver.ts). The feedforward it adds to a target
+// (pear/deploy/station/control/robots/so101/joint/feedforward.py) is given to it, or built by fromConfig as PEAR's
+// constructor builds it.
 
-import { ServoFault, type SO101ArmState } from "./arm_state";
+import { secondsClock, type MonotonicClock } from "../../station/joint/clock";
+import type { ControlConfig } from "../../station/joint/config";
+import { JointDriver, type ArmVectors } from "../../station/joint/driver";
+import type { JointLimitValues } from "../../station/joint/limits";
+import type { SO101RobotConfig } from "../config";
+import { Feedforward as SO101Feedforward } from "../joint/feedforward";
+import { ARM } from "../layout";
+import { ServoFault, SO101ArmState, type SO101ArmReading } from "./arm_state";
+import { SO101Hardware, type SO101Line } from "./arms";
 import { GRIPPER_INDEX, VECTOR_LENGTH } from "./motors";
 
-/** The one arm, which names its targets and its readings (PEAR's layout). */
-export const ARM = "arm";
+// The one arm, which names its targets and its readings: the layout's (src/so101/layout.ts, PEAR's layout.py).
+export { ARM };
 
-/** The arm the driver reads and commands: SO101Hardware. */
+/** The arm the driver reads and commands: SO101Hardware. Its readings are SO101ArmState's fields; SO101Hardware
+ * hands the class. */
 export interface ArmHardware {
-  read(): Promise<SO101ArmState>;
-  readForRecovery(): Promise<SO101ArmState>;
+  read(): Promise<SO101ArmReading>;
+  readForRecovery(): Promise<SO101ArmReading>;
   send(target: readonly number[]): Promise<void>;
   close(): Promise<void>;
 }
@@ -23,22 +34,23 @@ export interface Feedforward {
   offset(target: readonly number[], plannedVelocity: readonly number[] | null, nowS: number): number[];
 }
 
-/** The position bounds of the joint vector, which an offset never pushes a target past. */
-export interface PositionBounds {
-  lowerBounds: readonly number[];
-  upperBounds: readonly number[];
-}
+/** The position bounds of the joint vector, which an offset never pushes a target past: those of the joint
+ * layer's JointLimits, so that a robot's `jointLimits()` is given as it is. */
+export type PositionBounds = Pick<JointLimitValues, "lowerBounds" | "upperBounds">;
 
 export interface SO101DriverOptions {
-  /** A monotonic clock, s; the page's by default. */
-  monotonic?: () => number;
+  /** The clock the feedforward's time is read on: the joint layer's, in seconds; the page's by default. */
+  clock?: Pick<MonotonicClock, "monotonic">;
+  /** A reading of that clock alone, MonotonicClock's `monotonic`, where no clock is at hand; it goes before
+   * `clock`. */
+  monotonic?: MonotonicClock["monotonic"];
   /** Told when a read failed and the last reading is kept, and when a hold goes without its gravity offset. */
   onWarning?: (message: string, error: unknown) => void;
 }
 
 /** The SO-101's servos as the control loop's driver: a target carries the feedforward's goal offset, and a bus
  * glitch keeps the last reading. */
-export class SO101Driver {
+export class SO101Driver extends JointDriver<SO101ArmState> {
   static readonly OFFSET_EPSILON = 1e-6; // a held target's offset this close to the one sent needs no new command
 
   private offset: number[] = new Array<number>(VECTOR_LENGTH).fill(0); // the goal offset last sent
@@ -54,14 +66,36 @@ export class SO101Driver {
     private readonly feedforward: Feedforward | null = null,
     options: SO101DriverOptions = {},
   ) {
-    this.monotonic = options.monotonic ?? (() => performance.now() / 1000);
+    super();
+    const clock = options.clock ?? secondsClock();
+    this.monotonic = options.monotonic ?? (() => clock.monotonic());
     this.onWarning = options.onWarning ?? (() => undefined);
   }
 
-  /** Returns the arm's reading; after a bus glitch, the previous one. */
-  async read(): Promise<Record<string, SO101ArmState | null>> {
+  /**
+   * Returns the driver PEAR's SO101Driver(control_config, robot_config) is: the arm made and enabled from the
+   * station's checked settings (SO101Hardware.fromConfig), the position bounds of its limits, and the feedforward of
+   * its settings, built with the arm enabled; if that fails the arm is released.
+   */
+  static async fromConfig(controlConfig: ControlConfig, robotConfig: SO101RobotConfig, line: SO101Line): Promise<SO101Driver> {
+    const limits = robotConfig.jointLimits(); // whose position bounds an offset never pushes a target past
+    const hardware = await SO101Hardware.fromConfig(controlConfig, robotConfig, line);
+
+    let feedforward: Feedforward | null;
     try {
-      this.state = await this.hardware.read();
+      feedforward = robotConfig.feedforward === null ? null : new SO101Feedforward(robotConfig.feedforward);
+    } catch (error) {
+      await hardware.close();
+      throw error;
+    }
+
+    return new SO101Driver(hardware, limits, feedforward, { clock: line.clock, onWarning: line.onWarning });
+  }
+
+  /** Returns the arm's reading; after a bus glitch, the previous one. */
+  async read(): Promise<Record<string, SO101ArmState>> {
+    try {
+      this.state = SO101ArmState.of(await this.hardware.read());
     } catch (error) {
       // a servo's fault is never a glitch, nor is a failed read before the first command, while enabling settles;
       // a glitch's reading ages until the control loop finds it stale
@@ -69,21 +103,20 @@ export class SO101Driver {
       this.onWarning(`feedback read failed: ${error instanceof Error ? error.message : String(error)}`, error);
     }
 
-    return { [ARM]: this.state };
+    // (as PEAR's: there is no reading yet only when a command went before the first read and that read failed,
+    // which a control loop, reading first, never does)
+    return { [ARM]: this.state as SO101ArmState };
   }
 
   /** Returns the arm's reading after checking that every servo is healthy and still holds torque. */
-  async readForRecovery(): Promise<Record<string, SO101ArmState | null>> {
-    this.state = await this.hardware.readForRecovery();
+  async readForRecovery(): Promise<Record<string, SO101ArmState>> {
+    this.state = SO101ArmState.of(await this.hardware.readForRecovery());
 
     return { [ARM]: this.state };
   }
 
   /** Commands the arm's target with the feedforward of its planned velocity; without velocities it is held. */
-  async send(
-    targets: Readonly<Record<string, readonly number[]>>,
-    velocities: Readonly<Record<string, readonly number[]>> | null = null,
-  ): Promise<void> {
+  async send(targets: ArmVectors, velocities: ArmVectors | null = null): Promise<void> {
     const target = targets[ARM];
     if (velocities === null) {
       await this.hold(target);
@@ -95,12 +128,12 @@ export class SO101Driver {
   }
 
   /** Sends the held target again while the friction offset of the last move fades. */
-  async refreshHold(targets: Readonly<Record<string, readonly number[]>>): Promise<void> {
+  override async refreshHold(targets: ArmVectors): Promise<void> {
     await this.move(targets[ARM], null, true);
   }
 
   /** Returns the arm joints' current feedforward offsets, rad. */
-  telemetry(): { feedforward: number[] } {
+  override telemetry(): { feedforward: number[] } {
     return { feedforward: this.offset.slice(0, GRIPPER_INDEX) };
   }
 

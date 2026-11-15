@@ -6,8 +6,8 @@
 // here a step is an async function and the request a promise, watched in the same order: the same calls of the
 // robot, the same events, the same results and errors. The operator's pause is an AbortSignal.
 
-import { PythonError } from "../protocol/python_json";
 import { MotionStatus, type ModelState, type MotionResult, type SingleArmDelta } from "../protocol/types";
+import { AttributeError } from "../python/errors";
 import { ContextLimit, ModelClient, SessionLost } from "./clients/client";
 import {
   ModelEvent,
@@ -340,7 +340,7 @@ export class StationAgentLoop<State = ModelState, Action = SingleArmDelta> {
     const lastTurn = this.lastTurn;
     if (lastTurn === null) {
       // (what Python raises of a session that has observed no turn yet)
-      throw new PythonError("AttributeError", "'NoneType' object has no attribute 'station_result'", false);
+      throw new AttributeError("'NoneType' object has no attribute 'station_result'");
     }
     lastTurn.stationResult = result;
     this.previousResult = result;

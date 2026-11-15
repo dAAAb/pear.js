@@ -1,0 +1,4721 @@
+{
+ "format": "pear.js-sim-bridge-station-session/1",
+ "about": "Scripted station sessions for ladder step 4 (the station on a simulated SO-101); written by make_station_session.py.",
+ "station": {
+  "control": {
+   "rate_hz": 50,
+   "state_timeout_s": 0.1,
+   "deadline_tolerance_s": 0.05,
+   "settle_timeout_s": 3,
+   "settle_window_s": 0.5,
+   "action_timeout_s": 0.5
+  },
+  "robot": {
+   "hardware": {
+    "joint_offsets": [
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0
+    ],
+    "status_poll_ticks": 10,
+    "position_p_coefficient": 16
+   },
+   "geometry": {
+    "max_rotation_rad": 3.141592653589793,
+    "position_residual_m": 0.001,
+    "rotation_residual_rad": 0.01,
+    "ik_iterations": 200,
+    "gripper_width_cm": [
+     0.4,
+     13.3
+    ]
+   },
+   "limits": {
+    "velocity": [
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     0.5
+    ],
+    "acceleration": [
+     2.0,
+     2.0,
+     2.0,
+     2.0,
+     2.0,
+     2.0
+    ],
+    "jerk": [
+     10.0,
+     10.0,
+     10.0,
+     10.0,
+     10.0,
+     10.0
+    ],
+    "lower_bounds": [
+     -1.7623,
+     -1.74,
+     -1.6503,
+     -1.65,
+     -2.618,
+     0.0
+    ],
+    "upper_bounds": [
+     1.7623,
+     1.74,
+     1.6503,
+     1.65,
+     2.618,
+     1.0
+    ],
+    "tracking_error": [
+     0.25,
+     0.25,
+     0.25,
+     0.25,
+     0.25,
+     1.0
+    ],
+    "stop_acceleration": [
+     6.0,
+     6.0,
+     6.0,
+     6.0,
+     6.0,
+     6.0
+    ],
+    "stop_jerk": [
+     60.0,
+     60.0,
+     60.0,
+     60.0,
+     60.0,
+     60.0
+    ]
+   },
+   "home": {
+    "speed_scale": 0.3333333333333333,
+    "limits": null,
+    "settle_window_s": 0.5,
+    "arrival_timeout_s": 20,
+    "position": [
+     0.0,
+     -0.814,
+     0.077,
+     1.423,
+     -1.613,
+     1.0
+    ],
+    "joint_tolerance": [
+     0.035,
+     0.06,
+     0.06,
+     0.06,
+     0.035
+    ]
+   },
+   "feedforward": {
+    "gravity_compliance": [
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0
+    ],
+    "friction_offset_rad": [
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0
+    ],
+    "friction_load_ratio": [
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   "position_tolerance": 0.06,
+   "gripper_tolerance": 0.02,
+   "feedback_position_tolerance": 0.06,
+   "velocity_tolerance": 0.06
+  },
+  "action_format": "single_arm_pose"
+ },
+ "sessions": [
+  {
+   "name": "a short session from the rest pose",
+   "about": "Enable, look, one small move up from the folded pose the arm is powered up in, look, disable.",
+   "steps": [
+    {
+     "id": "000",
+     "op": "reset"
+    },
+    {
+     "id": "001",
+     "op": "open",
+     "about": "enable: the robot opens, which enables the servos"
+    },
+    {
+     "id": "002",
+     "op": "wait_stationary",
+     "about": "enable: wait until the arm holds still"
+    },
+    {
+     "id": "003",
+     "op": "status",
+     "about": "start or resume: the robot must be READY"
+    },
+    {
+     "id": "004",
+     "op": "new_cancellation"
+    },
+    {
+     "id": "005",
+     "op": "wait_stationary",
+     "turn": 1,
+     "about": "2 cm up from the rest pose"
+    },
+    {
+     "id": "006",
+     "op": "observe",
+     "turn": 1
+    },
+    {
+     "id": "007",
+     "op": "model_state",
+     "turn": 1
+    },
+    {
+     "id": "008",
+     "op": "wait_stationary",
+     "observation": true,
+     "turn": 1
+    },
+    {
+     "id": "009",
+     "op": "hold",
+     "ticks": 10,
+     "turn": 1
+    },
+    {
+     "id": "010",
+     "op": "execute",
+     "action": {
+      "arm": {
+       "x": 0.0,
+       "y": 0.0,
+       "z": 2.0,
+       "pitch": 0.0,
+       "roll": 0.0
+      },
+      "gripper": {
+       "width": 0.0
+      }
+     },
+     "answer": "```json\n{\"arm\": {\"x\": 0.0, \"y\": 0.0, \"z\": 2.0, \"pitch\": 0.0, \"roll\": 0.0}, \"gripper\": {\"width\": 0.0}}\n```",
+     "turn": 1
+    },
+    {
+     "id": "011",
+     "op": "wait_stationary",
+     "about": "what the model would read next"
+    },
+    {
+     "id": "012",
+     "op": "observe"
+    },
+    {
+     "id": "013",
+     "op": "model_state"
+    },
+    {
+     "id": "014",
+     "op": "close",
+     "about": "disable: the robot closes, which releases the servos"
+    }
+   ]
+  },
+  {
+   "name": "a task",
+   "about": "Enable, Home, then turns as a task makes them: each axis alone in both directions, small and large; rotations; combined increments; a zero increment; the gripper on nothing; an arm move with the gripper; two increments the arm cannot reach (the run retries with a fresh observation); ten ordinary turns; one long wait for the model; Home from away with a closed gripper; disable.",
+   "steps": [
+    {
+     "id": "000",
+     "op": "reset"
+    },
+    {
+     "id": "001",
+     "op": "open",
+     "about": "enable: the robot opens, which enables the servos"
+    },
+    {
+     "id": "002",
+     "op": "wait_stationary",
+     "about": "enable: wait until the arm holds still"
+    },
+    {
+     "id": "003",
+     "op": "status",
+     "about": "home: the robot must be READY"
+    },
+    {
+     "id": "004",
+     "op": "new_cancellation"
+    },
+    {
+     "id": "005",
+     "op": "home",
+     "review_ticks": 25,
+     "about": "Home from the folded rest pose: the gripper opens, then the arm returns"
+    },
+    {
+     "id": "006",
+     "op": "status",
+     "about": "start or resume: the robot must be READY"
+    },
+    {
+     "id": "007",
+     "op": "new_cancellation"
+    },
+    {
+     "id": "008",
+     "op": "wait_stationary",
+     "turn": 1,
+     "about": "first turn: 1 cm forward"
+    },
+    {
+     "id": "009",
+     "op": "observe",
+     "turn": 1
+    },
+    {
+     "id": "010",
+     "op": "model_state",
+     "turn": 1
+    },
+    {
+     "id": "011",
+     "op": "wait_stationary",
+     "observation": true,
+     "turn": 1
+    },
+    {
+     "id": "012",
+     "op": "hold",
+     "ticks": 10,
+     "turn": 1
+    },
+    {
+     "id": "013",
+     "op": "execute",
+     "action": {
+      "arm": {
+       "x": 1.0,
+       "y": 0.0,
+       "z": 0.0,
+       "pitch": 0.0,
+       "roll": 0.0
+      },
+      "gripper": {
+       "width": 0.0
+      }
+     },
+     "answer": "The arm is at Home. I move 1 cm forward.\n\n```json\n{\"arm\": {\"x\": 1.0, \"y\": 0.0, \"z\": 0.0, \"pitch\": 0.0, \"roll\": 0.0}, \"gripper\": {\"width\": 0.0}}\n```",
+     "turn": 1
+    },
+    {
+     "id": "014",
+     "op": "wait_stationary",
+     "turn": 2,
+     "about": "1 cm back"
+    },
+    {
+     "id": "015",
+     "op": "observe",
+     "turn": 2
+    },
+    {
+     "id": "016",
+     "op": "model_state",
+     "turn": 2
+    },
+    {
+     "id": "017",
+     "op": "wait_stationary",
+     "observation": true,
+     "turn": 2
+    },
+    {
+     "id": "018",
+     "op": "hold",
+     "ticks": 10,
+     "turn": 2
+    },
+    {
+     "id": "019",
+     "op": "execute",
+     "action": {
+      "arm": {
+       "x": -1.0,
+       "y": 0.0,
+       "z": 0.0,
+       "pitch": 0.0,
+       "roll": 0.0
+      },
+      "gripper": {
+       "width": 0.0
+      }
+     },
+     "answer": "```json\n{\"arm\": {\"x\": -1.0, \"y\": 0.0, \"z\": 0.0, \"pitch\": 0.0, \"roll\": 0.0}, \"gripper\": {\"width\": 0.0}}\n```",
+     "turn": 2
+    },
+    {
+     "id": "020",
+     "op": "wait_stationary",
+     "turn": 3,
+     "about": "1 cm left"
+    },
+    {
+     "id": "021",
+     "op": "observe",
+     "turn": 3
+    },
+    {
+     "id": "022",
+     "op": "model_state",
+     "turn": 3
+    },
+    {
+     "id": "023",
+     "op": "wait_stationary",
+     "observation": true,
+     "turn": 3
+    },
+    {
+     "id": "024",
+     "op": "hold",
+     "ticks": 10,
+     "turn": 3
+    },
+    {
+     "id": "025",
+     "op": "execute",
+     "action": {
+      "arm": {
+       "x": 0.0,
+       "y": 1.0,
+       "z": 0.0,
+       "pitch": 0.0,
+       "roll": 0.0
+      },
+      "gripper": {
+       "width": 0.0
+      }
+     },
+     "answer": "```json\n{\"arm\": {\"x\": 0.0, \"y\": 1.0, \"z\": 0.0, \"pitch\": 0.0, \"roll\": 0.0}, \"gripper\": {\"width\": 0.0}}\n```",
+     "turn": 3
+    },
+    {
+     "id": "026",
+     "op": "wait_stationary",
+     "turn": 4,
+     "about": "1 cm right"
+    },
+    {
+     "id": "027",
+     "op": "observe",
+     "turn": 4
+    },
+    {
+     "id": "028",
+     "op": "model_state",
+     "turn": 4
+    },
+    {
+     "id": "029",
+     "op": "wait_stationary",
+     "observation": true,
+     "turn": 4
+    },
+    {
+     "id": "030",
+     "op": "hold",
+     "ticks": 10,
+     "turn": 4
+    },
+    {
+     "id": "031",
+     "op": "execute",
+     "action": {
+      "arm": {
+       "x": 0.0,
+       "y": -1.0,
+       "z": 0.0,
+       "pitch": 0.0,
+       "roll": 0.0
+      },
+      "gripper": {
+       "width": 0.0
+      }
+     },
+     "answer": "```json\n{\"arm\": {\"x\": 0.0, \"y\": -1.0, \"z\": 0.0, \"pitch\": 0.0, \"roll\": 0.0}, \"gripper\": {\"width\": 0.0}}\n```",
+     "turn": 4
+    },
+    {
+     "id": "032",
+     "op": "wait_stationary",
+     "turn": 5,
+     "about": "1 cm down"
+    },
+    {
+     "id": "033",
+     "op": "observe",
+     "turn": 5
+    },
+    {
+     "id": "034",
+     "op": "model_state",
+     "turn": 5
+    },
+    {
+     "id": "035",
+     "op": "wait_stationary",
+     "observation": true,
+     "turn": 5
+    },
+    {
+     "id": "036",
+     "op": "hold",
+     "ticks": 10,
+     "turn": 5
+    },
+    {
+     "id": "037",
+     "op": "execute",
+     "action": {
+      "arm": {
+       "x": 0.0,
+       "y": 0.0,
+       "z": -1.0,
+       "pitch": 0.0,
+       "roll": 0.0
+      },
+      "gripper": {
+       "width": 0.0
+      }
+     },
+     "answer": "```json\n{\"arm\": {\"x\": 0.0, \"y\": 0.0, \"z\": -1.0, \"pitch\": 0.0, \"roll\": 0.0}, \"gripper\": {\"width\": 0.0}}\n```",
+     "turn": 5
+    },
+    {
+     "id": "038",
+     "op": "wait_stationary",
+     "turn": 6,
+     "about": "1 cm up"
+    },
+    {
+     "id": "039",
+     "op": "observe",
+     "turn": 6
+    },
+    {
+     "id": "040",
+     "op": "model_state",
+     "turn": 6
+    },
+    {
+     "id": "041",
+     "op": "wait_stationary",
+     "observation": true,
+     "turn": 6
+    },
+    {
+     "id": "042",
+     "op": "hold",
+     "ticks": 10,
+     "turn": 6
+    },
+    {
+     "id": "043",
+     "op": "execute",
+     "action": {
+      "arm": {
+       "x": 0.0,
+       "y": 0.0,
+       "z": 1.0,
+       "pitch": 0.0,
+       "roll": 0.0
+      },
+      "gripper": {
+       "width": 0.0
+      }
+     },
+     "answer": "```json\n{\"arm\": {\"x\": 0.0, \"y\": 0.0, \"z\": 1.0, \"pitch\": 0.0, \"roll\": 0.0}, \"gripper\": {\"width\": 0.0}}\n```",
+     "turn": 6
+    },
+    {
+     "id": "044",
+     "op": "wait_stationary",
+     "turn": 7,
+     "about": "a small pitch down"
+    },
+    {
+     "id": "045",
+     "op": "observe",
+     "turn": 7
+    },
+    {
+     "id": "046",
+     "op": "model_state",
+     "turn": 7
+    },
+    {
+     "id": "047",
+     "op": "wait_stationary",
+     "observation": true,
+     "turn": 7
+    },
+    {
+     "id": "048",
+     "op": "hold",
+     "ticks": 10,
+     "turn": 7
+    },
+    {
+     "id": "049",
+     "op": "execute",
+     "action": {
+      "arm": {
+       "x": 0.0,
+       "y": 0.0,
+       "z": 0.0,
+       "pitch": 0.05,
+       "roll": 0.0
+      },
+      "gripper": {
+       "width": 0.0
+      }
+     },
+     "answer": "```json\n{\"arm\": {\"x\": 0.0, \"y\": 0.0, \"z\": 0.0, \"pitch\": 0.05, \"roll\": 0.0}, \"gripper\": {\"width\": 0.0}}\n```",
+     "turn": 7
+    },
+    {
+     "id": "050",
+     "op": "wait_stationary",
+     "turn": 8,
+     "about": "a small pitch up"
+    },
+    {
+     "id": "051",
+     "op": "observe",
+     "turn": 8
+    },
+    {
+     "id": "052",
+     "op": "model_state",
+     "turn": 8
+    },
+    {
+     "id": "053",
+     "op": "wait_stationary",
+     "observation": true,
+     "turn": 8
+    },
+    {
+     "id": "054",
+     "op": "hold",
+     "ticks": 10,
+     "turn": 8
+    },
+    {
+     "id": "055",
+     "op": "execute",
+     "action": {
+      "arm": {
+       "x": 0.0,
+       "y": 0.0,
+       "z": 0.0,
+       "pitch": -0.05,
+       "roll": 0.0
+      },
+      "gripper": {
+       "width": 0.0
+      }
+     },
+     "answer": "```json\n{\"arm\": {\"x\": 0.0, \"y\": 0.0, \"z\": 0.0, \"pitch\": -0.05, \"roll\": 0.0}, \"gripper\": {\"width\": 0.0}}\n```",
+     "turn": 8
+    },
+    {
+     "id": "056",
+     "op": "wait_stationary",
+     "turn": 9,
+     "about": "a small roll"
+    },
+    {
+     "id": "057",
+     "op": "observe",
+     "turn": 9
+    },
+    {
+     "id": "058",
+     "op": "model_state",
+     "turn": 9
+    },
+    {
+     "id": "059",
+     "op": "wait_stationary",
+     "observation": true,
+     "turn": 9
+    },
+    {
+     "id": "060",
+     "op": "hold",
+     "ticks": 10,
+     "turn": 9
+    },
+    {
+     "id": "061",
+     "op": "execute",
+     "action": {
+      "arm": {
+       "x": 0.0,
+       "y": 0.0,
+       "z": 0.0,
+       "pitch": 0.0,
+       "roll": 0.05
+      },
+      "gripper": {
+       "width": 0.0
+      }
+     },
+     "answer": "```json\n{\"arm\": {\"x\": 0.0, \"y\": 0.0, \"z\": 0.0, \"pitch\": 0.0, \"roll\": 0.05}, \"gripper\": {\"width\": 0.0}}\n```",
+     "turn": 9
+    },
+    {
+     "id": "062",
+     "op": "wait_stationary",
+     "turn": 10,
+     "about": "a small roll back"
+    },
+    {
+     "id": "063",
+     "op": "observe",
+     "turn": 10
+    },
+    {
+     "id": "064",
+     "op": "model_state",
+     "turn": 10
+    },
+    {
+     "id": "065",
+     "op": "wait_stationary",
+     "observation": true,
+     "turn": 10
+    },
+    {
+     "id": "066",
+     "op": "hold",
+     "ticks": 10,
+     "turn": 10
+    },
+    {
+     "id": "067",
+     "op": "execute",
+     "action": {
+      "arm": {
+       "x": 0.0,
+       "y": 0.0,
+       "z": 0.0,
+       "pitch": 0.0,
+       "roll": -0.05
+      },
+      "gripper": {
+       "width": 0.0
+      }
+     },
+     "answer": "```json\n{\"arm\": {\"x\": 0.0, \"y\": 0.0, \"z\": 0.0, \"pitch\": 0.0, \"roll\": -0.05}, \"gripper\": {\"width\": 0.0}}\n```",
+     "turn": 10
+    },
+    {
+     "id": "068",
+     "op": "wait_stationary",
+     "turn": 11,
+     "about": "10 cm forward"
+    },
+    {
+     "id": "069",
+     "op": "observe",
+     "turn": 11
+    },
+    {
+     "id": "070",
+     "op": "model_state",
+     "turn": 11
+    },
+    {
+     "id": "071",
+     "op": "wait_stationary",
+     "observation": true,
+     "turn": 11
+    },
+    {
+     "id": "072",
+     "op": "hold",
+     "ticks": 10,
+     "turn": 11
+    },
+    {
+     "id": "073",
+     "op": "execute",
+     "action": {
+      "arm": {
+       "x": 10.0,
+       "y": 0.0,
+       "z": 0.0,
+       "pitch": 0.0,
+       "roll": 0.0
+      },
+      "gripper": {
+       "width": 0.0
+      }
+     },
+     "answer": "```json\n{\"arm\": {\"x\": 10.0, \"y\": 0.0, \"z\": 0.0, \"pitch\": 0.0, \"roll\": 0.0}, \"gripper\": {\"width\": 0.0}}\n```",
+     "turn": 11
+    },
+    {
+     "id": "074",
+     "op": "wait_stationary",
+     "turn": 12,
+     "about": "10 cm back"
+    },
+    {
+     "id": "075",
+     "op": "observe",
+     "turn": 12
+    },
+    {
+     "id": "076",
+     "op": "model_state",
+     "turn": 12
+    },
+    {
+     "id": "077",
+     "op": "wait_stationary",
+     "observation": true,
+     "turn": 12
+    },
+    {
+     "id": "078",
+     "op": "hold",
+     "ticks": 10,
+     "turn": 12
+    },
+    {
+     "id": "079",
+     "op": "execute",
+     "action": {
+      "arm": {
+       "x": -10.0,
+       "y": 0.0,
+       "z": 0.0,
+       "pitch": 0.0,
+       "roll": 0.0
+      },
+      "gripper": {
+       "width": 0.0
+      }
+     },
+     "answer": "```json\n{\"arm\": {\"x\": -10.0, \"y\": 0.0, \"z\": 0.0, \"pitch\": 0.0, \"roll\": 0.0}, \"gripper\": {\"width\": 0.0}}\n```",
+     "turn": 12
+    },
+    {
+     "id": "080",
+     "op": "wait_stationary",
+     "turn": 13,
+     "about": "20 cm left: near the reach to that side"
+    },
+    {
+     "id": "081",
+     "op": "observe",
+     "turn": 13
+    },
+    {
+     "id": "082",
+     "op": "model_state",
+     "turn": 13
+    },
+    {
+     "id": "083",
+     "op": "wait_stationary",
+     "observation": true,
+     "turn": 13
+    },
+    {
+     "id": "084",
+     "op": "hold",
+     "ticks": 10,
+     "turn": 13
+    },
+    {
+     "id": "085",
+     "op": "execute",
+     "action": {
+      "arm": {
+       "x": 0.0,
+       "y": 20.0,
+       "z": 0.0,
+       "pitch": 0.0,
+       "roll": 0.0
+      },
+      "gripper": {
+       "width": 0.0
+      }
+     },
+     "answer": "```json\n{\"arm\": {\"x\": 0.0, \"y\": 20.0, \"z\": 0.0, \"pitch\": 0.0, \"roll\": 0.0}, \"gripper\": {\"width\": 0.0}}\n```",
+     "turn": 13
+    },
+    {
+     "id": "086",
+     "op": "wait_stationary",
+     "turn": 14,
+     "about": "40 cm right, across the whole table"
+    },
+    {
+     "id": "087",
+     "op": "observe",
+     "turn": 14
+    },
+    {
+     "id": "088",
+     "op": "model_state",
+     "turn": 14
+    },
+    {
+     "id": "089",
+     "op": "wait_stationary",
+     "observation": true,
+     "turn": 14
+    },
+    {
+     "id": "090",
+     "op": "hold",
+     "ticks": 10,
+     "turn": 14
+    },
+    {
+     "id": "091",
+     "op": "execute",
+     "action": {
+      "arm": {
+       "x": 0.0,
+       "y": -40.0,
+       "z": 0.0,
+       "pitch": 0.0,
+       "roll": 0.0
+      },
+      "gripper": {
+       "width": 0.0
+      }
+     },
+     "answer": "```json\n{\"arm\": {\"x\": 0.0, \"y\": -40.0, \"z\": 0.0, \"pitch\": 0.0, \"roll\": 0.0}, \"gripper\": {\"width\": 0.0}}\n```",
+     "turn": 14
+    },
+    {
+     "id": "092",
+     "op": "wait_stationary",
+     "turn": 15,
+     "about": "20 cm left, back to the middle"
+    },
+    {
+     "id": "093",
+     "op": "observe",
+     "turn": 15
+    },
+    {
+     "id": "094",
+     "op": "model_state",
+     "turn": 15
+    },
+    {
+     "id": "095",
+     "op": "wait_stationary",
+     "observation": true,
+     "turn": 15
+    },
+    {
+     "id": "096",
+     "op": "hold",
+     "ticks": 10,
+     "turn": 15
+    },
+    {
+     "id": "097",
+     "op": "execute",
+     "action": {
+      "arm": {
+       "x": 0.0,
+       "y": 20.0,
+       "z": 0.0,
+       "pitch": 0.0,
+       "roll": 0.0
+      },
+      "gripper": {
+       "width": 0.0
+      }
+     },
+     "answer": "```json\n{\"arm\": {\"x\": 0.0, \"y\": 20.0, \"z\": 0.0, \"pitch\": 0.0, \"roll\": 0.0}, \"gripper\": {\"width\": 0.0}}\n```",
+     "turn": 15
+    },
+    {
+     "id": "098",
+     "op": "wait_stationary",
+     "turn": 16,
+     "about": "15 cm down"
+    },
+    {
+     "id": "099",
+     "op": "observe",
+     "turn": 16
+    },
+    {
+     "id": "100",
+     "op": "model_state",
+     "turn": 16
+    },
+    {
+     "id": "101",
+     "op": "wait_stationary",
+     "observation": true,
+     "turn": 16
+    },
+    {
+     "id": "102",
+     "op": "hold",
+     "ticks": 10,
+     "turn": 16
+    },
+    {
+     "id": "103",
+     "op": "execute",
+     "action": {
+      "arm": {
+       "x": 0.0,
+       "y": 0.0,
+       "z": -15.0,
+       "pitch": 0.0,
+       "roll": 0.0
+      },
+      "gripper": {
+       "width": 0.0
+      }
+     },
+     "answer": "```json\n{\"arm\": {\"x\": 0.0, \"y\": 0.0, \"z\": -15.0, \"pitch\": 0.0, \"roll\": 0.0}, \"gripper\": {\"width\": 0.0}}\n```",
+     "turn": 16
+    },
+    {
+     "id": "104",
+     "op": "wait_stationary",
+     "turn": 17,
+     "about": "15 cm up"
+    },
+    {
+     "id": "105",
+     "op": "observe",
+     "turn": 17
+    },
+    {
+     "id": "106",
+     "op": "model_state",
+     "turn": 17
+    },
+    {
+     "id": "107",
+     "op": "wait_stationary",
+     "observation": true,
+     "turn": 17
+    },
+    {
+     "id": "108",
+     "op": "hold",
+     "ticks": 10,
+     "turn": 17
+    },
+    {
+     "id": "109",
+     "op": "execute",
+     "action": {
+      "arm": {
+       "x": 0.0,
+       "y": 0.0,
+       "z": 15.0,
+       "pitch": 0.0,
+       "roll": 0.0
+      },
+      "gripper": {
+       "width": 0.0
+      }
+     },
+     "answer": "```json\n{\"arm\": {\"x\": 0.0, \"y\": 0.0, \"z\": 15.0, \"pitch\": 0.0, \"roll\": 0.0}, \"gripper\": {\"width\": 0.0}}\n```",
+     "turn": 17
+    },
+    {
+     "id": "110",
+     "op": "wait_stationary",
+     "turn": 18,
+     "about": "a roll of 3 rad: near the format's bound of pi"
+    },
+    {
+     "id": "111",
+     "op": "observe",
+     "turn": 18
+    },
+    {
+     "id": "112",
+     "op": "model_state",
+     "turn": 18
+    },
+    {
+     "id": "113",
+     "op": "wait_stationary",
+     "observation": true,
+     "turn": 18
+    },
+    {
+     "id": "114",
+     "op": "hold",
+     "ticks": 10,
+     "turn": 18
+    },
+    {
+     "id": "115",
+     "op": "execute",
+     "action": {
+      "arm": {
+       "x": 0.0,
+       "y": 0.0,
+       "z": 0.0,
+       "pitch": 0.0,
+       "roll": 3.0
+      },
+      "gripper": {
+       "width": 0.0
+      }
+     },
+     "answer": "```json\n{\"arm\": {\"x\": 0.0, \"y\": 0.0, \"z\": 0.0, \"pitch\": 0.0, \"roll\": 3.0}, \"gripper\": {\"width\": 0.0}}\n```",
+     "turn": 18
+    },
+    {
+     "id": "116",
+     "op": "wait_stationary",
+     "turn": 19,
+     "about": "and back"
+    },
+    {
+     "id": "117",
+     "op": "observe",
+     "turn": 19
+    },
+    {
+     "id": "118",
+     "op": "model_state",
+     "turn": 19
+    },
+    {
+     "id": "119",
+     "op": "wait_stationary",
+     "observation": true,
+     "turn": 19
+    },
+    {
+     "id": "120",
+     "op": "hold",
+     "ticks": 10,
+     "turn": 19
+    },
+    {
+     "id": "121",
+     "op": "execute",
+     "action": {
+      "arm": {
+       "x": 0.0,
+       "y": 0.0,
+       "z": 0.0,
+       "pitch": 0.0,
+       "roll": -3.0
+      },
+      "gripper": {
+       "width": 0.0
+      }
+     },
+     "answer": "```json\n{\"arm\": {\"x\": 0.0, \"y\": 0.0, \"z\": 0.0, \"pitch\": 0.0, \"roll\": -3.0}, \"gripper\": {\"width\": 0.0}}\n```",
+     "turn": 19
+    },
+    {
+     "id": "122",
+     "op": "wait_stationary",
+     "turn": 20,
+     "about": "the fingertip nearly horizontal: near what the arm reaches"
+    },
+    {
+     "id": "123",
+     "op": "observe",
+     "turn": 20
+    },
+    {
+     "id": "124",
+     "op": "model_state",
+     "turn": 20
+    },
+    {
+     "id": "125",
+     "op": "wait_stationary",
+     "observation": true,
+     "turn": 20
+    },
+    {
+     "id": "126",
+     "op": "hold",
+     "ticks": 10,
+     "turn": 20
+    },
+    {
+     "id": "127",
+     "op": "execute",
+     "action": {
+      "arm": {
+       "x": 0.0,
+       "y": 0.0,
+       "z": 0.0,
+       "pitch": -0.7,
+       "roll": 0.0
+      },
+      "gripper": {
+       "width": 0.0
+      }
+     },
+     "answer": "```json\n{\"arm\": {\"x\": 0.0, \"y\": 0.0, \"z\": 0.0, \"pitch\": -0.7, \"roll\": 0.0}, \"gripper\": {\"width\": 0.0}}\n```",
+     "turn": 20
+    },
+    {
+     "id": "128",
+     "op": "wait_stationary",
+     "turn": 21,
+     "about": "and back"
+    },
+    {
+     "id": "129",
+     "op": "observe",
+     "turn": 21
+    },
+    {
+     "id": "130",
+     "op": "model_state",
+     "turn": 21
+    },
+    {
+     "id": "131",
+     "op": "wait_stationary",
+     "observation": true,
+     "turn": 21
+    },
+    {
+     "id": "132",
+     "op": "hold",
+     "ticks": 10,
+     "turn": 21
+    },
+    {
+     "id": "133",
+     "op": "execute",
+     "action": {
+      "arm": {
+       "x": 0.0,
+       "y": 0.0,
+       "z": 0.0,
+       "pitch": 0.7,
+       "roll": 0.0
+      },
+      "gripper": {
+       "width": 0.0
+      }
+     },
+     "answer": "```json\n{\"arm\": {\"x\": 0.0, \"y\": 0.0, \"z\": 0.0, \"pitch\": 0.7, \"roll\": 0.0}, \"gripper\": {\"width\": 0.0}}\n```",
+     "turn": 21
+    },
+    {
+     "id": "134",
+     "op": "wait_stationary",
+     "turn": 22,
+     "about": "three axes at once"
+    },
+    {
+     "id": "135",
+     "op": "observe",
+     "turn": 22
+    },
+    {
+     "id": "136",
+     "op": "model_state",
+     "turn": 22
+    },
+    {
+     "id": "137",
+     "op": "wait_stationary",
+     "observation": true,
+     "turn": 22
+    },
+    {
+     "id": "138",
+     "op": "hold",
+     "ticks": 10,
+     "turn": 22
+    },
+    {
+     "id": "139",
+     "op": "execute",
+     "action": {
+      "arm": {
+       "x": 3.0,
+       "y": -4.0,
+       "z": -5.0,
+       "pitch": 0.0,
+       "roll": 0.0
+      },
+      "gripper": {
+       "width": 0.0
+      }
+     },
+     "answer": "```json\n{\"arm\": {\"x\": 3.0, \"y\": -4.0, \"z\": -5.0, \"pitch\": 0.0, \"roll\": 0.0}, \"gripper\": {\"width\": 0.0}}\n```",
+     "turn": 22
+    },
+    {
+     "id": "140",
+     "op": "wait_stationary",
+     "turn": 23,
+     "about": "every quantity of the arm at once"
+    },
+    {
+     "id": "141",
+     "op": "observe",
+     "turn": 23
+    },
+    {
+     "id": "142",
+     "op": "model_state",
+     "turn": 23
+    },
+    {
+     "id": "143",
+     "op": "wait_stationary",
+     "observation": true,
+     "turn": 23
+    },
+    {
+     "id": "144",
+     "op": "hold",
+     "ticks": 10,
+     "turn": 23
+    },
+    {
+     "id": "145",
+     "op": "execute",
+     "action": {
+      "arm": {
+       "x": -3.0,
+       "y": 4.0,
+       "z": 5.0,
+       "pitch": -0.3,
+       "roll": 0.4
+      },
+      "gripper": {
+       "width": 0.0
+      }
+     },
+     "answer": "```json\n{\"arm\": {\"x\": -3.0, \"y\": 4.0, \"z\": 5.0, \"pitch\": -0.3, \"roll\": 0.4}, \"gripper\": {\"width\": 0.0}}\n```",
+     "turn": 23
+    },
+    {
+     "id": "146",
+     "op": "wait_stationary",
+     "turn": 24,
+     "about": "both rotations back"
+    },
+    {
+     "id": "147",
+     "op": "observe",
+     "turn": 24
+    },
+    {
+     "id": "148",
+     "op": "model_state",
+     "turn": 24
+    },
+    {
+     "id": "149",
+     "op": "wait_stationary",
+     "observation": true,
+     "turn": 24
+    },
+    {
+     "id": "150",
+     "op": "hold",
+     "ticks": 10,
+     "turn": 24
+    },
+    {
+     "id": "151",
+     "op": "execute",
+     "action": {
+      "arm": {
+       "x": 0.0,
+       "y": 0.0,
+       "z": 0.0,
+       "pitch": 0.3,
+       "roll": -0.4
+      },
+      "gripper": {
+       "width": 0.0
+      }
+     },
+     "answer": "```json\n{\"arm\": {\"x\": 0.0, \"y\": 0.0, \"z\": 0.0, \"pitch\": 0.3, \"roll\": -0.4}, \"gripper\": {\"width\": 0.0}}\n```",
+     "turn": 24
+    },
+    {
+     "id": "152",
+     "op": "wait_stationary",
+     "turn": 25,
+     "about": "a zero increment: nothing to do"
+    },
+    {
+     "id": "153",
+     "op": "observe",
+     "turn": 25
+    },
+    {
+     "id": "154",
+     "op": "model_state",
+     "turn": 25
+    },
+    {
+     "id": "155",
+     "op": "wait_stationary",
+     "observation": true,
+     "turn": 25
+    },
+    {
+     "id": "156",
+     "op": "hold",
+     "ticks": 10,
+     "turn": 25
+    },
+    {
+     "id": "157",
+     "op": "execute",
+     "action": {
+      "arm": {
+       "x": 0.0,
+       "y": 0.0,
+       "z": 0.0,
+       "pitch": 0.0,
+       "roll": 0.0
+      },
+      "gripper": {
+       "width": 0.0
+      }
+     },
+     "answer": "```json\n{\"arm\": {\"x\": 0.0, \"y\": 0.0, \"z\": 0.0, \"pitch\": 0.0, \"roll\": 0.0}, \"gripper\": {\"width\": 0.0}}\n```",
+     "turn": 25
+    },
+    {
+     "id": "158",
+     "op": "wait_stationary",
+     "turn": 26,
+     "about": "the gripper closes on nothing"
+    },
+    {
+     "id": "159",
+     "op": "observe",
+     "turn": 26
+    },
+    {
+     "id": "160",
+     "op": "model_state",
+     "turn": 26
+    },
+    {
+     "id": "161",
+     "op": "wait_stationary",
+     "observation": true,
+     "turn": 26
+    },
+    {
+     "id": "162",
+     "op": "hold",
+     "ticks": 10,
+     "turn": 26
+    },
+    {
+     "id": "163",
+     "op": "execute",
+     "action": {
+      "arm": {
+       "x": 0.0,
+       "y": 0.0,
+       "z": 0.0,
+       "pitch": 0.0,
+       "roll": 0.0
+      },
+      "gripper": {
+       "width": -1.0
+      }
+     },
+     "answer": "```json\n{\"arm\": {\"x\": 0.0, \"y\": 0.0, \"z\": 0.0, \"pitch\": 0.0, \"roll\": 0.0}, \"gripper\": {\"width\": -1.0}}\n```",
+     "turn": 26
+    },
+    {
+     "id": "164",
+     "op": "wait_stationary",
+     "turn": 27,
+     "about": "the gripper opens"
+    },
+    {
+     "id": "165",
+     "op": "observe",
+     "turn": 27
+    },
+    {
+     "id": "166",
+     "op": "model_state",
+     "turn": 27
+    },
+    {
+     "id": "167",
+     "op": "wait_stationary",
+     "observation": true,
+     "turn": 27
+    },
+    {
+     "id": "168",
+     "op": "hold",
+     "ticks": 10,
+     "turn": 27
+    },
+    {
+     "id": "169",
+     "op": "execute",
+     "action": {
+      "arm": {
+       "x": 0.0,
+       "y": 0.0,
+       "z": 0.0,
+       "pitch": 0.0,
+       "roll": 0.0
+      },
+      "gripper": {
+       "width": 1.0
+      }
+     },
+     "answer": "```json\n{\"arm\": {\"x\": 0.0, \"y\": 0.0, \"z\": 0.0, \"pitch\": 0.0, \"roll\": 0.0}, \"gripper\": {\"width\": 1.0}}\n```",
+     "turn": 27
+    },
+    {
+     "id": "170",
+     "op": "wait_stationary",
+     "turn": 28,
+     "about": "an arm move, then the gripper closes"
+    },
+    {
+     "id": "171",
+     "op": "observe",
+     "turn": 28
+    },
+    {
+     "id": "172",
+     "op": "model_state",
+     "turn": 28
+    },
+    {
+     "id": "173",
+     "op": "wait_stationary",
+     "observation": true,
+     "turn": 28
+    },
+    {
+     "id": "174",
+     "op": "hold",
+     "ticks": 10,
+     "turn": 28
+    },
+    {
+     "id": "175",
+     "op": "execute",
+     "action": {
+      "arm": {
+       "x": 0.0,
+       "y": 0.0,
+       "z": -3.0,
+       "pitch": 0.0,
+       "roll": 0.0
+      },
+      "gripper": {
+       "width": -1.0
+      }
+     },
+     "answer": "```json\n{\"arm\": {\"x\": 0.0, \"y\": 0.0, \"z\": -3.0, \"pitch\": 0.0, \"roll\": 0.0}, \"gripper\": {\"width\": -1.0}}\n```",
+     "turn": 28
+    },
+    {
+     "id": "176",
+     "op": "wait_stationary",
+     "turn": 29,
+     "about": "an arm move, then the gripper opens"
+    },
+    {
+     "id": "177",
+     "op": "observe",
+     "turn": 29
+    },
+    {
+     "id": "178",
+     "op": "model_state",
+     "turn": 29
+    },
+    {
+     "id": "179",
+     "op": "wait_stationary",
+     "observation": true,
+     "turn": 29
+    },
+    {
+     "id": "180",
+     "op": "hold",
+     "ticks": 10,
+     "turn": 29
+    },
+    {
+     "id": "181",
+     "op": "execute",
+     "action": {
+      "arm": {
+       "x": 0.0,
+       "y": 0.0,
+       "z": 3.0,
+       "pitch": 0.0,
+       "roll": 0.0
+      },
+      "gripper": {
+       "width": 1.0
+      }
+     },
+     "answer": "```json\n{\"arm\": {\"x\": 0.0, \"y\": 0.0, \"z\": 3.0, \"pitch\": 0.0, \"roll\": 0.0}, \"gripper\": {\"width\": 1.0}}\n```",
+     "turn": 29
+    },
+    {
+     "id": "182",
+     "op": "wait_stationary",
+     "turn": 30,
+     "about": "40 cm forward: out of reach; nothing moves and the report says how far"
+    },
+    {
+     "id": "183",
+     "op": "observe",
+     "turn": 30
+    },
+    {
+     "id": "184",
+     "op": "model_state",
+     "turn": 30
+    },
+    {
+     "id": "185",
+     "op": "wait_stationary",
+     "observation": true,
+     "turn": 30
+    },
+    {
+     "id": "186",
+     "op": "hold",
+     "ticks": 10,
+     "turn": 30
+    },
+    {
+     "id": "187",
+     "op": "execute",
+     "action": {
+      "arm": {
+       "x": 40.0,
+       "y": 0.0,
+       "z": 0.0,
+       "pitch": 0.0,
+       "roll": 0.0
+      },
+      "gripper": {
+       "width": 0.0
+      }
+     },
+     "answer": "```json\n{\"arm\": {\"x\": 40.0, \"y\": 0.0, \"z\": 0.0, \"pitch\": 0.0, \"roll\": 0.0}, \"gripper\": {\"width\": 0.0}}\n```",
+     "turn": 30
+    },
+    {
+     "id": "188",
+     "op": "wait_stationary",
+     "turn": 31,
+     "about": "a roll past the wrist's joint limit: out of reach in the same way"
+    },
+    {
+     "id": "189",
+     "op": "observe",
+     "turn": 31
+    },
+    {
+     "id": "190",
+     "op": "model_state",
+     "turn": 31
+    },
+    {
+     "id": "191",
+     "op": "wait_stationary",
+     "observation": true,
+     "turn": 31
+    },
+    {
+     "id": "192",
+     "op": "hold",
+     "ticks": 10,
+     "turn": 31
+    },
+    {
+     "id": "193",
+     "op": "execute",
+     "action": {
+      "arm": {
+       "x": 0.0,
+       "y": 0.0,
+       "z": 0.0,
+       "pitch": 0.0,
+       "roll": -1.5
+      },
+      "gripper": {
+       "width": 0.0
+      }
+     },
+     "answer": "```json\n{\"arm\": {\"x\": 0.0, \"y\": 0.0, \"z\": 0.0, \"pitch\": 0.0, \"roll\": -1.5}, \"gripper\": {\"width\": 0.0}}\n```",
+     "turn": 31
+    },
+    {
+     "id": "194",
+     "op": "wait_stationary",
+     "turn": 32,
+     "about": "ordinary turn 1 of 10"
+    },
+    {
+     "id": "195",
+     "op": "observe",
+     "turn": 32
+    },
+    {
+     "id": "196",
+     "op": "model_state",
+     "turn": 32
+    },
+    {
+     "id": "197",
+     "op": "wait_stationary",
+     "observation": true,
+     "turn": 32
+    },
+    {
+     "id": "198",
+     "op": "hold",
+     "ticks": 10,
+     "turn": 32
+    },
+    {
+     "id": "199",
+     "op": "execute",
+     "action": {
+      "arm": {
+       "x": 0.0,
+       "y": -5.0,
+       "z": 0.0,
+       "pitch": 0.0,
+       "roll": 0.0
+      },
+      "gripper": {
+       "width": 0.0
+      }
+     },
+     "answer": "```json\n{\"arm\": {\"x\": 0.0, \"y\": -5.0, \"z\": 0.0, \"pitch\": 0.0, \"roll\": 0.0}, \"gripper\": {\"width\": 0.0}}\n```",
+     "turn": 32
+    },
+    {
+     "id": "200",
+     "op": "wait_stationary",
+     "turn": 33,
+     "about": "ordinary turn 2"
+    },
+    {
+     "id": "201",
+     "op": "observe",
+     "turn": 33
+    },
+    {
+     "id": "202",
+     "op": "model_state",
+     "turn": 33
+    },
+    {
+     "id": "203",
+     "op": "wait_stationary",
+     "observation": true,
+     "turn": 33
+    },
+    {
+     "id": "204",
+     "op": "hold",
+     "ticks": 10,
+     "turn": 33
+    },
+    {
+     "id": "205",
+     "op": "execute",
+     "action": {
+      "arm": {
+       "x": 0.0,
+       "y": -5.0,
+       "z": 0.0,
+       "pitch": 0.0,
+       "roll": 0.0
+      },
+      "gripper": {
+       "width": 0.0
+      }
+     },
+     "answer": "```json\n{\"arm\": {\"x\": 0.0, \"y\": -5.0, \"z\": 0.0, \"pitch\": 0.0, \"roll\": 0.0}, \"gripper\": {\"width\": 0.0}}\n```",
+     "turn": 33
+    },
+    {
+     "id": "206",
+     "op": "wait_stationary",
+     "turn": 34,
+     "about": "ordinary turn 3"
+    },
+    {
+     "id": "207",
+     "op": "observe",
+     "turn": 34
+    },
+    {
+     "id": "208",
+     "op": "model_state",
+     "turn": 34
+    },
+    {
+     "id": "209",
+     "op": "wait_stationary",
+     "observation": true,
+     "turn": 34
+    },
+    {
+     "id": "210",
+     "op": "hold",
+     "ticks": 10,
+     "turn": 34
+    },
+    {
+     "id": "211",
+     "op": "execute",
+     "action": {
+      "arm": {
+       "x": -2.0,
+       "y": -3.0,
+       "z": 0.0,
+       "pitch": 0.0,
+       "roll": 0.0
+      },
+      "gripper": {
+       "width": 0.0
+      }
+     },
+     "answer": "```json\n{\"arm\": {\"x\": -2.0, \"y\": -3.0, \"z\": 0.0, \"pitch\": 0.0, \"roll\": 0.0}, \"gripper\": {\"width\": 0.0}}\n```",
+     "turn": 34
+    },
+    {
+     "id": "212",
+     "op": "wait_stationary",
+     "turn": 35,
+     "about": "ordinary turn 4"
+    },
+    {
+     "id": "213",
+     "op": "observe",
+     "turn": 35
+    },
+    {
+     "id": "214",
+     "op": "model_state",
+     "turn": 35
+    },
+    {
+     "id": "215",
+     "op": "wait_stationary",
+     "observation": true,
+     "turn": 35
+    },
+    {
+     "id": "216",
+     "op": "hold",
+     "ticks": 10,
+     "turn": 35
+    },
+    {
+     "id": "217",
+     "op": "execute",
+     "action": {
+      "arm": {
+       "x": 0.0,
+       "y": 0.0,
+       "z": -6.0,
+       "pitch": 0.0,
+       "roll": 0.0
+      },
+      "gripper": {
+       "width": 0.0
+      }
+     },
+     "answer": "```json\n{\"arm\": {\"x\": 0.0, \"y\": 0.0, \"z\": -6.0, \"pitch\": 0.0, \"roll\": 0.0}, \"gripper\": {\"width\": 0.0}}\n```",
+     "turn": 35
+    },
+    {
+     "id": "218",
+     "op": "wait_stationary",
+     "turn": 36,
+     "about": "ordinary turn 5"
+    },
+    {
+     "id": "219",
+     "op": "observe",
+     "turn": 36
+    },
+    {
+     "id": "220",
+     "op": "model_state",
+     "turn": 36
+    },
+    {
+     "id": "221",
+     "op": "wait_stationary",
+     "observation": true,
+     "turn": 36
+    },
+    {
+     "id": "222",
+     "op": "hold",
+     "ticks": 10,
+     "turn": 36
+    },
+    {
+     "id": "223",
+     "op": "execute",
+     "action": {
+      "arm": {
+       "x": 0.0,
+       "y": 0.0,
+       "z": -5.0,
+       "pitch": 0.2,
+       "roll": 0.0
+      },
+      "gripper": {
+       "width": 0.0
+      }
+     },
+     "answer": "```json\n{\"arm\": {\"x\": 0.0, \"y\": 0.0, \"z\": -5.0, \"pitch\": 0.2, \"roll\": 0.0}, \"gripper\": {\"width\": 0.0}}\n```",
+     "turn": 36
+    },
+    {
+     "id": "224",
+     "op": "wait_stationary",
+     "turn": 37,
+     "about": "ordinary turn 6"
+    },
+    {
+     "id": "225",
+     "op": "observe",
+     "turn": 37
+    },
+    {
+     "id": "226",
+     "op": "model_state",
+     "turn": 37
+    },
+    {
+     "id": "227",
+     "op": "wait_stationary",
+     "observation": true,
+     "turn": 37
+    },
+    {
+     "id": "228",
+     "op": "hold",
+     "ticks": 10,
+     "turn": 37
+    },
+    {
+     "id": "229",
+     "op": "execute",
+     "action": {
+      "arm": {
+       "x": 1.0,
+       "y": 0.0,
+       "z": -3.0,
+       "pitch": 0.0,
+       "roll": 0.0
+      },
+      "gripper": {
+       "width": 0.0
+      }
+     },
+     "answer": "```json\n{\"arm\": {\"x\": 1.0, \"y\": 0.0, \"z\": -3.0, \"pitch\": 0.0, \"roll\": 0.0}, \"gripper\": {\"width\": 0.0}}\n```",
+     "turn": 37
+    },
+    {
+     "id": "230",
+     "op": "wait_stationary",
+     "turn": 38,
+     "about": "ordinary turn 7"
+    },
+    {
+     "id": "231",
+     "op": "observe",
+     "turn": 38
+    },
+    {
+     "id": "232",
+     "op": "model_state",
+     "turn": 38
+    },
+    {
+     "id": "233",
+     "op": "wait_stationary",
+     "observation": true,
+     "turn": 38
+    },
+    {
+     "id": "234",
+     "op": "hold",
+     "ticks": 10,
+     "turn": 38
+    },
+    {
+     "id": "235",
+     "op": "execute",
+     "action": {
+      "arm": {
+       "x": 0.0,
+       "y": 0.0,
+       "z": 0.0,
+       "pitch": 0.0,
+       "roll": 0.3
+      },
+      "gripper": {
+       "width": 0.0
+      }
+     },
+     "answer": "```json\n{\"arm\": {\"x\": 0.0, \"y\": 0.0, \"z\": 0.0, \"pitch\": 0.0, \"roll\": 0.3}, \"gripper\": {\"width\": 0.0}}\n```",
+     "turn": 38
+    },
+    {
+     "id": "236",
+     "op": "wait_stationary",
+     "turn": 39,
+     "about": "ordinary turn 8"
+    },
+    {
+     "id": "237",
+     "op": "observe",
+     "turn": 39
+    },
+    {
+     "id": "238",
+     "op": "model_state",
+     "turn": 39
+    },
+    {
+     "id": "239",
+     "op": "wait_stationary",
+     "observation": true,
+     "turn": 39
+    },
+    {
+     "id": "240",
+     "op": "hold",
+     "ticks": 10,
+     "turn": 39
+    },
+    {
+     "id": "241",
+     "op": "execute",
+     "action": {
+      "arm": {
+       "x": 0.0,
+       "y": 1.5,
+       "z": 0.0,
+       "pitch": 0.0,
+       "roll": 0.0
+      },
+      "gripper": {
+       "width": 0.0
+      }
+     },
+     "answer": "```json\n{\"arm\": {\"x\": 0.0, \"y\": 1.5, \"z\": 0.0, \"pitch\": 0.0, \"roll\": 0.0}, \"gripper\": {\"width\": 0.0}}\n```",
+     "turn": 39
+    },
+    {
+     "id": "242",
+     "op": "wait_stationary",
+     "turn": 40,
+     "about": "ordinary turn 9"
+    },
+    {
+     "id": "243",
+     "op": "observe",
+     "turn": 40
+    },
+    {
+     "id": "244",
+     "op": "model_state",
+     "turn": 40
+    },
+    {
+     "id": "245",
+     "op": "wait_stationary",
+     "observation": true,
+     "turn": 40
+    },
+    {
+     "id": "246",
+     "op": "hold",
+     "ticks": 10,
+     "turn": 40
+    },
+    {
+     "id": "247",
+     "op": "execute",
+     "action": {
+      "arm": {
+       "x": 0.0,
+       "y": 0.0,
+       "z": -1.0,
+       "pitch": 0.0,
+       "roll": 0.0
+      },
+      "gripper": {
+       "width": 0.0
+      }
+     },
+     "answer": "```json\n{\"arm\": {\"x\": 0.0, \"y\": 0.0, \"z\": -1.0, \"pitch\": 0.0, \"roll\": 0.0}, \"gripper\": {\"width\": 0.0}}\n```",
+     "turn": 40
+    },
+    {
+     "id": "248",
+     "op": "wait_stationary",
+     "turn": 41,
+     "about": "ordinary turn 10: the gripper closes"
+    },
+    {
+     "id": "249",
+     "op": "observe",
+     "turn": 41
+    },
+    {
+     "id": "250",
+     "op": "model_state",
+     "turn": 41
+    },
+    {
+     "id": "251",
+     "op": "wait_stationary",
+     "observation": true,
+     "turn": 41
+    },
+    {
+     "id": "252",
+     "op": "hold",
+     "ticks": 10,
+     "turn": 41
+    },
+    {
+     "id": "253",
+     "op": "execute",
+     "action": {
+      "arm": {
+       "x": 0.0,
+       "y": 0.0,
+       "z": 0.0,
+       "pitch": 0.0,
+       "roll": 0.0
+      },
+      "gripper": {
+       "width": -1.0
+      }
+     },
+     "answer": "```json\n{\"arm\": {\"x\": 0.0, \"y\": 0.0, \"z\": 0.0, \"pitch\": 0.0, \"roll\": 0.0}, \"gripper\": {\"width\": -1.0}}\n```",
+     "turn": 41
+    },
+    {
+     "id": "254",
+     "op": "wait_stationary",
+     "turn": 42,
+     "about": "a model that takes 3 s to answer"
+    },
+    {
+     "id": "255",
+     "op": "observe",
+     "turn": 42
+    },
+    {
+     "id": "256",
+     "op": "model_state",
+     "turn": 42
+    },
+    {
+     "id": "257",
+     "op": "wait_stationary",
+     "observation": true,
+     "turn": 42
+    },
+    {
+     "id": "258",
+     "op": "hold",
+     "ticks": 150,
+     "turn": 42
+    },
+    {
+     "id": "259",
+     "op": "execute",
+     "action": {
+      "arm": {
+       "x": 0.0,
+       "y": 0.0,
+       "z": 2.0,
+       "pitch": 0.0,
+       "roll": 0.0
+      },
+      "gripper": {
+       "width": 0.0
+      }
+     },
+     "answer": "```json\n{\"arm\": {\"x\": 0.0, \"y\": 0.0, \"z\": 2.0, \"pitch\": 0.0, \"roll\": 0.0}, \"gripper\": {\"width\": 0.0}}\n```",
+     "turn": 42
+    },
+    {
+     "id": "260",
+     "op": "wait_stationary",
+     "about": "what the model would read next"
+    },
+    {
+     "id": "261",
+     "op": "observe"
+    },
+    {
+     "id": "262",
+     "op": "model_state"
+    },
+    {
+     "id": "263",
+     "op": "status",
+     "about": "home: the robot must be READY"
+    },
+    {
+     "id": "264",
+     "op": "new_cancellation"
+    },
+    {
+     "id": "265",
+     "op": "home",
+     "review_ticks": 25,
+     "about": "Home from away, the gripper closed: it opens first"
+    },
+    {
+     "id": "266",
+     "op": "wait_stationary",
+     "about": "the arm at Home"
+    },
+    {
+     "id": "267",
+     "op": "observe"
+    },
+    {
+     "id": "268",
+     "op": "model_state"
+    },
+    {
+     "id": "269",
+     "op": "close",
+     "about": "disable: the robot closes, which releases the servos"
+    }
+   ]
+  },
+  {
+   "name": "what the station refuses",
+   "about": "Increments out of reach in each kind of quantity (retried by the run); a rotation above the planning bound (the run ends and is resumed); two answers that are no action; a Home the operator does not approve.",
+   "steps": [
+    {
+     "id": "000",
+     "op": "reset"
+    },
+    {
+     "id": "001",
+     "op": "open",
+     "about": "enable: the robot opens, which enables the servos"
+    },
+    {
+     "id": "002",
+     "op": "wait_stationary",
+     "about": "enable: wait until the arm holds still"
+    },
+    {
+     "id": "003",
+     "op": "status",
+     "about": "home: the robot must be READY"
+    },
+    {
+     "id": "004",
+     "op": "new_cancellation"
+    },
+    {
+     "id": "005",
+     "op": "home",
+     "review_ticks": 25
+    },
+    {
+     "id": "006",
+     "op": "status",
+     "about": "start or resume: the robot must be READY"
+    },
+    {
+     "id": "007",
+     "op": "new_cancellation"
+    },
+    {
+     "id": "008",
+     "op": "wait_stationary",
+     "turn": 1,
+     "about": "out of reach along x (retry 1 of 5)"
+    },
+    {
+     "id": "009",
+     "op": "observe",
+     "turn": 1
+    },
+    {
+     "id": "010",
+     "op": "model_state",
+     "turn": 1
+    },
+    {
+     "id": "011",
+     "op": "wait_stationary",
+     "observation": true,
+     "turn": 1
+    },
+    {
+     "id": "012",
+     "op": "hold",
+     "ticks": 10,
+     "turn": 1
+    },
+    {
+     "id": "013",
+     "op": "execute",
+     "action": {
+      "arm": {
+       "x": 40.0,
+       "y": 0.0,
+       "z": 0.0,
+       "pitch": 0.0,
+       "roll": 0.0
+      },
+      "gripper": {
+       "width": 0.0
+      }
+     },
+     "answer": "```json\n{\"arm\": {\"x\": 40.0, \"y\": 0.0, \"z\": 0.0, \"pitch\": 0.0, \"roll\": 0.0}, \"gripper\": {\"width\": 0.0}}\n```",
+     "turn": 1
+    },
+    {
+     "id": "014",
+     "op": "wait_stationary",
+     "turn": 2,
+     "about": "out of reach along y (retry 2)"
+    },
+    {
+     "id": "015",
+     "op": "observe",
+     "turn": 2
+    },
+    {
+     "id": "016",
+     "op": "model_state",
+     "turn": 2
+    },
+    {
+     "id": "017",
+     "op": "wait_stationary",
+     "observation": true,
+     "turn": 2
+    },
+    {
+     "id": "018",
+     "op": "hold",
+     "ticks": 10,
+     "turn": 2
+    },
+    {
+     "id": "019",
+     "op": "execute",
+     "action": {
+      "arm": {
+       "x": 0.0,
+       "y": 40.0,
+       "z": 0.0,
+       "pitch": 0.0,
+       "roll": 0.0
+      },
+      "gripper": {
+       "width": 0.0
+      }
+     },
+     "answer": "```json\n{\"arm\": {\"x\": 0.0, \"y\": 40.0, \"z\": 0.0, \"pitch\": 0.0, \"roll\": 0.0}, \"gripper\": {\"width\": 0.0}}\n```",
+     "turn": 2
+    },
+    {
+     "id": "020",
+     "op": "wait_stationary",
+     "turn": 3,
+     "about": "out of reach along z (retry 3)"
+    },
+    {
+     "id": "021",
+     "op": "observe",
+     "turn": 3
+    },
+    {
+     "id": "022",
+     "op": "model_state",
+     "turn": 3
+    },
+    {
+     "id": "023",
+     "op": "wait_stationary",
+     "observation": true,
+     "turn": 3
+    },
+    {
+     "id": "024",
+     "op": "hold",
+     "ticks": 10,
+     "turn": 3
+    },
+    {
+     "id": "025",
+     "op": "execute",
+     "action": {
+      "arm": {
+       "x": 0.0,
+       "y": 0.0,
+       "z": 15.0,
+       "pitch": 0.0,
+       "roll": 0.0
+      },
+      "gripper": {
+       "width": 0.0
+      }
+     },
+     "answer": "```json\n{\"arm\": {\"x\": 0.0, \"y\": 0.0, \"z\": 15.0, \"pitch\": 0.0, \"roll\": 0.0}, \"gripper\": {\"width\": 0.0}}\n```",
+     "turn": 3
+    },
+    {
+     "id": "026",
+     "op": "wait_stationary",
+     "turn": 4,
+     "about": "out of reach in pitch (retry 4)"
+    },
+    {
+     "id": "027",
+     "op": "observe",
+     "turn": 4
+    },
+    {
+     "id": "028",
+     "op": "model_state",
+     "turn": 4
+    },
+    {
+     "id": "029",
+     "op": "wait_stationary",
+     "observation": true,
+     "turn": 4
+    },
+    {
+     "id": "030",
+     "op": "hold",
+     "ticks": 10,
+     "turn": 4
+    },
+    {
+     "id": "031",
+     "op": "execute",
+     "action": {
+      "arm": {
+       "x": 0.0,
+       "y": 0.0,
+       "z": 0.0,
+       "pitch": 1.5,
+       "roll": 0.0
+      },
+      "gripper": {
+       "width": 0.0
+      }
+     },
+     "answer": "```json\n{\"arm\": {\"x\": 0.0, \"y\": 0.0, \"z\": 0.0, \"pitch\": 1.5, \"roll\": 0.0}, \"gripper\": {\"width\": 0.0}}\n```",
+     "turn": 4
+    },
+    {
+     "id": "032",
+     "op": "wait_stationary",
+     "turn": 5,
+     "about": "out of reach in roll: past the wrist's joint limit (retry 5)"
+    },
+    {
+     "id": "033",
+     "op": "observe",
+     "turn": 5
+    },
+    {
+     "id": "034",
+     "op": "model_state",
+     "turn": 5
+    },
+    {
+     "id": "035",
+     "op": "wait_stationary",
+     "observation": true,
+     "turn": 5
+    },
+    {
+     "id": "036",
+     "op": "hold",
+     "ticks": 10,
+     "turn": 5
+    },
+    {
+     "id": "037",
+     "op": "execute",
+     "action": {
+      "arm": {
+       "x": 0.0,
+       "y": 0.0,
+       "z": 0.0,
+       "pitch": 0.0,
+       "roll": -1.5
+      },
+      "gripper": {
+       "width": 0.0
+      }
+     },
+     "answer": "```json\n{\"arm\": {\"x\": 0.0, \"y\": 0.0, \"z\": 0.0, \"pitch\": 0.0, \"roll\": -1.5}, \"gripper\": {\"width\": 0.0}}\n```",
+     "turn": 5
+    },
+    {
+     "id": "038",
+     "op": "wait_stationary",
+     "turn": 6,
+     "about": "out of reach a sixth time, with a gripper command: the run ends"
+    },
+    {
+     "id": "039",
+     "op": "observe",
+     "turn": 6
+    },
+    {
+     "id": "040",
+     "op": "model_state",
+     "turn": 6
+    },
+    {
+     "id": "041",
+     "op": "wait_stationary",
+     "observation": true,
+     "turn": 6
+    },
+    {
+     "id": "042",
+     "op": "hold",
+     "ticks": 10,
+     "turn": 6
+    },
+    {
+     "id": "043",
+     "op": "execute",
+     "action": {
+      "arm": {
+       "x": 40.0,
+       "y": 0.0,
+       "z": 0.0,
+       "pitch": 0.0,
+       "roll": 0.0
+      },
+      "gripper": {
+       "width": -1.0
+      }
+     },
+     "answer": "```json\n{\"arm\": {\"x\": 40.0, \"y\": 0.0, \"z\": 0.0, \"pitch\": 0.0, \"roll\": 0.0}, \"gripper\": {\"width\": -1.0}}\n```",
+     "turn": 6
+    },
+    {
+     "id": "044",
+     "op": "stop",
+     "about": "the console's worker stops the robot after a run that failed"
+    },
+    {
+     "id": "045",
+     "op": "status",
+     "with_snapshot": true
+    },
+    {
+     "id": "046",
+     "op": "status"
+    },
+    {
+     "id": "047",
+     "op": "status",
+     "about": "start or resume: the robot must be READY"
+    },
+    {
+     "id": "048",
+     "op": "new_cancellation"
+    },
+    {
+     "id": "049",
+     "op": "wait_settled",
+     "timeout_s": 10.0,
+     "about": "resume: the run waits for the arm to settle"
+    },
+    {
+     "id": "050",
+     "op": "wait_stationary",
+     "turn": 7,
+     "about": "the turn after it: the model reads that nothing moved"
+    },
+    {
+     "id": "051",
+     "op": "observe",
+     "turn": 7
+    },
+    {
+     "id": "052",
+     "op": "model_state",
+     "turn": 7
+    },
+    {
+     "id": "053",
+     "op": "wait_stationary",
+     "observation": true,
+     "turn": 7
+    },
+    {
+     "id": "054",
+     "op": "hold",
+     "ticks": 10,
+     "turn": 7
+    },
+    {
+     "id": "055",
+     "op": "execute",
+     "action": {
+      "arm": {
+       "x": 1.0,
+       "y": 0.0,
+       "z": 0.0,
+       "pitch": 0.0,
+       "roll": 0.0
+      },
+      "gripper": {
+       "width": 0.0
+      }
+     },
+     "answer": "```json\n{\"arm\": {\"x\": 1.0, \"y\": 0.0, \"z\": 0.0, \"pitch\": 0.0, \"roll\": 0.0}, \"gripper\": {\"width\": 0.0}}\n```",
+     "turn": 7
+    },
+    {
+     "id": "056",
+     "op": "wait_stationary",
+     "turn": 8,
+     "about": "a roll above the planning bound of pi: refused as a ValueError; the run ends"
+    },
+    {
+     "id": "057",
+     "op": "observe",
+     "turn": 8
+    },
+    {
+     "id": "058",
+     "op": "model_state",
+     "turn": 8
+    },
+    {
+     "id": "059",
+     "op": "wait_stationary",
+     "observation": true,
+     "turn": 8
+    },
+    {
+     "id": "060",
+     "op": "hold",
+     "ticks": 10,
+     "turn": 8
+    },
+    {
+     "id": "061",
+     "op": "execute",
+     "action": {
+      "arm": {
+       "x": 0.0,
+       "y": 0.0,
+       "z": 0.0,
+       "pitch": 0.0,
+       "roll": 3.5
+      },
+      "gripper": {
+       "width": 0.0
+      }
+     },
+     "answer": "```json\n{\"arm\": {\"x\": 0.0, \"y\": 0.0, \"z\": 0.0, \"pitch\": 0.0, \"roll\": 3.5}, \"gripper\": {\"width\": 0.0}}\n```",
+     "turn": 8
+    },
+    {
+     "id": "062",
+     "op": "stop",
+     "about": "the console's worker stops the robot after a run that failed"
+    },
+    {
+     "id": "063",
+     "op": "status",
+     "with_snapshot": true
+    },
+    {
+     "id": "064",
+     "op": "status"
+    },
+    {
+     "id": "065",
+     "op": "status",
+     "about": "start or resume: the robot must be READY"
+    },
+    {
+     "id": "066",
+     "op": "new_cancellation"
+    },
+    {
+     "id": "067",
+     "op": "wait_settled",
+     "timeout_s": 10.0,
+     "about": "resume: the run waits for the arm to settle"
+    },
+    {
+     "id": "068",
+     "op": "wait_stationary",
+     "turn": 9,
+     "about": "the turn after it: the model reads why"
+    },
+    {
+     "id": "069",
+     "op": "observe",
+     "turn": 9
+    },
+    {
+     "id": "070",
+     "op": "model_state",
+     "turn": 9
+    },
+    {
+     "id": "071",
+     "op": "wait_stationary",
+     "observation": true,
+     "turn": 9
+    },
+    {
+     "id": "072",
+     "op": "hold",
+     "ticks": 10,
+     "turn": 9
+    },
+    {
+     "id": "073",
+     "op": "execute",
+     "action": {
+      "arm": {
+       "x": -1.0,
+       "y": 0.0,
+       "z": 0.0,
+       "pitch": 0.0,
+       "roll": 0.0
+      },
+      "gripper": {
+       "width": 0.0
+      }
+     },
+     "answer": "```json\n{\"arm\": {\"x\": -1.0, \"y\": 0.0, \"z\": 0.0, \"pitch\": 0.0, \"roll\": 0.0}, \"gripper\": {\"width\": 0.0}}\n```",
+     "turn": 9
+    },
+    {
+     "id": "074",
+     "op": "wait_stationary",
+     "turn": 10,
+     "about": "an answer without a json block"
+    },
+    {
+     "id": "075",
+     "op": "observe",
+     "turn": 10
+    },
+    {
+     "id": "076",
+     "op": "model_state",
+     "turn": 10
+    },
+    {
+     "id": "077",
+     "op": "wait_stationary",
+     "observation": true,
+     "turn": 10
+    },
+    {
+     "id": "078",
+     "op": "hold",
+     "ticks": 10,
+     "turn": 10
+    },
+    {
+     "id": "079",
+     "op": "parse",
+     "answer": "I will move the arm forward by one centimeter.",
+     "turn": 10
+    },
+    {
+     "id": "080",
+     "op": "stop",
+     "about": "the turn loop stops the robot when a turn fails"
+    },
+    {
+     "id": "081",
+     "op": "failure_result",
+     "error": {
+      "from": "last_error"
+     },
+     "status": "rejected",
+     "dispatched": false,
+     "turn": 10,
+     "about": "recorded as rejected and never dispatched"
+    },
+    {
+     "id": "082",
+     "op": "stop",
+     "about": "the console's worker stops the robot after a run that failed"
+    },
+    {
+     "id": "083",
+     "op": "status",
+     "with_snapshot": true
+    },
+    {
+     "id": "084",
+     "op": "status"
+    },
+    {
+     "id": "085",
+     "op": "status",
+     "about": "start or resume: the robot must be READY"
+    },
+    {
+     "id": "086",
+     "op": "new_cancellation"
+    },
+    {
+     "id": "087",
+     "op": "wait_settled",
+     "timeout_s": 10.0,
+     "about": "resume: the run waits for the arm to settle"
+    },
+    {
+     "id": "088",
+     "op": "wait_stationary",
+     "turn": 11,
+     "about": "the turn after it"
+    },
+    {
+     "id": "089",
+     "op": "observe",
+     "turn": 11
+    },
+    {
+     "id": "090",
+     "op": "model_state",
+     "turn": 11
+    },
+    {
+     "id": "091",
+     "op": "wait_stationary",
+     "observation": true,
+     "turn": 11
+    },
+    {
+     "id": "092",
+     "op": "hold",
+     "ticks": 10,
+     "turn": 11
+    },
+    {
+     "id": "093",
+     "op": "execute",
+     "action": {
+      "arm": {
+       "x": 0.0,
+       "y": 1.0,
+       "z": 0.0,
+       "pitch": 0.0,
+       "roll": 0.0
+      },
+      "gripper": {
+       "width": 0.0
+      }
+     },
+     "answer": "```json\n{\"arm\": {\"x\": 0.0, \"y\": 1.0, \"z\": 0.0, \"pitch\": 0.0, \"roll\": 0.0}, \"gripper\": {\"width\": 0.0}}\n```",
+     "turn": 11
+    },
+    {
+     "id": "094",
+     "op": "wait_stationary",
+     "turn": 12,
+     "about": "an answer that lacks quantities"
+    },
+    {
+     "id": "095",
+     "op": "observe",
+     "turn": 12
+    },
+    {
+     "id": "096",
+     "op": "model_state",
+     "turn": 12
+    },
+    {
+     "id": "097",
+     "op": "wait_stationary",
+     "observation": true,
+     "turn": 12
+    },
+    {
+     "id": "098",
+     "op": "hold",
+     "ticks": 10,
+     "turn": 12
+    },
+    {
+     "id": "099",
+     "op": "parse",
+     "answer": "```json\n{\"arm\": {\"x\": 1.0, \"y\": 0.0, \"z\": 0.0}, \"gripper\": {\"width\": 0.0}}\n```",
+     "turn": 12
+    },
+    {
+     "id": "100",
+     "op": "stop",
+     "about": "the turn loop stops the robot when a turn fails"
+    },
+    {
+     "id": "101",
+     "op": "failure_result",
+     "error": {
+      "from": "last_error"
+     },
+     "status": "rejected",
+     "dispatched": false,
+     "turn": 12,
+     "about": "recorded as rejected and never dispatched"
+    },
+    {
+     "id": "102",
+     "op": "stop",
+     "about": "the console's worker stops the robot after a run that failed"
+    },
+    {
+     "id": "103",
+     "op": "status",
+     "with_snapshot": true
+    },
+    {
+     "id": "104",
+     "op": "status"
+    },
+    {
+     "id": "105",
+     "op": "status",
+     "about": "start or resume: the robot must be READY"
+    },
+    {
+     "id": "106",
+     "op": "new_cancellation"
+    },
+    {
+     "id": "107",
+     "op": "wait_settled",
+     "timeout_s": 10.0,
+     "about": "resume: the run waits for the arm to settle"
+    },
+    {
+     "id": "108",
+     "op": "wait_stationary",
+     "turn": 13,
+     "about": "the turn after it"
+    },
+    {
+     "id": "109",
+     "op": "observe",
+     "turn": 13
+    },
+    {
+     "id": "110",
+     "op": "model_state",
+     "turn": 13
+    },
+    {
+     "id": "111",
+     "op": "wait_stationary",
+     "observation": true,
+     "turn": 13
+    },
+    {
+     "id": "112",
+     "op": "hold",
+     "ticks": 10,
+     "turn": 13
+    },
+    {
+     "id": "113",
+     "op": "execute",
+     "action": {
+      "arm": {
+       "x": 0.0,
+       "y": 1.0,
+       "z": 0.0,
+       "pitch": 0.0,
+       "roll": 0.0
+      },
+      "gripper": {
+       "width": 0.0
+      }
+     },
+     "answer": "```json\n{\"arm\": {\"x\": 0.0, \"y\": 1.0, \"z\": 0.0, \"pitch\": 0.0, \"roll\": 0.0}, \"gripper\": {\"width\": 0.0}}\n```",
+     "turn": 13
+    },
+    {
+     "id": "114",
+     "op": "wait_stationary",
+     "about": "what the model would read next"
+    },
+    {
+     "id": "115",
+     "op": "observe"
+    },
+    {
+     "id": "116",
+     "op": "model_state"
+    },
+    {
+     "id": "117",
+     "op": "status",
+     "about": "home: the robot must be READY"
+    },
+    {
+     "id": "118",
+     "op": "new_cancellation"
+    },
+    {
+     "id": "119",
+     "op": "home",
+     "review_ticks": 25,
+     "approve": false,
+     "about": "a Home whose plan the operator does not approve: nothing moves"
+    },
+    {
+     "id": "120",
+     "op": "stop",
+     "about": "the console's worker stops the robot after a run that failed"
+    },
+    {
+     "id": "121",
+     "op": "status",
+     "with_snapshot": true
+    },
+    {
+     "id": "122",
+     "op": "status"
+    },
+    {
+     "id": "123",
+     "op": "close",
+     "about": "disable: the robot closes, which releases the servos"
+    }
+   ]
+  },
+  {
+   "name": "the jaw stops on an object",
+   "about": "The arm reaches down to the table in three turns; a 2 cm cube is put between the fingers; the gripper closes and stops on it; the arm lifts the cube and opens the gripper; Home; disable.",
+   "objects": true,
+   "steps": [
+    {
+     "id": "000",
+     "op": "reset"
+    },
+    {
+     "id": "001",
+     "op": "open",
+     "about": "enable: the robot opens, which enables the servos"
+    },
+    {
+     "id": "002",
+     "op": "wait_stationary",
+     "about": "enable: wait until the arm holds still"
+    },
+    {
+     "id": "003",
+     "op": "status",
+     "about": "home: the robot must be READY"
+    },
+    {
+     "id": "004",
+     "op": "new_cancellation"
+    },
+    {
+     "id": "005",
+     "op": "home",
+     "review_ticks": 25
+    },
+    {
+     "id": "006",
+     "op": "status",
+     "about": "start or resume: the robot must be READY"
+    },
+    {
+     "id": "007",
+     "op": "new_cancellation"
+    },
+    {
+     "id": "008",
+     "op": "wait_stationary",
+     "turn": 1,
+     "about": "12 cm down"
+    },
+    {
+     "id": "009",
+     "op": "observe",
+     "turn": 1
+    },
+    {
+     "id": "010",
+     "op": "model_state",
+     "turn": 1
+    },
+    {
+     "id": "011",
+     "op": "wait_stationary",
+     "observation": true,
+     "turn": 1
+    },
+    {
+     "id": "012",
+     "op": "hold",
+     "ticks": 10,
+     "turn": 1
+    },
+    {
+     "id": "013",
+     "op": "execute",
+     "action": {
+      "arm": {
+       "x": 0.0,
+       "y": 0.0,
+       "z": -12.0,
+       "pitch": 0.0,
+       "roll": 0.0
+      },
+      "gripper": {
+       "width": 0.0
+      }
+     },
+     "answer": "```json\n{\"arm\": {\"x\": 0.0, \"y\": 0.0, \"z\": -12.0, \"pitch\": 0.0, \"roll\": 0.0}, \"gripper\": {\"width\": 0.0}}\n```",
+     "turn": 1
+    },
+    {
+     "id": "014",
+     "op": "wait_stationary",
+     "turn": 2,
+     "about": "6 cm down, the fingers tilting down"
+    },
+    {
+     "id": "015",
+     "op": "observe",
+     "turn": 2
+    },
+    {
+     "id": "016",
+     "op": "model_state",
+     "turn": 2
+    },
+    {
+     "id": "017",
+     "op": "wait_stationary",
+     "observation": true,
+     "turn": 2
+    },
+    {
+     "id": "018",
+     "op": "hold",
+     "ticks": 10,
+     "turn": 2
+    },
+    {
+     "id": "019",
+     "op": "execute",
+     "action": {
+      "arm": {
+       "x": 0.0,
+       "y": 0.0,
+       "z": -6.0,
+       "pitch": 0.4,
+       "roll": 0.0
+      },
+      "gripper": {
+       "width": 0.0
+      }
+     },
+     "answer": "```json\n{\"arm\": {\"x\": 0.0, \"y\": 0.0, \"z\": -6.0, \"pitch\": 0.4, \"roll\": 0.0}, \"gripper\": {\"width\": 0.0}}\n```",
+     "turn": 2
+    },
+    {
+     "id": "020",
+     "op": "wait_stationary",
+     "turn": 3,
+     "about": "the fingertip 1.4 cm above the table, the fingers pointing down"
+    },
+    {
+     "id": "021",
+     "op": "observe",
+     "turn": 3
+    },
+    {
+     "id": "022",
+     "op": "model_state",
+     "turn": 3
+    },
+    {
+     "id": "023",
+     "op": "wait_stationary",
+     "observation": true,
+     "turn": 3
+    },
+    {
+     "id": "024",
+     "op": "hold",
+     "ticks": 10,
+     "turn": 3
+    },
+    {
+     "id": "025",
+     "op": "execute",
+     "action": {
+      "arm": {
+       "x": 0.0,
+       "y": 0.0,
+       "z": -1.5,
+       "pitch": 0.4,
+       "roll": 0.0
+      },
+      "gripper": {
+       "width": 0.0
+      }
+     },
+     "answer": "```json\n{\"arm\": {\"x\": 0.0, \"y\": 0.0, \"z\": -1.5, \"pitch\": 0.4, \"roll\": 0.0}, \"gripper\": {\"width\": 0.0}}\n```",
+     "turn": 3
+    },
+    {
+     "id": "026",
+     "op": "place",
+     "object": "small_cube",
+     "position_m": [
+      0.225,
+      -0.0121,
+      0.0105
+     ],
+     "about": "a hand puts the 2 cm cube on the table between the fingers"
+    },
+    {
+     "id": "027",
+     "op": "idle",
+     "ticks": 25
+    },
+    {
+     "id": "028",
+     "op": "wait_stationary",
+     "turn": 4,
+     "about": "the gripper closes: the jaw stops on the cube"
+    },
+    {
+     "id": "029",
+     "op": "observe",
+     "turn": 4
+    },
+    {
+     "id": "030",
+     "op": "model_state",
+     "turn": 4
+    },
+    {
+     "id": "031",
+     "op": "wait_stationary",
+     "observation": true,
+     "turn": 4
+    },
+    {
+     "id": "032",
+     "op": "hold",
+     "ticks": 10,
+     "turn": 4
+    },
+    {
+     "id": "033",
+     "op": "execute",
+     "action": {
+      "arm": {
+       "x": 0.0,
+       "y": 0.0,
+       "z": 0.0,
+       "pitch": 0.0,
+       "roll": 0.0
+      },
+      "gripper": {
+       "width": -1.0
+      }
+     },
+     "answer": "```json\n{\"arm\": {\"x\": 0.0, \"y\": 0.0, \"z\": 0.0, \"pitch\": 0.0, \"roll\": 0.0}, \"gripper\": {\"width\": -1.0}}\n```",
+     "turn": 4
+    },
+    {
+     "id": "034",
+     "op": "wait_stationary",
+     "turn": 5,
+     "about": "6 cm up, with the cube"
+    },
+    {
+     "id": "035",
+     "op": "observe",
+     "turn": 5
+    },
+    {
+     "id": "036",
+     "op": "model_state",
+     "turn": 5
+    },
+    {
+     "id": "037",
+     "op": "wait_stationary",
+     "observation": true,
+     "turn": 5
+    },
+    {
+     "id": "038",
+     "op": "hold",
+     "ticks": 10,
+     "turn": 5
+    },
+    {
+     "id": "039",
+     "op": "execute",
+     "action": {
+      "arm": {
+       "x": 0.0,
+       "y": 0.0,
+       "z": 6.0,
+       "pitch": 0.0,
+       "roll": 0.0
+      },
+      "gripper": {
+       "width": 0.0
+      }
+     },
+     "answer": "```json\n{\"arm\": {\"x\": 0.0, \"y\": 0.0, \"z\": 6.0, \"pitch\": 0.0, \"roll\": 0.0}, \"gripper\": {\"width\": 0.0}}\n```",
+     "turn": 5
+    },
+    {
+     "id": "040",
+     "op": "idle",
+     "ticks": 50
+    },
+    {
+     "id": "041",
+     "op": "wait_stationary",
+     "turn": 6,
+     "about": "the gripper opens: the cube falls"
+    },
+    {
+     "id": "042",
+     "op": "observe",
+     "turn": 6
+    },
+    {
+     "id": "043",
+     "op": "model_state",
+     "turn": 6
+    },
+    {
+     "id": "044",
+     "op": "wait_stationary",
+     "observation": true,
+     "turn": 6
+    },
+    {
+     "id": "045",
+     "op": "hold",
+     "ticks": 10,
+     "turn": 6
+    },
+    {
+     "id": "046",
+     "op": "execute",
+     "action": {
+      "arm": {
+       "x": 0.0,
+       "y": 0.0,
+       "z": 0.0,
+       "pitch": 0.0,
+       "roll": 0.0
+      },
+      "gripper": {
+       "width": 1.0
+      }
+     },
+     "answer": "```json\n{\"arm\": {\"x\": 0.0, \"y\": 0.0, \"z\": 0.0, \"pitch\": 0.0, \"roll\": 0.0}, \"gripper\": {\"width\": 1.0}}\n```",
+     "turn": 6
+    },
+    {
+     "id": "047",
+     "op": "idle",
+     "ticks": 50
+    },
+    {
+     "id": "048",
+     "op": "wait_stationary",
+     "about": "what the model would read next"
+    },
+    {
+     "id": "049",
+     "op": "observe"
+    },
+    {
+     "id": "050",
+     "op": "model_state"
+    },
+    {
+     "id": "051",
+     "op": "status",
+     "about": "home: the robot must be READY"
+    },
+    {
+     "id": "052",
+     "op": "new_cancellation"
+    },
+    {
+     "id": "053",
+     "op": "home",
+     "review_ticks": 25,
+     "about": "Home: the gripper is open, the arm returns"
+    },
+    {
+     "id": "054",
+     "op": "close",
+     "about": "disable: the robot closes, which releases the servos"
+    }
+   ]
+  },
+  {
+   "name": "the operator pauses",
+   "about": "A stop requested 20 control periods into a move, and the turn that follows it; a pause while the model works; a pause 30 control periods into a closing of the gripper; each resumed.",
+   "steps": [
+    {
+     "id": "000",
+     "op": "reset"
+    },
+    {
+     "id": "001",
+     "op": "open",
+     "about": "enable: the robot opens, which enables the servos"
+    },
+    {
+     "id": "002",
+     "op": "wait_stationary",
+     "about": "enable: wait until the arm holds still"
+    },
+    {
+     "id": "003",
+     "op": "status",
+     "about": "home: the robot must be READY"
+    },
+    {
+     "id": "004",
+     "op": "new_cancellation"
+    },
+    {
+     "id": "005",
+     "op": "home",
+     "review_ticks": 25
+    },
+    {
+     "id": "006",
+     "op": "status",
+     "about": "start or resume: the robot must be READY"
+    },
+    {
+     "id": "007",
+     "op": "new_cancellation"
+    },
+    {
+     "id": "008",
+     "op": "wait_stationary",
+     "turn": 1,
+     "about": "a move that is paused after 20 control periods"
+    },
+    {
+     "id": "009",
+     "op": "observe",
+     "turn": 1
+    },
+    {
+     "id": "010",
+     "op": "model_state",
+     "turn": 1
+    },
+    {
+     "id": "011",
+     "op": "wait_stationary",
+     "observation": true,
+     "turn": 1
+    },
+    {
+     "id": "012",
+     "op": "hold",
+     "ticks": 10,
+     "turn": 1
+    },
+    {
+     "id": "013",
+     "op": "execute",
+     "action": {
+      "arm": {
+       "x": 0.0,
+       "y": 12.0,
+       "z": 0.0,
+       "pitch": 0.0,
+       "roll": 0.0
+      },
+      "gripper": {
+       "width": 0.0
+      }
+     },
+     "answer": "```json\n{\"arm\": {\"x\": 0.0, \"y\": 12.0, \"z\": 0.0, \"pitch\": 0.0, \"roll\": 0.0}, \"gripper\": {\"width\": 0.0}}\n```",
+     "at_tick": [
+      {
+       "tick": 20,
+       "do": "pause"
+      }
+     ],
+     "turn": 1
+    },
+    {
+     "id": "014",
+     "op": "stop",
+     "about": "the turn loop stops the robot at the operator's pause"
+    },
+    {
+     "id": "015",
+     "op": "failure_result",
+     "error": {
+      "type": "OperatorPaused",
+      "message": "Operation interrupted by the operator"
+     },
+     "dispatched": true,
+     "turn": 1
+    },
+    {
+     "id": "016",
+     "op": "status",
+     "with_snapshot": true,
+     "about": "the task's run looks for a fault to reconcile"
+    },
+    {
+     "id": "017",
+     "op": "status"
+    },
+    {
+     "id": "018",
+     "op": "wait_settled",
+     "timeout_s": 10.0
+    },
+    {
+     "id": "019",
+     "op": "failure_result",
+     "error": {
+      "type": "OperatorPaused",
+      "message": "The operator interrupted this turn; remaining motion was cancelled."
+     },
+     "dispatched": true,
+     "turn": 1
+    },
+    {
+     "id": "020",
+     "op": "status",
+     "about": "start or resume: the robot must be READY"
+    },
+    {
+     "id": "021",
+     "op": "new_cancellation"
+    },
+    {
+     "id": "022",
+     "op": "wait_stationary",
+     "turn": 2,
+     "about": "the turn after the pause: the same increment again, from where the arm stopped"
+    },
+    {
+     "id": "023",
+     "op": "observe",
+     "turn": 2
+    },
+    {
+     "id": "024",
+     "op": "model_state",
+     "turn": 2
+    },
+    {
+     "id": "025",
+     "op": "wait_stationary",
+     "observation": true,
+     "turn": 2
+    },
+    {
+     "id": "026",
+     "op": "hold",
+     "ticks": 10,
+     "turn": 2
+    },
+    {
+     "id": "027",
+     "op": "execute",
+     "action": {
+      "arm": {
+       "x": 0.0,
+       "y": 12.0,
+       "z": 0.0,
+       "pitch": 0.0,
+       "roll": 0.0
+      },
+      "gripper": {
+       "width": 0.0
+      }
+     },
+     "answer": "```json\n{\"arm\": {\"x\": 0.0, \"y\": 12.0, \"z\": 0.0, \"pitch\": 0.0, \"roll\": 0.0}, \"gripper\": {\"width\": 0.0}}\n```",
+     "turn": 2
+    },
+    {
+     "id": "028",
+     "op": "wait_stationary",
+     "turn": 3,
+     "about": "a turn that is paused while the model works"
+    },
+    {
+     "id": "029",
+     "op": "observe",
+     "turn": 3
+    },
+    {
+     "id": "030",
+     "op": "model_state",
+     "turn": 3
+    },
+    {
+     "id": "031",
+     "op": "wait_stationary",
+     "observation": true,
+     "turn": 3
+    },
+    {
+     "id": "032",
+     "op": "hold",
+     "ticks": 10,
+     "at_tick": [
+      {
+       "tick": 4,
+       "do": "pause"
+      }
+     ],
+     "turn": 3
+    },
+    {
+     "id": "033",
+     "op": "stop",
+     "about": "the model call stops the robot when it ends without an answer"
+    },
+    {
+     "id": "034",
+     "op": "stop",
+     "about": "the turn loop stops the robot at the operator's pause"
+    },
+    {
+     "id": "035",
+     "op": "failure_result",
+     "error": {
+      "type": "OperatorPaused",
+      "message": "Operation interrupted by the operator"
+     },
+     "dispatched": false,
+     "turn": 3
+    },
+    {
+     "id": "036",
+     "op": "status",
+     "with_snapshot": true,
+     "about": "the task's run looks for a fault to reconcile"
+    },
+    {
+     "id": "037",
+     "op": "status"
+    },
+    {
+     "id": "038",
+     "op": "wait_settled",
+     "timeout_s": 10.0
+    },
+    {
+     "id": "039",
+     "op": "failure_result",
+     "error": {
+      "type": "OperatorPaused",
+      "message": "The operator interrupted this turn; remaining motion was cancelled."
+     },
+     "dispatched": false,
+     "turn": 3
+    },
+    {
+     "id": "040",
+     "op": "status",
+     "about": "start or resume: the robot must be READY"
+    },
+    {
+     "id": "041",
+     "op": "new_cancellation"
+    },
+    {
+     "id": "042",
+     "op": "wait_stationary",
+     "turn": 4,
+     "about": "the turn after it"
+    },
+    {
+     "id": "043",
+     "op": "observe",
+     "turn": 4
+    },
+    {
+     "id": "044",
+     "op": "model_state",
+     "turn": 4
+    },
+    {
+     "id": "045",
+     "op": "wait_stationary",
+     "observation": true,
+     "turn": 4
+    },
+    {
+     "id": "046",
+     "op": "hold",
+     "ticks": 10,
+     "turn": 4
+    },
+    {
+     "id": "047",
+     "op": "execute",
+     "action": {
+      "arm": {
+       "x": 0.0,
+       "y": -12.0,
+       "z": 0.0,
+       "pitch": 0.0,
+       "roll": 0.0
+      },
+      "gripper": {
+       "width": 0.0
+      }
+     },
+     "answer": "```json\n{\"arm\": {\"x\": 0.0, \"y\": -12.0, \"z\": 0.0, \"pitch\": 0.0, \"roll\": 0.0}, \"gripper\": {\"width\": 0.0}}\n```",
+     "turn": 4
+    },
+    {
+     "id": "048",
+     "op": "wait_stationary",
+     "turn": 5,
+     "about": "a closing of the gripper that is paused"
+    },
+    {
+     "id": "049",
+     "op": "observe",
+     "turn": 5
+    },
+    {
+     "id": "050",
+     "op": "model_state",
+     "turn": 5
+    },
+    {
+     "id": "051",
+     "op": "wait_stationary",
+     "observation": true,
+     "turn": 5
+    },
+    {
+     "id": "052",
+     "op": "hold",
+     "ticks": 10,
+     "turn": 5
+    },
+    {
+     "id": "053",
+     "op": "execute",
+     "action": {
+      "arm": {
+       "x": 0.0,
+       "y": 0.0,
+       "z": 0.0,
+       "pitch": 0.0,
+       "roll": 0.0
+      },
+      "gripper": {
+       "width": -1.0
+      }
+     },
+     "answer": "```json\n{\"arm\": {\"x\": 0.0, \"y\": 0.0, \"z\": 0.0, \"pitch\": 0.0, \"roll\": 0.0}, \"gripper\": {\"width\": -1.0}}\n```",
+     "at_tick": [
+      {
+       "tick": 30,
+       "do": "pause"
+      }
+     ],
+     "turn": 5
+    },
+    {
+     "id": "054",
+     "op": "stop",
+     "about": "the turn loop stops the robot at the operator's pause"
+    },
+    {
+     "id": "055",
+     "op": "failure_result",
+     "error": {
+      "type": "OperatorPaused",
+      "message": "Operation interrupted by the operator"
+     },
+     "dispatched": true,
+     "turn": 5
+    },
+    {
+     "id": "056",
+     "op": "status",
+     "with_snapshot": true,
+     "about": "the task's run looks for a fault to reconcile"
+    },
+    {
+     "id": "057",
+     "op": "status"
+    },
+    {
+     "id": "058",
+     "op": "wait_settled",
+     "timeout_s": 10.0
+    },
+    {
+     "id": "059",
+     "op": "failure_result",
+     "error": {
+      "type": "OperatorPaused",
+      "message": "The operator interrupted this turn; remaining motion was cancelled."
+     },
+     "dispatched": true,
+     "turn": 5
+    },
+    {
+     "id": "060",
+     "op": "status",
+     "about": "start or resume: the robot must be READY"
+    },
+    {
+     "id": "061",
+     "op": "new_cancellation"
+    },
+    {
+     "id": "062",
+     "op": "wait_stationary",
+     "turn": 6,
+     "about": "the turn after it: the gripper opens"
+    },
+    {
+     "id": "063",
+     "op": "observe",
+     "turn": 6
+    },
+    {
+     "id": "064",
+     "op": "model_state",
+     "turn": 6
+    },
+    {
+     "id": "065",
+     "op": "wait_stationary",
+     "observation": true,
+     "turn": 6
+    },
+    {
+     "id": "066",
+     "op": "hold",
+     "ticks": 10,
+     "turn": 6
+    },
+    {
+     "id": "067",
+     "op": "execute",
+     "action": {
+      "arm": {
+       "x": 0.0,
+       "y": 0.0,
+       "z": 0.0,
+       "pitch": 0.0,
+       "roll": 0.0
+      },
+      "gripper": {
+       "width": 1.0
+      }
+     },
+     "answer": "```json\n{\"arm\": {\"x\": 0.0, \"y\": 0.0, \"z\": 0.0, \"pitch\": 0.0, \"roll\": 0.0}, \"gripper\": {\"width\": 1.0}}\n```",
+     "turn": 6
+    },
+    {
+     "id": "068",
+     "op": "wait_stationary",
+     "about": "what the model would read next"
+    },
+    {
+     "id": "069",
+     "op": "observe"
+    },
+    {
+     "id": "070",
+     "op": "model_state"
+    },
+    {
+     "id": "071",
+     "op": "close",
+     "about": "disable: the robot closes, which releases the servos"
+    }
+   ]
+  },
+  {
+   "name": "a servo reports overload during a move",
+   "about": "The elbow's Status register reports overload 20 control periods into a move; the station faults at its next poll of the Status; a recovery is refused while the bit is set; the bit is cleared; the recovery; a move.",
+   "steps": [
+    {
+     "id": "000",
+     "op": "reset"
+    },
+    {
+     "id": "001",
+     "op": "open",
+     "about": "enable: the robot opens, which enables the servos"
+    },
+    {
+     "id": "002",
+     "op": "wait_stationary",
+     "about": "enable: wait until the arm holds still"
+    },
+    {
+     "id": "003",
+     "op": "status",
+     "about": "home: the robot must be READY"
+    },
+    {
+     "id": "004",
+     "op": "new_cancellation"
+    },
+    {
+     "id": "005",
+     "op": "home",
+     "review_ticks": 25
+    },
+    {
+     "id": "006",
+     "op": "status",
+     "about": "start or resume: the robot must be READY"
+    },
+    {
+     "id": "007",
+     "op": "new_cancellation"
+    },
+    {
+     "id": "008",
+     "op": "wait_stationary",
+     "turn": 1,
+     "about": "a move during which the fault appears"
+    },
+    {
+     "id": "009",
+     "op": "observe",
+     "turn": 1
+    },
+    {
+     "id": "010",
+     "op": "model_state",
+     "turn": 1
+    },
+    {
+     "id": "011",
+     "op": "wait_stationary",
+     "observation": true,
+     "turn": 1
+    },
+    {
+     "id": "012",
+     "op": "hold",
+     "ticks": 10,
+     "turn": 1
+    },
+    {
+     "id": "013",
+     "op": "execute",
+     "action": {
+      "arm": {
+       "x": 0.0,
+       "y": 12.0,
+       "z": 0.0,
+       "pitch": 0.0,
+       "roll": 0.0
+      },
+      "gripper": {
+       "width": 0.0
+      }
+     },
+     "answer": "```json\n{\"arm\": {\"x\": 0.0, \"y\": 12.0, \"z\": 0.0, \"pitch\": 0.0, \"roll\": 0.0}, \"gripper\": {\"width\": 0.0}}\n```",
+     "at_tick": [
+      {
+       "tick": 20,
+       "do": "inject",
+       "faults": {
+        "status": {
+         "elbow_flex": 32
+        }
+       }
+      }
+     ],
+     "turn": 1
+    },
+    {
+     "id": "014",
+     "op": "stop",
+     "about": "the console's worker stops the robot after a run that failed"
+    },
+    {
+     "id": "015",
+     "op": "status",
+     "with_snapshot": true
+    },
+    {
+     "id": "016",
+     "op": "status"
+    },
+    {
+     "id": "017",
+     "op": "check_fault",
+     "about": "the fault as the robot raises it"
+    },
+    {
+     "id": "018",
+     "op": "pause",
+     "about": "the console's watchdog pauses the task for the fault"
+    },
+    {
+     "id": "019",
+     "op": "idle",
+     "ticks": 50,
+     "about": "the operator reads the fault"
+    },
+    {
+     "id": "020",
+     "op": "status",
+     "about": "recover_control: the robot must be in FAULT"
+    },
+    {
+     "id": "021",
+     "op": "new_cancellation"
+    },
+    {
+     "id": "022",
+     "op": "recover",
+     "about": "a recovery while the servo still reports the fault: refused"
+    },
+    {
+     "id": "023",
+     "op": "stop",
+     "about": "the console's worker stops the robot after an operation that failed"
+    },
+    {
+     "id": "024",
+     "op": "status"
+    },
+    {
+     "id": "025",
+     "op": "inject",
+     "faults": {
+      "clear": true
+     },
+     "about": "the servo's fault is gone"
+    },
+    {
+     "id": "026",
+     "op": "idle",
+     "ticks": 10
+    },
+    {
+     "id": "027",
+     "op": "status",
+     "about": "recover_control again"
+    },
+    {
+     "id": "028",
+     "op": "new_cancellation"
+    },
+    {
+     "id": "029",
+     "op": "recover",
+     "about": "the recovery: the measured pose becomes the hold"
+    },
+    {
+     "id": "030",
+     "op": "status",
+     "about": "the robot must be READY after it"
+    },
+    {
+     "id": "031",
+     "op": "status",
+     "about": "start or resume: the robot must be READY"
+    },
+    {
+     "id": "032",
+     "op": "new_cancellation"
+    },
+    {
+     "id": "033",
+     "op": "wait_settled",
+     "timeout_s": 10.0,
+     "about": "resume: the run waits for the arm to settle"
+    },
+    {
+     "id": "034",
+     "op": "wait_stationary",
+     "turn": 2,
+     "about": "the turn after the recovery: the model reads of the fault"
+    },
+    {
+     "id": "035",
+     "op": "observe",
+     "turn": 2
+    },
+    {
+     "id": "036",
+     "op": "model_state",
+     "turn": 2
+    },
+    {
+     "id": "037",
+     "op": "wait_stationary",
+     "observation": true,
+     "turn": 2
+    },
+    {
+     "id": "038",
+     "op": "hold",
+     "ticks": 10,
+     "turn": 2
+    },
+    {
+     "id": "039",
+     "op": "execute",
+     "action": {
+      "arm": {
+       "x": 0.0,
+       "y": 5.0,
+       "z": 0.0,
+       "pitch": 0.0,
+       "roll": 0.0
+      },
+      "gripper": {
+       "width": 0.0
+      }
+     },
+     "answer": "```json\n{\"arm\": {\"x\": 0.0, \"y\": 5.0, \"z\": 0.0, \"pitch\": 0.0, \"roll\": 0.0}, \"gripper\": {\"width\": 0.0}}\n```",
+     "turn": 2
+    },
+    {
+     "id": "040",
+     "op": "wait_stationary",
+     "about": "what the model would read next"
+    },
+    {
+     "id": "041",
+     "op": "observe"
+    },
+    {
+     "id": "042",
+     "op": "model_state"
+    },
+    {
+     "id": "043",
+     "op": "close",
+     "about": "disable: the robot closes, which releases the servos"
+    }
+   ]
+  },
+  {
+   "name": "a servo loses its torque during a move",
+   "about": "The wrist's roll servo loses its torque 20 control periods into a move; the station faults at its next poll of the torque; a recovery is refused while the servo is limp; its torque is restored; the recovery; a move.",
+   "steps": [
+    {
+     "id": "000",
+     "op": "reset"
+    },
+    {
+     "id": "001",
+     "op": "open",
+     "about": "enable: the robot opens, which enables the servos"
+    },
+    {
+     "id": "002",
+     "op": "wait_stationary",
+     "about": "enable: wait until the arm holds still"
+    },
+    {
+     "id": "003",
+     "op": "status",
+     "about": "home: the robot must be READY"
+    },
+    {
+     "id": "004",
+     "op": "new_cancellation"
+    },
+    {
+     "id": "005",
+     "op": "home",
+     "review_ticks": 25
+    },
+    {
+     "id": "006",
+     "op": "status",
+     "about": "start or resume: the robot must be READY"
+    },
+    {
+     "id": "007",
+     "op": "new_cancellation"
+    },
+    {
+     "id": "008",
+     "op": "wait_stationary",
+     "turn": 1,
+     "about": "a move during which the fault appears"
+    },
+    {
+     "id": "009",
+     "op": "observe",
+     "turn": 1
+    },
+    {
+     "id": "010",
+     "op": "model_state",
+     "turn": 1
+    },
+    {
+     "id": "011",
+     "op": "wait_stationary",
+     "observation": true,
+     "turn": 1
+    },
+    {
+     "id": "012",
+     "op": "hold",
+     "ticks": 10,
+     "turn": 1
+    },
+    {
+     "id": "013",
+     "op": "execute",
+     "action": {
+      "arm": {
+       "x": 0.0,
+       "y": 12.0,
+       "z": 0.0,
+       "pitch": 0.0,
+       "roll": 0.0
+      },
+      "gripper": {
+       "width": 0.0
+      }
+     },
+     "answer": "```json\n{\"arm\": {\"x\": 0.0, \"y\": 12.0, \"z\": 0.0, \"pitch\": 0.0, \"roll\": 0.0}, \"gripper\": {\"width\": 0.0}}\n```",
+     "at_tick": [
+      {
+       "tick": 20,
+       "do": "inject",
+       "faults": {
+        "registers": {
+         "wrist_roll": {
+          "Torque_Enable": 0
+         }
+        }
+       }
+      }
+     ],
+     "turn": 1
+    },
+    {
+     "id": "014",
+     "op": "stop",
+     "about": "the console's worker stops the robot after a run that failed"
+    },
+    {
+     "id": "015",
+     "op": "status",
+     "with_snapshot": true
+    },
+    {
+     "id": "016",
+     "op": "status"
+    },
+    {
+     "id": "017",
+     "op": "check_fault",
+     "about": "the fault as the robot raises it"
+    },
+    {
+     "id": "018",
+     "op": "pause",
+     "about": "the console's watchdog pauses the task for the fault"
+    },
+    {
+     "id": "019",
+     "op": "idle",
+     "ticks": 50,
+     "about": "the operator reads the fault"
+    },
+    {
+     "id": "020",
+     "op": "status",
+     "about": "recover_control: the robot must be in FAULT"
+    },
+    {
+     "id": "021",
+     "op": "new_cancellation"
+    },
+    {
+     "id": "022",
+     "op": "recover",
+     "about": "a recovery while the servo still reports the fault: refused"
+    },
+    {
+     "id": "023",
+     "op": "stop",
+     "about": "the console's worker stops the robot after an operation that failed"
+    },
+    {
+     "id": "024",
+     "op": "status"
+    },
+    {
+     "id": "025",
+     "op": "inject",
+     "faults": {
+      "registers": {
+       "wrist_roll": {
+        "Torque_Enable": 1
+       }
+      }
+     },
+     "about": "the servo holds torque again"
+    },
+    {
+     "id": "026",
+     "op": "idle",
+     "ticks": 10
+    },
+    {
+     "id": "027",
+     "op": "status",
+     "about": "recover_control again"
+    },
+    {
+     "id": "028",
+     "op": "new_cancellation"
+    },
+    {
+     "id": "029",
+     "op": "recover",
+     "about": "the recovery: the measured pose becomes the hold"
+    },
+    {
+     "id": "030",
+     "op": "status",
+     "about": "the robot must be READY after it"
+    },
+    {
+     "id": "031",
+     "op": "status",
+     "about": "start or resume: the robot must be READY"
+    },
+    {
+     "id": "032",
+     "op": "new_cancellation"
+    },
+    {
+     "id": "033",
+     "op": "wait_settled",
+     "timeout_s": 10.0,
+     "about": "resume: the run waits for the arm to settle"
+    },
+    {
+     "id": "034",
+     "op": "wait_stationary",
+     "turn": 2,
+     "about": "the turn after the recovery: the model reads of the fault"
+    },
+    {
+     "id": "035",
+     "op": "observe",
+     "turn": 2
+    },
+    {
+     "id": "036",
+     "op": "model_state",
+     "turn": 2
+    },
+    {
+     "id": "037",
+     "op": "wait_stationary",
+     "observation": true,
+     "turn": 2
+    },
+    {
+     "id": "038",
+     "op": "hold",
+     "ticks": 10,
+     "turn": 2
+    },
+    {
+     "id": "039",
+     "op": "execute",
+     "action": {
+      "arm": {
+       "x": 0.0,
+       "y": 5.0,
+       "z": 0.0,
+       "pitch": 0.0,
+       "roll": 0.0
+      },
+      "gripper": {
+       "width": 0.0
+      }
+     },
+     "answer": "```json\n{\"arm\": {\"x\": 0.0, \"y\": 5.0, \"z\": 0.0, \"pitch\": 0.0, \"roll\": 0.0}, \"gripper\": {\"width\": 0.0}}\n```",
+     "turn": 2
+    },
+    {
+     "id": "040",
+     "op": "wait_stationary",
+     "about": "what the model would read next"
+    },
+    {
+     "id": "041",
+     "op": "observe"
+    },
+    {
+     "id": "042",
+     "op": "model_state"
+    },
+    {
+     "id": "043",
+     "op": "close",
+     "about": "disable: the robot closes, which releases the servos"
+    }
+   ]
+  },
+  {
+   "name": "actions outside the model's format",
+   "about": "The gripper action (close, open); a chunk of ten joint targets at 10 Hz; a chunk that leaves the joint limits, which is refused.",
+   "steps": [
+    {
+     "id": "000",
+     "op": "reset"
+    },
+    {
+     "id": "001",
+     "op": "open",
+     "about": "enable: the robot opens, which enables the servos"
+    },
+    {
+     "id": "002",
+     "op": "wait_stationary",
+     "about": "enable: wait until the arm holds still"
+    },
+    {
+     "id": "003",
+     "op": "status",
+     "about": "home: the robot must be READY"
+    },
+    {
+     "id": "004",
+     "op": "new_cancellation"
+    },
+    {
+     "id": "005",
+     "op": "home",
+     "review_ticks": 25
+    },
+    {
+     "id": "006",
+     "op": "status",
+     "about": "start or resume: the robot must be READY"
+    },
+    {
+     "id": "007",
+     "op": "new_cancellation"
+    },
+    {
+     "id": "008",
+     "op": "wait_stationary"
+    },
+    {
+     "id": "009",
+     "op": "observe"
+    },
+    {
+     "id": "010",
+     "op": "model_state"
+    },
+    {
+     "id": "011",
+     "op": "execute",
+     "action": {
+      "type": "gripper",
+      "command": "close"
+     },
+     "about": "the gripper action: close"
+    },
+    {
+     "id": "012",
+     "op": "wait_stationary"
+    },
+    {
+     "id": "013",
+     "op": "observe"
+    },
+    {
+     "id": "014",
+     "op": "model_state"
+    },
+    {
+     "id": "015",
+     "op": "execute",
+     "action": {
+      "type": "gripper",
+      "command": "open"
+     },
+     "about": "the gripper action: open"
+    },
+    {
+     "id": "016",
+     "op": "wait_stationary"
+    },
+    {
+     "id": "017",
+     "op": "observe"
+    },
+    {
+     "id": "018",
+     "op": "model_state"
+    },
+    {
+     "id": "019",
+     "op": "execute",
+     "action": {
+      "type": "joint_positions",
+      "positions": [
+       [
+        0.02,
+        -0.814,
+        0.077,
+        1.423,
+        -1.613,
+        1.0
+       ],
+       [
+        0.04,
+        -0.814,
+        0.077,
+        1.423,
+        -1.613,
+        1.0
+       ],
+       [
+        0.06,
+        -0.814,
+        0.077,
+        1.423,
+        -1.613,
+        1.0
+       ],
+       [
+        0.08,
+        -0.814,
+        0.077,
+        1.423,
+        -1.613,
+        1.0
+       ],
+       [
+        0.1,
+        -0.814,
+        0.077,
+        1.423,
+        -1.613,
+        1.0
+       ],
+       [
+        0.12,
+        -0.814,
+        0.077,
+        1.423,
+        -1.613,
+        1.0
+       ],
+       [
+        0.14,
+        -0.814,
+        0.077,
+        1.423,
+        -1.613,
+        1.0
+       ],
+       [
+        0.16,
+        -0.814,
+        0.077,
+        1.423,
+        -1.613,
+        1.0
+       ],
+       [
+        0.18,
+        -0.814,
+        0.077,
+        1.423,
+        -1.613,
+        1.0
+       ],
+       [
+        0.2,
+        -0.814,
+        0.077,
+        1.423,
+        -1.613,
+        1.0
+       ]
+      ],
+      "rate_hz": 10.0
+     },
+     "about": "ten joint targets, the base turning 0.02 rad each, streamed at 10 Hz"
+    },
+    {
+     "id": "020",
+     "op": "wait_stationary"
+    },
+    {
+     "id": "021",
+     "op": "observe"
+    },
+    {
+     "id": "022",
+     "op": "model_state"
+    },
+    {
+     "id": "023",
+     "op": "execute",
+     "action": {
+      "type": "joint_positions",
+      "positions": [
+       [
+        2.0,
+        -0.814,
+        0.077,
+        1.423,
+        -1.613,
+        1.0
+       ]
+      ],
+      "rate_hz": 10.0
+     },
+     "about": "a joint target past the base's limit: refused before anything is sent"
+    },
+    {
+     "id": "024",
+     "op": "wait_stationary",
+     "about": "what the model would read next"
+    },
+    {
+     "id": "025",
+     "op": "observe"
+    },
+    {
+     "id": "026",
+     "op": "model_state"
+    },
+    {
+     "id": "027",
+     "op": "close",
+     "about": "disable: the robot closes, which releases the servos"
+    }
+   ]
+  }
+ ]
+}

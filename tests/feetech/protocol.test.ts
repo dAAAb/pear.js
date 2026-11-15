@@ -4,6 +4,7 @@ import { FeetechMotorsBus, PortHandler } from "../../src/feetech/bus";
 import * as protocol from "../../src/feetech/protocol";
 import * as tables from "../../src/feetech/tables";
 import { ManualClock, type Transport } from "../../src/feetech/transport";
+import { IndexError } from "../../src/python/errors";
 import { expectError, fixture, type FixtureError } from "./helpers";
 
 interface Tables {
@@ -238,7 +239,7 @@ describe("register values are lerobot's bytes", () => {
     expect(protocol.makeDword(0x5678, 0xfedc)).toBe(0xfedc5678);
     expect(protocol.splitIntoByteChunks(0xfedc5678, 4)).toEqual([0x78, 0x56, 0xdc, 0xfe]);
     expect(protocol.valueOf([0x78, 0x56, 0xdc, 0xfe], 4)).toBe(0xfedc5678);
-    expect(() => protocol.valueOf([0x78], 2)).toThrow(RangeError);
+    expect(() => protocol.valueOf([0x78], 2)).toThrow(IndexError);
   });
 });
 

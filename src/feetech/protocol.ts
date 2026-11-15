@@ -2,6 +2,8 @@
 // package scservo_sdk): scservo_def.py and protocol_packet_handler.py, with the parameter lists of
 // group_sync_read.py and group_sync_write.py. Protocol 0, the STS and SMS series': a word's low byte comes first.
 
+import { IndexError } from "../python/errors";
+
 export const BROADCAST_ID = 0xfe;
 export const MAX_ID = 0xfc;
 
@@ -236,7 +238,8 @@ export class StatusPacketReader {
 export interface PacketPort {
   /** Whether a packet exchange is in flight. */
   isUsing: boolean;
-  /** Waits until what was written has left the host. It does not discard received bytes: the SDK never does. */
+  /** Waits until what was written has left the host. The SDK's discards no received bytes; the bus's port does
+   * (bus.ts, PortHandler.clearPort). */
   clearPort(): Promise<void>;
   /** Writes ``packet`` and resolves with the number of bytes written. */
   writePort(packet: Uint8Array): Promise<number>;
@@ -273,14 +276,22 @@ export async function txPacket(port: PacketPort, txpacket: Uint8Array): Promise<
 /** Reads one status packet from the port, within the time setPacketTimeout() started. */
 export async function rxPacket(port: PacketPort): Promise<RxPacket> {
   const reader = new StatusPacketReader();
+  let isTimeUp = false; // whether the port was last read after the packet's time was up
   try {
     for (;;) {
-      reader.push(await port.readPort(reader.wanted));
+      const bytes = await port.readPort(reader.wanted);
+      reader.push(bytes);
       if (reader.wanted <= 0) {
         const received = reader.advance();
         if (received !== null) return received;
-      } else if (port.isPacketTimeout()) {
+      } else if (isTimeUp && bytes.length === 0) {
         return reader.expire();
+      } else {
+        // Not the SDK's, which gives the packet up as soon as its time is up and bytes are missing. A host that
+        // did not run for a while finds the time up although the answer has arrived, so the port is read again:
+        // the packet is given up only when a read made after its time was up finds nothing more
+        // (docs/progress/feetech.md, "Deliberate differences")
+        isTimeUp = port.isPacketTimeout();
       }
     }
   } finally {
@@ -349,7 +360,7 @@ export async function readRx(port: PacketPort, id: number, length: number): Prom
 /** Returns the unsigned value of the ``length`` bytes (1, 2 or 4) a read gave. A status packet with fewer
  * parameters than were asked has passed for the answer: the SDK fails on it with an IndexError. */
 export function valueOf(data: readonly number[], length: number): number {
-  if (data.length < length) throw new RangeError(`A status packet carries ${data.length} of the ${length} bytes read`);
+  if (data.length < length) throw new IndexError(`A status packet carries ${data.length} of the ${length} bytes read`);
   if (length === 1) return data[0];
   if (length === 2) return makeWord(data[0], data[1]);
 

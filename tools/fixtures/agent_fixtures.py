@@ -5,8 +5,8 @@ Run it with the Python of a PEAR station environment (PEAR at the commit src/ind
 
     <work dir>/envs/station/bin/python tools/fixtures/agent_fixtures.py [--sync-tables] [--output <directory>]
 
-It writes tests/fixtures/agent/*.json and nothing else (with --sync-tables also src/agent/clients/python_printable.ts,
-the table of Python's str.isprintable; without it, it stops when that file is not the table of the Python it runs in).
+It writes tests/fixtures/agent/*.json and nothing else (with --sync-tables also src/python/printable.ts, the table of
+Python's str.isprintable; without it, it stops when that file is not the table of the Python it runs in).
 
 What runs is PEAR's code, never a restatement of it:
 
@@ -103,7 +103,7 @@ class Tables:
     """The table of Python's str.isprintable, which decides how repr() writes a character of an error's text, and
     the module that embeds it."""
 
-    MODULE = REPOSITORY / "src" / "agent" / "clients" / "python_printable.ts"
+    MODULE = REPOSITORY / "src" / "python" / "printable.ts"
     LINE = 100  # characters of the table on one line of the module
 
     @staticmethod
@@ -172,7 +172,7 @@ class Tables:
     def check(cls) -> dict[str, Any]:
         """Returns what the fixtures record of the table; stops unless the module holds the table of this Python."""
         if not cls.MODULE.is_file() or cls.MODULE.read_text(encoding="ascii") != cls.module_text():
-            sys.exit("src/agent/clients/python_printable.ts is not this Python's table: run with --sync-tables")
+            sys.exit("src/python/printable.ts is not this Python's table: run with --sync-tables")
         flags = bytes(0 if chr(code).isprintable() else 1 for code in range(sys.maxunicode + 1))
 
         return {

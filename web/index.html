@@ -1,0 +1,196 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light dark" />
+    <meta name="referrer" content="no-referrer" />
+    <title>pear.js</title>
+    <link rel="stylesheet" href="./src/style.css" />
+  </head>
+  <body>
+    <a class="skip" href="#arm" data-i18n="page.skip"></a>
+
+    <header class="top">
+      <div class="brand">
+        <h1>pear.js</h1>
+        <p data-i18n="page.tagline"></p>
+      </div>
+      <div class="language" role="group" data-i18n-aria-label="page.language">
+        <button type="button" id="language-en" lang="en">English</button>
+        <button type="button" id="language-zh" lang="zh-Hant-TW">繁體中文</button>
+      </div>
+    </header>
+
+    <p class="notice" id="notice" data-i18n="page.notice"></p>
+    <noscript><p class="box error">This page needs JavaScript. 這個頁面需要 JavaScript 才能運作。</p></noscript>
+
+    <main>
+      <section id="arm" aria-labelledby="arm-title">
+        <h2 id="arm-title"><span class="step" aria-hidden="true">1</span><span data-i18n="arm.title"></span></h2>
+        <p class="lead" data-i18n="arm.lead"></p>
+        <div class="actions">
+          <button type="button" id="arm-connect" class="primary" data-i18n="arm.connect"></button>
+          <button type="button" id="arm-sim" data-i18n="arm.sim"></button>
+          <button type="button" id="arm-retry" data-i18n="arm.retry" hidden></button>
+          <button type="button" id="arm-disconnect" data-i18n="arm.disconnect" hidden></button>
+        </div>
+        <p class="status" id="arm-status" role="status" aria-live="polite"></p>
+        <p class="muted small" id="arm-readings" aria-hidden="true"></p>
+        <div id="arm-messages"></div>
+
+        <div id="sim-panel" class="panel" hidden>
+          <h3 data-i18n="sim.title"></h3>
+          <p class="lead" data-i18n="sim.lead"></p>
+          <div class="field">
+            <label for="sim-scenario" data-i18n="sim.scenario"></label>
+            <select id="sim-scenario"></select>
+            <p class="hint" data-i18n="sim.scenarioHint"></p>
+          </div>
+          <div id="sim-sliders" class="sliders"></div>
+          <div class="actions">
+            <button type="button" id="sim-cable"></button>
+          </div>
+        </div>
+
+        <div id="arm-servos" hidden>
+          <h3 data-i18n="servos.title"></h3>
+          <div class="scroll"><table id="servo-table"></table></div>
+        </div>
+
+        <div id="arm-calibration" hidden>
+          <h3 data-i18n="cal.title"></h3>
+          <p class="lead" data-i18n="cal.lead"></p>
+          <div class="scroll"><table id="calibration-table"></table></div>
+        </div>
+        <div class="field" id="calibration-file-field">
+          <label for="calibration-file" data-i18n="cal.fileLabel"></label>
+          <input type="file" id="calibration-file" accept=".json,application/json" />
+          <button type="button" id="calibration-remove" data-i18n="cal.remove" hidden></button>
+          <p class="hint" data-i18n="cal.fileHint"></p>
+          <div id="calibration-verdict" role="status" aria-live="polite"></div>
+        </div>
+
+        <div id="arm-joints" hidden>
+          <h3 data-i18n="joints.title"></h3>
+          <p class="lead" data-i18n="joints.lead"></p>
+          <div class="scroll"><table id="joint-table"></table></div>
+
+          <h3 data-i18n="state.title"></h3>
+          <p class="lead" data-i18n="state.lead"></p>
+          <dl id="model-state" class="quantities"></dl>
+          <details id="turn-details">
+            <summary data-i18n="state.turn"></summary>
+            <pre id="turn-text"></pre>
+          </details>
+        </div>
+
+        <p class="guard small" id="guard-line"></p>
+        <p class="guard small" id="guard-selftest"></p>
+      </section>
+
+      <section id="camera" aria-labelledby="camera-title">
+        <h2 id="camera-title"><span class="step" aria-hidden="true">2</span><span data-i18n="camera.title"></span></h2>
+        <p class="lead" data-i18n="camera.lead"></p>
+        <div class="field">
+          <label for="camera-select" data-i18n="camera.select"></label>
+          <select id="camera-select"></select>
+          <p class="hint" data-i18n="camera.hint"></p>
+        </div>
+        <div class="actions">
+          <button type="button" id="camera-start" class="primary" data-i18n="camera.start"></button>
+          <button type="button" id="camera-stop" data-i18n="camera.stop" hidden></button>
+          <button type="button" id="camera-capture" data-i18n="camera.capture" disabled></button>
+        </div>
+        <p class="status" id="camera-status" role="status" aria-live="polite"></p>
+        <div id="camera-messages"></div>
+        <div class="frames">
+          <figure>
+            <video id="camera-video" muted playsinline></video>
+            <figcaption data-i18n="camera.preview"></figcaption>
+          </figure>
+          <figure>
+            <img id="camera-captured" alt="" hidden />
+            <p class="placeholder" id="camera-captured-none" data-i18n="camera.capturedNone"></p>
+            <figcaption>
+              <span data-i18n="camera.captured"></span>
+              <span class="block" id="camera-info"></span>
+            </figcaption>
+          </figure>
+        </div>
+        <p class="hint" data-i18n="camera.encoder"></p>
+      </section>
+
+      <section id="model" aria-labelledby="model-title">
+        <h2 id="model-title"><span class="step" aria-hidden="true">3</span><span data-i18n="model.title"></span></h2>
+        <p class="lead" data-i18n="model.lead"></p>
+        <div class="fields">
+          <div class="field">
+            <label for="model-url" data-i18n="model.baseUrl"></label>
+            <input type="url" id="model-url" inputmode="url" autocomplete="off" spellcheck="false" autocapitalize="off" placeholder="http://127.0.0.1:8000/v1" />
+            <p class="hint" data-i18n="model.baseUrlHint"></p>
+          </div>
+          <div class="field">
+            <label for="model-name" data-i18n="model.name"></label>
+            <input type="text" id="model-name" autocomplete="off" spellcheck="false" autocapitalize="off" />
+            <p class="hint" data-i18n="model.nameHint"></p>
+          </div>
+          <div class="field">
+            <label for="model-key" data-i18n="model.key"></label>
+            <input type="password" id="model-key" autocomplete="off" spellcheck="false" autocapitalize="off" />
+            <p class="hint" data-i18n="model.keyHint"></p>
+          </div>
+        </div>
+        <div class="actions">
+          <button type="button" id="model-check" class="primary" data-i18n="model.check"></button>
+        </div>
+        <div id="model-result" role="status" aria-live="polite"></div>
+      </section>
+
+      <section id="task" aria-labelledby="task-title">
+        <h2 id="task-title"><span class="step" aria-hidden="true">4</span><span data-i18n="task.title"></span></h2>
+        <p class="box info" data-i18n="task.notice"></p>
+        <div class="field">
+          <label for="task-instruction" data-i18n="task.instruction"></label>
+          <textarea id="task-instruction" rows="2" disabled data-i18n-placeholder="task.placeholder"></textarea>
+        </div>
+        <div class="actions">
+          <button type="button" id="task-start" class="primary" data-i18n="task.start" disabled></button>
+        </div>
+      </section>
+
+      <section id="log" aria-labelledby="log-title">
+        <h2 id="log-title"><span data-i18n="log.title"></span></h2>
+        <p class="lead" data-i18n="log.lead"></p>
+        <textarea id="log-output" rows="10" readonly spellcheck="false" data-i18n-aria-label="log.label"></textarea>
+        <div class="actions">
+          <button type="button" id="log-copy" data-i18n="log.copy"></button>
+          <span class="muted" id="log-copy-result" role="status" aria-live="polite"></span>
+        </div>
+        <p class="lead" data-i18n="timing.lead"></p>
+        <div class="actions">
+          <button type="button" id="timing-run" data-i18n="timing.button"></button>
+          <span class="muted" id="timing-result" role="status" aria-live="polite"></span>
+        </div>
+      </section>
+    </main>
+
+    <footer>
+      <p data-i18n="footer.about"></p>
+      <p data-i18n="footer.network"></p>
+      <p id="footer-commit"></p>
+      <p>
+        <a href="https://github.com/dAAAb/pear.js" rel="noreferrer" data-i18n="footer.pearjs"></a>
+        ·
+        <a href="https://github.com/mit-han-lab/pear" rel="noreferrer" data-i18n="footer.pear"></a>
+      </p>
+    </footer>
+
+    <div class="stopbar" id="stopbar">
+      <button type="button" id="task-stop" class="stop" data-i18n="task.stop" disabled></button>
+      <span data-i18n="task.stopNote"></span>
+    </div>
+
+    <script type="module" src="./src/main.ts"></script>
+  </body>
+</html>

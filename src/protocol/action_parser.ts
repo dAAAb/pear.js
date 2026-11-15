@@ -2,7 +2,15 @@
 // pear/agent_loop/protocol.py and the action model SingleArmDelta of
 // pear/deploy/station/control/robots/so101/motion/actions.py, for the SO-101's single_arm_pose format.
 
-import { PythonError, pythonJsonLoads, type PythonJsonValue } from "./python_json";
+import {
+  isValueError,
+  OverflowError,
+  pythonErrorName,
+  PythonException,
+  ValueError,
+  type PythonIdentity,
+} from "../python/errors";
+import { pythonJsonLoads, type PythonJsonValue } from "./python_json";
 import { isPythonBlank, PYTHON_WHITESPACE_CLASS } from "./python_text";
 import { MotionStatus, SCHEMA, type MotionError, type SingleArmDelta } from "./types";
 
@@ -17,8 +25,13 @@ const JSON_BLOCK_SOURCE =
 /**
  * An answer that gives no action. PEAR's agent loop records such a turn as a result that carries the Python
  * exception's class name and message, which the next turn's report shows the model: both are reproduced here.
+ *
+ * One class stands for the several PEAR raises (ValueError, json.JSONDecodeError, OverflowError, RecursionError),
+ * so it tells which one it stands for (PythonIdentity), and pythonErrorName and isValueError of src/python/errors.ts
+ * answer for it as they do for PEAR's exception.
  */
-export class ActionParseError extends Error {
+export class ActionParseError extends PythonException implements PythonIdentity {
+  override readonly name: string = "ActionParseError";
   /** The class name of the exception PEAR raises: "ValueError", "JSONDecodeError", "OverflowError", ... */
   readonly code: string;
   /** How StationAgentLoop.step records the turn: rejected for a ValueError, failed for any other exception. */
@@ -26,7 +39,6 @@ export class ActionParseError extends Error {
 
   constructor(code: string, message: string, status: typeof MotionStatus.REJECTED | typeof MotionStatus.FAILED) {
     super(message);
-    this.name = "ActionParseError";
     this.code = code;
     this.status = status;
   }
@@ -34,6 +46,16 @@ export class ActionParseError extends Error {
   /** The error as the turn's result carries it. */
   get error(): MotionError {
     return { code: this.code, message: this.message };
+  }
+
+  /** type(error).__name__ of the exception PEAR raises: the code. */
+  get pythonType(): string {
+    return this.code;
+  }
+
+  /** Whether the exception PEAR raises is a ValueError: the turn is then rejected. */
+  get isValueError(): boolean {
+    return this.status === MotionStatus.REJECTED;
   }
 }
 
@@ -48,9 +70,9 @@ export function parseAction(answer: string): SingleArmDelta {
   try {
     return parse(answer);
   } catch (error) {
-    if (error instanceof PythonError) {
-      const status = error.isValueError ? MotionStatus.REJECTED : MotionStatus.FAILED;
-      throw new ActionParseError(error.pythonType, error.message, status);
+    if (error instanceof PythonException) {
+      const status = isValueError(error) ? MotionStatus.REJECTED : MotionStatus.FAILED;
+      throw new ActionParseError(pythonErrorName(error), error.message, status);
     }
     throw error;
   }
@@ -124,7 +146,7 @@ function finiteNumber(quantity: PythonJsonValue): number {
     const value = Number(quantity.literal);
     if (!Number.isFinite(value)) {
       // math.isfinite of an int past every float; no ValueError, so PEAR fails the turn instead of rejecting it
-      throw new PythonError("OverflowError", "int too large to convert to float", false);
+      throw new OverflowError("int too large to convert to float");
     }
     return value + 0; // the int -0 is 0, where the float -0.0 keeps its sign
   }
@@ -135,6 +157,6 @@ function finiteNumber(quantity: PythonJsonValue): number {
   return quantity.value;
 }
 
-function valueError(message: string): PythonError {
-  return new PythonError("ValueError", message, true);
+function valueError(message: string): ValueError {
+  return new ValueError(message);
 }

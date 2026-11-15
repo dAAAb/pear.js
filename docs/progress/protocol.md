@@ -101,7 +101,15 @@ off by one, 199 of the 1491 failed.
   holds its error's name equal to `UNREACHABLE_POSE_ERROR`.
 - **Kinematics**: `SO101Kinematics.quantities` rounds exactly as a turn does (`round(v, decimals) + 0.0`):
   `shownQuantity` is that function. The out-of-reach message (`unreachable_message`, `truncated_text`) is the
-  kinematics module's to produce; this module only embeds it.
+  kinematics module's to produce; this module only embeds it. Done since (`docs/progress/common.md`, part 2): the
+  two round with one `pythonRound`, the library's (`src/python/format.ts`); this module's own, made of the
+  engine's `toFixed`, gave the same float on every value compared and was dropped.
+- **Python itself** (done since, `docs/progress/common.md`, parts 1 and 2): `python_float.ts`, `python_json.ts` and
+  `python_text.ts` are in `src/python` (`float.ts`, `json.ts`, `whitespace.ts`) and re-exported here. `PythonError`
+  is the library's class for an exception named when it is raised (`src/python/errors.ts`); `json.loads` and the
+  parser throw the library's `JSONDecodeError`, `ValueError`, `RecursionError` and `OverflowError`, and
+  `ActionParseError` (still the one class `parseAction` throws, deliberate difference 1) extends the library's
+  base and tells which of them it stands for.
 - **The gripper's width in an observation**: PEAR computes `closed + opening * (open - closed)` from
   `geometry.gripper_width_cm`, shipped as `[0.0, 6.0]`, so an open gripper reads `6.0` (as in PEAR's stored
   observation), while the environment prompt says "Observations: unitless -1 closed, +1 open". Which
