@@ -5,6 +5,11 @@
 // them. The Feetech layer's `Clock` (src/feetech/transport.ts) counts milliseconds; `secondsClock` reads one in
 // seconds. A test replays PEAR's own readings on a `SteppedClock` rather than on a millisecond clock, because not
 // every double of seconds is a double of milliseconds divided by 1000.
+//
+// The rule of a part that is given no clock: it takes `realTimeClock()` (deadline_clock.ts), the one clock on the
+// engine's own time whose sleep ends at its hour, whether it sleeps or only reads, so that a loop made without a
+// clock keeps its period and every part of one robot reads the same clock; `secondsClock` is for whoever has a
+// clock of milliseconds to read in seconds.
 
 import { systemClock, type Clock } from "../../feetech/transport";
 

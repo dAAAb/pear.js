@@ -5,9 +5,10 @@
 
 import { formatFixed } from "../../so101/kinematics/text";
 import { RecoveryPhase } from "../schemas";
-import { secondsClock, type MonotonicClock } from "./clock";
+import type { MonotonicClock } from "./clock";
 import type { ControlConfig } from "./config";
 import type { ControlFeedback, JointControlLoop } from "./control_loop";
+import { realTimeClock } from "./deadline_clock";
 import { OperatorPaused, RuntimeError, type Cancellation } from "./errors";
 import { JointLayout } from "./layout";
 import { broadcastPair, clip, minimum } from "./numeric";
@@ -48,7 +49,7 @@ export class RecoveryRequest {
   ) {
     this.cancellation = options.cancellation ?? null;
     this.hasAutomaticTimeout = options.hasAutomaticTimeout ?? false;
-    this.clock = options.clock ?? secondsClock();
+    this.clock = options.clock ?? realTimeClock();
   }
 
   /** Throws the window's stability error once the request's deadline has passed. */

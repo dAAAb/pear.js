@@ -4,8 +4,9 @@
 
 import { ControlState, type ArmFeedback, type ControlSnapshot, type Observation } from "../schemas";
 import { ArmState } from "./arm_state";
-import { secondsClock, type MonotonicClock } from "./clock";
+import type { MonotonicClock } from "./clock";
 import type { ControlSettings } from "./config";
+import { realTimeClock } from "./deadline_clock";
 import { RuntimeError, ValueError } from "./errors";
 import { pythonStr } from "./numeric";
 import { StabilityError, type StabilityMetrics } from "./stability";
@@ -89,7 +90,7 @@ export class SnapshotCheck {
     controlPeriodS: number,
     timeoutS = Infinity,
     makeTimeoutError: ((result: Result) => Error) | null = null,
-    clock: MonotonicClock = secondsClock(),
+    clock: MonotonicClock = realTimeClock(),
   ): Promise<Result> {
     const deadline = clock.monotonic() + timeoutS;
 

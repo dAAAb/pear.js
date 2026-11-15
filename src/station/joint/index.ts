@@ -4,6 +4,7 @@
 export { ActionGuard, type GuardedControlLoop } from "./action_guard";
 export { ArmState } from "./arm_state";
 export { secondsClock, SteppedClock, type MonotonicClock } from "./clock";
+export { DeadlineClock, realTimeClock, type DeadlineClockOptions, type DeadlineClockStats } from "./deadline_clock";
 export {
   ConfigSection,
   ControlConfig,

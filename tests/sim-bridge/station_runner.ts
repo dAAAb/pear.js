@@ -2,6 +2,7 @@
 // simulated SO-101 servo chain reachable over TCP (the chain is not part of this repository), stepped as the
 // stepping rule of docs/progress/station-reference.md says, and returns a StationRunResult of the form the
 // reference's runner writes of PEAR's Python robot on the same chain. compare_station.ts compares the two.
+// A line and controls can be given in the chain's place: replayed_chain.ts gives those of PEAR's recorded run.
 //
 // The robot is the port's own: SO101Robot with its real driver (SO101Driver.fromConfig on the chain's line), its
 // control loop, its motion layer, its gripper operation, its homing and its recovery. What is replaced is what the
@@ -18,6 +19,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 import type { MotorCalibration } from "../../src/feetech/bus";
+import type { Transport } from "../../src/feetech/transport";
 import { pythonErrorMessage, pythonErrorName, RuntimeError } from "../../src/python/errors";
 import { SO101_DEFAULT_CONFIG, type SO101Config } from "../../src/so101/config";
 import { SINGLE_ARM_POSE_FORMAT } from "../../src/so101/formats";
@@ -178,12 +180,25 @@ function labelOf(step: StationStep): string {
   return `${step.id} ${step.op}`;
 }
 
+/** What the runner asks of a chain's controls. */
+export type ChainControl = Pick<
+  BridgeControl,
+  "state" | "reset" | "mark" | "inject" | "place" | "traffic" | "calibration" | "calibrationFile"
+>;
+
+/** A chain's line as the runner holds it: the bus's transport, which says whether it was closed. */
+export interface ChainLine extends Transport {
+  readonly isClosed: boolean;
+}
+
 export interface StationRunOptions {
-  /** The chain's serial line. */
+  /** The chain's serial line: where it is, and its name in the station's settings. */
   host: string;
   port: number;
   /** The chain's controls. */
-  control: BridgeControl;
+  control: ChainControl;
+  /** Opens the chain's line; by default a TCP connection to the host and the port. */
+  line?: () => Promise<ChainLine>;
   /** The script; by default the committed station_session.json. */
   sessions?: { document: StationSessionDocument; sha256: string };
   /** The names of the sessions to run; by default all. */
@@ -204,14 +219,14 @@ export class StationRunner {
    * the question, and what differs. */
   readonly askedOtherwise: string[] = [];
 
-  private readonly control: BridgeControl;
+  private readonly control: ChainControl;
   private readonly config: StationConfig<SO101Config>;
   private readonly sha256: string;
 
   // what a session holds between its steps
   private sessionName = "";
   private robot: SteppedSO101Robot | null = null;
-  private transport: TcpTransport | null = null;
+  private transport: ChainLine | null = null;
   private calibration: Record<string, MotorCalibration> | null = null;
   private observation: Observation<DrawnFrame> | null = null; // the last one: the reference of what follows
   private feedback: string | null = null; // what the next turn tells the model of the last result
@@ -289,7 +304,7 @@ export class StationRunner {
       sessions,
       // what belongs to this run alone and is never compared
       run: {
-        implementation: { node: process.version, line: "TCP to the chain's line" },
+        implementation: { node: process.version, line: this.options.line === undefined ? "TCP to the chain's line" : "a line given to the runner" },
         kinematics: Object.fromEntries(
           sessions.map((session) => [session.name, this.options.kinematics?.[session.name] === undefined ? "own" : "recorded"]),
         ),
@@ -316,7 +331,7 @@ export class StationRunner {
   }
 
   /** Returns a robot of the station on ``transport``; without one it can be asked its settings and not opened. */
-  private makeRobot(transport: TcpTransport | null): SteppedSO101Robot {
+  private makeRobot(transport: ChainLine | null): SteppedSO101Robot {
     const robot = new SteppedSO101Robot(this.config, {
       cameras: new StandInCameras(SO101Robot.CAMERAS, this.clock),
       clock: this.clock,
@@ -507,7 +522,7 @@ export class StationRunner {
         return jsonOf(FORMAT.parseAction(step.answer ?? ""));
       case "open": {
         // as the console makes its robot and its enable command opens it; the cameras are the drawn ones
-        this.transport = await TcpTransport.connect(this.options.host, this.options.port);
+        this.transport = await (this.options.line?.() ?? TcpTransport.connect(this.options.host, this.options.port));
         this.robot = this.makeRobot(this.transport);
         await this.robot.open();
         clock.controlLoop = this.robot.controlLoop; // each sleep steps it from here on

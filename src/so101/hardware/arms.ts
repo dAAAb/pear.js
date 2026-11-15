@@ -3,8 +3,9 @@
 import { type BusOptions, FeetechCommError, type MotorCalibration } from "../../feetech/bus";
 import type { Transport } from "../../feetech/transport";
 import { ConnectionError, RuntimeError, ValueError } from "../../python/errors";
-import { secondsClock, type MonotonicClock } from "../../station/joint/clock";
+import type { MonotonicClock } from "../../station/joint/clock";
 import type { ControlConfig } from "../../station/joint/config";
+import { realTimeClock } from "../../station/joint/deadline_clock";
 import type { HardwareSection, SO101RobotConfig } from "../config";
 import { type ServoStatus, ServoFault, SO101ArmState } from "./arm_state";
 import type { SO101Follower } from "./follower";
@@ -83,7 +84,7 @@ export class SO101Hardware {
     this.jointOffsets = [...options.jointOffsets];
     this.statusPollTicks = options.statusPollTicks;
     this.stateTimeoutS = options.stateTimeoutS;
-    const clock = options.clock ?? secondsClock();
+    const clock = options.clock ?? realTimeClock();
     this.monotonic = options.monotonic ?? (() => clock.monotonic());
     this.onWarning = options.onWarning ?? (() => undefined);
   }

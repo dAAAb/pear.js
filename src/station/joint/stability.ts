@@ -6,8 +6,9 @@
 import { formatFixed } from "../../so101/kinematics/text";
 import type { SampleId } from "../schemas";
 import { ArmState } from "./arm_state";
-import { secondsClock, type MonotonicClock } from "./clock";
+import type { MonotonicClock } from "./clock";
 import type { ControlSettings } from "./config";
+import { realTimeClock } from "./deadline_clock";
 import { IndexError, PythonTypeError, RuntimeError, ValueError } from "./errors";
 import { JointLayout } from "./layout";
 import { broadcastTo, maximum, minimum, pythonMin, pythonStr } from "./numeric";
@@ -251,7 +252,7 @@ export class StabilityWindow {
     readonly controlConfig: StabilityControlSettings,
     readonly robotConfig: StabilityRobotSettings,
     options: StabilityWindowOptions,
-    private readonly clock: MonotonicClock = secondsClock(),
+    private readonly clock: MonotonicClock = realTimeClock(),
   ) {
     this.layout = robotConfig.LAYOUT;
     this.durationS = options.durationS;

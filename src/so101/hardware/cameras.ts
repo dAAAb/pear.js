@@ -8,7 +8,8 @@
 
 import { AttributeError } from "../../python/errors";
 import { CameraSource, type CameraPreview } from "../../station/cameras";
-import { secondsClock, type MonotonicClock } from "../../station/joint/clock";
+import type { MonotonicClock } from "../../station/joint/clock";
+import { realTimeClock } from "../../station/joint/deadline_clock";
 import type { Camera } from "../../station/schemas";
 import { WRIST_ROLE, type SO101Config } from "../config";
 
@@ -62,7 +63,7 @@ export class WristCamera<Image = unknown> extends CameraSource<Image> {
     }
     this.role = robotConfig.camera.role;
     this.camera = camera;
-    this.clock = options.clock ?? secondsClock();
+    this.clock = options.clock ?? realTimeClock();
   }
 
   /** Returns the latest fresh frame and, when there is none, why. */

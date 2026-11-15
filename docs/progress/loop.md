@@ -43,7 +43,9 @@ Making one (PEAR's constructor reads the arms and commands the first hold, which
 | `new Loop(driver, controlConfig, robotConfig, options?)` | sync | no equivalent: the parts only, `states` and `targets` unset. Use `create` or `open` |
 
 `options: ControlLoopOptions = { clock?: MonotonicClock; log?: ControlLog }` (the clock of the loop and of every part
-it makes; `log(level, message, error?)` is told what PEAR logs, at the levels `"info"`, `"warning"`, `"error"`).
+it makes; without one it is `realTimeClock()`, the one `DeadlineClock` on the engine's own time, whose sleep ends
+at its hour: `src/station/joint/deadline_clock.ts`, deliberate difference 12; a test gives a `SteppedClock`;
+`log(level, message, error?)` is told what PEAR logs, at the levels `"info"`, `"warning"`, `"error"`).
 Without a `log` the loop uses `logErrorsToConsole` (exported): what PEAR logs at error level is printed with
 `console.error(message, error)` and the lower levels are dropped. The three error lines are `station fault: <text>`,
 `Could not command a hold; a physical stop may be required` and `The control thread failed`; a page that gives its
@@ -56,8 +58,9 @@ keep their torque and hold the last target. `close()`, `shutdown()` and an `open
 `close()`, which for the SO-101 switches the torque off, as PEAR's does (`robots/so101/hardware/driver.py`:
 "Releases the arm, which disables its torque"): **the arm goes limp and falls**, for an SO-101 has no brakes. A
 page's stop control must therefore be `stop()` or the cancellation, never `close()` or `shutdown()`; those are for
-an arm that is supported or parked. An `open()` that fails does the same: with the default clock on Node for
-Windows it fails after 3 s ("Not verified", 1), which is torque on for 3 s and then off.
+an arm that is supported or parked. An `open()` that fails does the same: torque on until the startup times out
+(3 s), and then off. On the engine's own sleep (`secondsClock()`) every `open()` on Node for Windows failed so
+("Not verified", 1), which is why a loop that is given no clock sleeps on `realTimeClock()`.
 
 Static constants (a robot's loop overrides the last four): `THREAD_NAME` "station-control",
 `RECOVERY_WINDOW_FLOOR_S` 0.5, `START_EPSILON` 1e-9,
@@ -472,16 +475,33 @@ Log, one line a step (newest last):
 
 ## Not verified
 
-1. **Real time.** Every test steps the loop on a stand-in clock or a clock of timers that the test moves. On real
-   time it was measured by hand, twice (a scratch script; Node 24.18.1 on Windows; the second time at 17:46, with
-   the code as it is now), and nothing committed asserts it. With the default clock (`secondsClock()`, the engine's
-   `setTimeout`) a sleep of one 20 ms period takes 30.94 ms on average (20.79 to 33.72). `run()` aims each wait at
-   its deadline and keeps 49.6 steps a second; but the waits that sleep one period at a time
-   (`SnapshotCheck.poll`: the wait for settled feedback at enabling, `waitForHold`, `recover`) then read at 32
-   times a second, the stability window of 0.5 s never holds the readings it needs, and `open` fails after 3.03 s
-   with PEAR's `Enable requires the arm to settle; startup timed out` (97 readings). With a clock whose sleep aims at
-   its hour, `open` takes 0.50 s (27 readings), the loop makes 50.0 steps a second, a move of 0.2 rad is waited for
-   in 1.39 s and ends `finished`, and `close` ends it. A browser's timers were not measured.
+1. **Real time, outside Node.** Every test that always runs steps the loop on a stand-in clock or a clock of timers
+   that the test moves: a runner's timers are not ours to promise. On real time two tests measure, only when
+   `PEAR_JS_REAL_TIME=1` is set, print what they measured (a `REAL_TIME {...}` line each) and assert only what
+   holds on any machine (no sleep of the clock ends before its hour; a loop that opened is closed again):
+   `tests/station-joint/deadline_clock.test.ts` (250 sleeps of one 20 ms period on `realTimeClock()` and on
+   `secondsClock()`) and `tests/station-loop/default_clock.test.ts` (the SO-101's loop made **without a clock** on
+   the stand-in arm: open, a second of HOLD, a move of 0.2 rad, a stop, a close). Run on 2026-11-15, each test alone:
+
+   | engine | a 20 ms sleep, ms: mean / p99 / largest (over 25 ms, of 250) | `open()` | the move | steps: mean / p99 / largest, ms (over 25 ms) | after `stop()` / `close()` |
+   | --- | --- | --- | --- | --- | --- |
+   | Node 24.18.1 for Windows, `realTimeClock()` | 20.058 / 21.897 / 27.681 (1) | ok, 0.517 s | `finished`, 1.402 s | 20.000 / 24.516 / 31.534 (1 of 119) | HOLD / CLOSED, arm closed |
+   | Node 24.18.1 for Windows, `secondsClock()` | 31.416 / 39.353 / 48.179 (239) | - | - | - | - |
+   | Node 22.22.2 for Linux (WSL), `realTimeClock()` | 20.002 / 20.013 / 20.035 (0) | ok, 0.504 s | `finished`, 1.367 s | 20.000 / 20.222 / 23.773 (0 of 117) | HOLD / CLOSED, arm closed |
+   | Node 22.22.2 for Linux (WSL), `secondsClock()` | 20.114 / 20.252 / 20.268 (0); one ended at 19.131 ms, before its hour | - | - | - | - |
+
+   Before the default was this clock, `open` without a clock failed on Node for Windows after 3.03 s with PEAR's
+   `Enable requires the arm to settle; startup timed out` (measured by hand: the waits that sleep one period at a
+   time, `SnapshotCheck.poll`, read 32 times a second and the stability window of 0.5 s never held the readings it
+   needs). On Node for Windows the clock keeps the period by taking turns of the event loop for most of every
+   sleep (1.5 to 1.8 million turns in these runs): one busy thread. Its largest lateness there was 7.7 ms in the
+   sleeps and 11.5 ms in the loop: a timer that fired later than the margin had seen.
+   **Not measured here**: a page, a dedicated worker, a hidden page, macOS, a real serial port. The timing spike
+   (its report is kept in `<scratch>`, not in the repository) measured its own version of this clock in headless
+   Chromium 159 on Linux with the same stand-in arm: in a worker 500 steps in a 10 s hold, the largest step
+   20.3 ms, with the window's thread busy 30 ms in every 100 ms; in the window under that load 118 steps of 586
+   over 25 ms (largest 42.9 ms), which no clock can make up for. Those are the spike's numbers, of the spike's
+   clock, not this file's; it did not measure a hidden page (a headless page cannot be hidden) or macOS.
 2. **A real arm, a page, and the station above the loop.** No serial device was opened. The loop under PEAR's
    motion layer and robot is the station-reference comparison (`docs/progress/station-reference.md`), not this step.
 3. **Five comparisons at exact equality**, which no scenario reaches and no double may reach: a controlled motion
@@ -585,15 +605,36 @@ Log, one line a step (newest last):
    takes a new reading every control period, so such an assignment lasts one period outside FAULT. Not fixed in
    round 3: freezing the object would break a subclass that sets a field of its own after `super()`
    (`SO101ArmState.servoStatus`, not this round's file).
+12. **The clock of a part that is given none is not the engine's sleep.** PEAR's loop and its waits sleep with
+   `time.sleep()`, which on Linux ends about a tenth of a millisecond after the time asked for (measured: 250
+   sleeps of 20 ms, Python 3.12.3 in WSL: 20.080 to 20.279 ms, mean 20.101), and raises `ValueError` for a
+   negative time or NaN and `OverflowError` for an infinite one. An engine's timer does not keep that: 31 ms for
+   20 ms on Node for Windows, and on Node for Linux one sleep of 250 ended 0.9 ms early. So a robot, a loop, a
+   wait, a recovery, a stability window and the SO-101's arm, driver and camera that are given no clock take
+   `realTimeClock()` (`src/station/joint/deadline_clock.ts`; the rule is in `clock.ts`'s header): one
+   `DeadlineClock` for all of them, on `performance.now()` as before. Its sleep takes the hour it must end at,
+   leaves it to a timer until a margin before the hour (1.5 ms, widened to the largest lateness of the last 32
+   timers plus 0.5 ms, at most 20 ms), then takes turns of the event loop (`setImmediate`, or a `MessageChannel`
+   in a page), then waits busily for the last 1.5 ms; it never ends before its hour. Where it differs from
+   `time.sleep()`: every sleep takes at least one turn of the event loop, a sleep of no time too (the loop and
+   its callers share one thread); a negative time is no time, and NaN or an infinite time is refused with
+   `ValueError`; a sleep longer than 2^31 - 1 ms is one timer after another; a busy wait on a clock that stands
+   still takes a turn every million readings instead of holding the thread; once a timer has been a control period
+   late, sleeps of one period wait for no timer until a longer sleep finds the timers on time (the period is kept,
+   the thread is busy). `secondsClock()` stays for whoever has a clock of milliseconds. Held by
+   `tests/station-joint/deadline_clock.test.ts` (16 tests on a fake engine and on the engine's own turns, by
+   hand) and `tests/station-loop/default_clock.test.ts` (which clock a loop, a wait, a recovery, a stability
+   window and the wrist camera read; the robot's, the arm's and the driver's defaults have no test of their own).
 
 ## To reconcile with the other modules
 
 - **The layer above** (the motion layer and the robot, being written) calls the loop by the names of the Interface
   section. One name was added since it was written (`LoopLock.isHeld`), none changed. PEAR's two blocks under the
   loop's lock in `robot.py` need no `lock.run` here (Interface: "What PEAR's robot does under the loop's lock").
-- **The default clock** (`src/station/joint/clock.ts`, not this round's file): on Node for Windows its sleep of one
-  control period takes one and a half, and a loop cannot be enabled with it ("Not verified", 1). Either its sleep
-  aims at its hour, or a page gives the loop a clock that does.
+- **The default clock** is `realTimeClock()` (`src/station/joint/deadline_clock.ts`, deliberate difference 12). The
+  Feetech layer's own default (`systemClock` of `src/feetech/transport.ts`: the bus's packet timeouts and the
+  simulated line) is still the engine's timer; a page that runs the loop in a worker gives nothing and gets the
+  worker's `realTimeClock()`.
 - **`ActionGuard.submit` of `stop`** (`src/station/joint/action_guard.ts`, not this round's file): deliberate
   difference 4. PEAR's station of the SO-101 does not stop through a guard.
 - **`pythonStrRepr`** (deliberate difference 1): if the joint layer takes the table's function, the texts of a
@@ -869,12 +910,19 @@ Requests (files this round could not change):
 
 Nothing of this round's task is open. What could follow it:
 
-1. A clock whose sleep aims at its hour, or the page's own, and the loop measured on real time in a browser ("Not
-   verified", 1).
+1. The loop measured on real time where it will run: a page, a dedicated worker, a hidden page, macOS, a real
+   port ("Not verified", 1). On Node the clock of a loop that is given none keeps the period (Windows: a 20 ms
+   sleep takes 20.058 ms, `open` 0.517 s, 1 step of 119 over 25 ms; Linux: 20.002 ms, 0.504 s, none of 117). Open
+   on the clock itself (deliberate difference 12): on Node for Windows it keeps the period with a busy thread and
+   a sleep was up to 11.5 ms late when a timer fired later than the margin had seen; and after one stall a page's
+   sleeps of one period stay turns of the event loop, for nothing but a longer sleep narrows the margin again (a
+   timer started beside a busy sleep to tell the margin was measured and is no measure: on Node for Windows 2
+   sleeps of 250 then took longer than 25 ms, and 8 when timers shorter than the margin were left out as well,
+   against 1 without either).
 2. The guard's `submit` of an asynchronous method under one lock (deliberate difference 4), if a command is ported
    that stops through a guard.
-3. The comparison of the whole station with PEAR's (`docs/progress/station-reference.md`), once the layer above is
-   on these classes.
+3. Done since: the whole station on these classes compared with PEAR's on a simulated servo chain, stepped
+   (`docs/progress/station-chain.md`). Left there: the same in real time.
 
 For a session that starts again: the fixtures are written by
 `<work dir>/envs/station/bin/python tools/fixtures/loop_fixtures.py` (from `<pear>`, 8 s), then `libm.json` is

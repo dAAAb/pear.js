@@ -43,8 +43,9 @@ import {
 } from "../schemas";
 import { ActionGuard, type GuardedControlLoop } from "./action_guard";
 import { ArmState, tupleOf } from "./arm_state";
-import { secondsClock, type MonotonicClock } from "./clock";
+import type { MonotonicClock } from "./clock";
 import type { ControlConfig, RobotConfig } from "./config";
+import { realTimeClock } from "./deadline_clock";
 import type { ArmVectors, JointDriver } from "./driver";
 import { OperatorPaused, PythonTypeError, RuntimeError, TimeoutError, ValueError, type Cancellation } from "./errors";
 import type { JointLayout } from "./layout";
@@ -448,7 +449,7 @@ export class JointControlLoop<State extends ArmState = ArmState> implements Guar
     robotConfig: RobotConfig,
     options: ControlLoopOptions = {},
   ) {
-    this.clock = options.clock ?? secondsClock();
+    this.clock = options.clock ?? realTimeClock();
     const log = options.log ?? logErrorsToConsole;
     this.log = (level, message, error) => {
       try {

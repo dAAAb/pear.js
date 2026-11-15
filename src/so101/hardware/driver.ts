@@ -3,8 +3,9 @@
 // (pear/deploy/station/control/robots/so101/joint/feedforward.py) is given to it, or built by fromConfig as PEAR's
 // constructor builds it.
 
-import { secondsClock, type MonotonicClock } from "../../station/joint/clock";
+import type { MonotonicClock } from "../../station/joint/clock";
 import type { ControlConfig } from "../../station/joint/config";
+import { realTimeClock } from "../../station/joint/deadline_clock";
 import { JointDriver, type ArmVectors } from "../../station/joint/driver";
 import type { JointLimitValues } from "../../station/joint/limits";
 import type { SO101RobotConfig } from "../config";
@@ -67,7 +68,7 @@ export class SO101Driver extends JointDriver<SO101ArmState> {
     options: SO101DriverOptions = {},
   ) {
     super();
-    const clock = options.clock ?? secondsClock();
+    const clock = options.clock ?? realTimeClock();
     this.monotonic = options.monotonic ?? (() => clock.monotonic());
     this.onWarning = options.onWarning ?? (() => undefined);
   }

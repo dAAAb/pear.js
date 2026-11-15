@@ -18,9 +18,10 @@ import { pythonRepr, pythonValueOf } from "../python/repr";
 import type { BaseKinematics } from "../so101/kinematics/base";
 import type { CameraSource } from "./cameras";
 import { ActionGuard } from "./joint/action_guard";
-import { secondsClock, type MonotonicClock } from "./joint/clock";
+import type { MonotonicClock } from "./joint/clock";
 import { ControlConfig, type ControlSettings, type RobotConfig } from "./joint/config";
 import type { ControlLoopOptions, JointControlLoop } from "./joint/control_loop";
+import { realTimeClock } from "./joint/deadline_clock";
 import type { JointDriver } from "./joint/driver";
 import { RuntimeError, ValueError, type Cancellation } from "./joint/errors";
 import type { GripperOperation } from "./joint/operations";
@@ -224,7 +225,7 @@ export abstract class BaseRobot<
       throw new ValueError("Expected joint/cartesian mode");
     }
     this.options = options;
-    this.clock = options.clock ?? secondsClock();
+    this.clock = options.clock ?? realTimeClock();
     this.log = options.log ?? (() => undefined);
     this.uuid4 = options.uuid4 ?? (() => globalThis.crypto.randomUUID());
 

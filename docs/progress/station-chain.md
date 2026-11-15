@@ -3,7 +3,8 @@
 Step 4 of the verification ladder, the port's side: pear.js's own station (`SO101Robot` on its real driver) run
 through the scripted sessions on the simulated SO-101 servo chain, stepped by the rule of `station-reference.md`,
 and compared with the reference's result of the same script (PEAR's Python robot on the same chain). The chain is
-not part of this repository; the tests that need it are skipped without it.
+not part of this repository; the tests that need it are skipped without it. What runs everywhere is the replay:
+the same station on the recorded line of PEAR's run (the section "The replay" below).
 
 ## Result
 
@@ -19,6 +20,11 @@ not part of this repository; the tests that need it are skipped without it.
   instruction packets are the same in the same order but for the value of a goal: 26 of 25,502 differ, all in one
   step (the settling of a Home: one joint's goal is one encoder count apart), and 25 status packets after them.
   Besides, 9,108 numbers differ: planned targets in their last bits and what is computed from them.
+- **Without the chain, on the recorded line of PEAR's run** (`station_replay.test.ts`, in every `npm test`): with
+  PEAR's kinematics' answers and the C library's values pear.js sends PEAR's 25,502 instruction packets, each one
+  required in its place, and no value its station computes differs in the 652 steps; with its own kinematics the
+  same 26 goal packets of the one step differ, and all that the chain's first test requires holds. The servo side
+  of a replay is PEAR's recording and proves nothing.
 - No defect of the port was found, and nothing under `src/` was changed.
 - `SO101Robot.makeDriver` (`SO101Driver.fromConfig`), which no test had run, ran here on the chain's line.
 
@@ -26,8 +32,11 @@ not part of this repository; the tests that need it are skipped without it.
 
 | File | What it is |
 | --- | --- |
-| `tests/sim-bridge/station_runner.ts` | `StationRunner`: one robot of pear.js driven through the script on the chain's line, a `StationRunResult` of the form the reference writes |
+| `tests/sim-bridge/station_runner.ts` | `StationRunner`: one robot of pear.js driven through the script on the chain's line, a `StationRunResult` of the form the reference writes; the line and the controls can be given to it (by default the chain over TCP) |
 | `tests/sim-bridge/station_chain.test.ts` | The gated test: the sessions run twice (pear.js's own kinematics; PEAR's answers and the C library's values) and compared with the reference's result |
+| `tests/sim-bridge/replayed_chain.ts` | `ReplayedChain`: a chain replayed in process from a reference result: the line that requires PEAR's instruction packets and hands back PEAR's answers, and the controls the runner asks of a chain |
+| `tests/sim-bridge/station_reference.result.json.gz` | The reference's stored result of all 8 sessions (PEAR's Python station on the chain): 652 steps, 25,502 and 87,210 packets |
+| `tests/sim-bridge/station_replay.test.ts` | The test that needs no chain: the 8 sessions on the replayed line, twice as above; the replayed chain by itself; the changes of the reference that must be found |
 | `tests/sim-bridge/station_kinematics.json` | PEAR's kinematics' answers in a run of the reference: by session, what `SO101Kinematics.joint_target` was asked and what it returned or raised (61 questions, 9 of them refused) |
 | `tests/sim-bridge/libm.json` | The reference C library's values for the 622 arguments the trajectory generator asks its five functions over the 8 sessions (the table of `tests/ruckig/oracle.ts`) |
 | `tests/sim-bridge/bridge_control.ts` | Added: `place`, and the fields of the chain's state a stepped station reads |
@@ -100,6 +109,79 @@ the middle of its range, in pear.js's, while the joint's target at the end is 0 
 in a result; that it lies a hair on one side or the other of the middle is the likely reason, not a measured one.
 The arm then rests one count apart for the 4 steps that are left of the session.
 
+## The replay: the station on PEAR's recorded line
+
+The reference's result holds, for every step, every packet that crossed the line in PEAR's run, in both directions
+and in order. `replayed_chain.ts` makes of it what the chain is to the runner, in process:
+
+- **The line** (the bus's transport). Every instruction packet pear.js writes must be the next one of the step's
+  record; then the status packets that follow it there are handed back. A packet that is not PEAR's ends the run
+  with an error that names the session, the step, the packet's number among the step's instruction packets and
+  both packets. One tolerance, off by default and used only for the run with pear.js's own kinematics: a sync write
+  of Goal_Position to the same servos in the same order whose goals alone differ; each one is listed.
+- **The controls.** `mark` moves to the next step's record by the chain's own rule (it takes effect just before the
+  next instruction packet that is not a sync write); a step that is not the next one of PEAR's run, and packets
+  that PEAR's run still holds of the step before, are errors. `reset` starts a session. `inject` and `place` do
+  nothing: what they caused is in the answers. `traffic` hands back what crossed the replayed line, under the same
+  labels. `state` and the calibration are the reference's: the world of a step is the reference's record of it.
+
+`StationRunner` takes the line and the controls as options; without a line it connects to the chain over TCP as
+before, and `station_chain.test.ts` is unchanged. If pear.js sends exactly what PEAR sent, it reads exactly what
+PEAR read, and must then compute and return exactly what PEAR's station did. `station_replay.test.ts` requires
+that, without any variable of the environment.
+
+### What is compared, and what is a copy
+
+| In the result of a replayed run | |
+| --- | --- |
+| the instruction packets, in their order | pear.js's: the line requires each one, and the comparison counts them again |
+| of each step: whether it returned or raised, what it raised, an action's result, the report, the turn's text, the model's state, whatever else it returned, the status with its control snapshot, the joint vector the arm heads for, the ticks, the waits, the loop's states, the clock, the log | pear.js's: compared with PEAR's, each number in every bit |
+| what the planner asked the kinematics and how often, and the arguments the trajectory generator gives the C library's five functions (the exact run) | pear.js's: required to be PEAR's |
+| a step's id, op, turn and about; the session file's hash; the station's settings | the script's, which both runners copy: they show that the reference ran the committed script |
+| the status packets, the simulated world, the line's counters of a session, the chain's clock, the calibration | copies of the reference's: they prove nothing (the calibration is an input: the driver converts with it) |
+
+### What a replay cannot show
+
+- Nothing of the servo side. The simulated chain is not there: that pear.js and PEAR's Python ran on the same
+  chain, and what the chain answered pear.js, is the chain's run above. The replay holds the station to the stored
+  result of PEAR's run.
+- Nothing after the first packet that is not PEAR's. No chain answers such a packet, so a replay says where a
+  station leaves PEAR's run and not how far it then goes from it. With pear.js's own kinematics the answers after
+  the goal that differs are still those PEAR's arm gave; on the chain the arm then rested one count apart (the
+  world's 35 differences and the 25 status packets of the table above), which a replay does not show.
+- Nothing of the line's timing: an answer is there as soon as its packet is written, none is late or lost, and no
+  packet timeout of the bus runs.
+
+### The numbers
+
+- **Exact** (PEAR's kinematics' answers, the C library's values), all 8 sessions: 652 steps compared, 0 with a
+  difference; 25,502 instruction packets required and 25,502 compared, 0 differing; 87,210 status packets handed
+  back; 1,180 values taken from the C library's table, 0 not in it; the planner asked 61 times what PEAR's was
+  asked.
+- **pear.js's own kinematics and the engine's functions**, all 8 sessions: every part that does not depend on a
+  planned target's last bits is the same in all 652 steps; the line let 26 goal writes pass with another goal, all
+  in `a task`, step 265 (the settling of a Home; the first is the step's instruction packet #859: the pan joint's
+  goal 2047 where PEAR's is 2046), and without the tolerance the run ends at that packet. 9,048 numbers differ in
+  467 steps (an action's result 349, the joint vector 2,267, the status 4,369, what a step returned besides 2,037,
+  the 26 packets): the 9,159 of the chain's run less the world's 35 and the 25 status packets, which are copies
+  here, and less 51 that followed on the chain from the arm resting one count apart. The measured positions of all
+  81 recorded results are identical in every bit.
+- **Time**: the file's 12 tests take 1.2 s alone and 2.0 s in the whole suite on the machine of the chain's run
+  (a run of the 8 sessions about 0.6 s; the reference is unpacked, hashed and parsed in 24 ms).
+
+### The reference's file
+
+`station_reference.result.json.gz` (330,084 bytes) holds 5,481,450 bytes of JSON whose SHA-256, which the test
+requires, is `f243b76509ae98d465bcfd77900aa2ae0512a0a77f29b095ee8e72b18e79c3ba`. It is the result the reference
+runner stored of the run of all 8 sessions (5,481,492 bytes, SHA-256
+`b6645b37750eed6974217e00d0bc7fbd92099288d964a981f9ced2ef48a79035`), byte for byte but for the 42 bytes of one entry
+of its `run` record: the name of the reference's own serial line, a path on the reference's machine, which no file
+of this repository may hold. `run` is what belongs to a run alone and is never compared. The header of
+`replayed_chain.ts` says how the file is made; made again from the stored result it was the same file, byte for
+byte (the packed bytes depend on the zlib at hand, the content does not). The gzip header holds no time and no
+file name. The file's first session is that of the committed `station_sample.result.json` in every key and every
+bit, and so are the fields outside the sessions but `run`.
+
 ## How it was verified
 
 2026-11-15, on the chain started with `packets --steps-per-packet 0 --steps-per-position-read 4`.
@@ -121,11 +203,44 @@ The arm then rests one count apart for the 4 steps that are left of the session.
   (`src/so101/hardware/arms.ts`) fails both tests; another prefix of the report in the turn's text
   (`src/protocol/turn_text.ts`) fails both; degrees to radians by a factor one part in 10^16 off fails the exact
   test and, as it must, not the other.
-- Without the chain: `npx vitest run`: 72 files pass, 2 are skipped; 9,138 tests pass, 6 are skipped (the 4 gated
-  tests of `sim-bridge.test.ts` and these 2). `npx tsc --noEmit` is clean.
+- **The replay**, without the chain: `npx vitest run tests/sim-bridge/station_replay.test.ts`: 12 tests pass, with
+  the numbers of the section above.
+- **The replay can fail.** In the test itself, on a copy of the reference's shortest session with one thing
+  changed: one encoder count in a servo's answer to the last position read of a hold (the checksum made valid
+  again): the run goes on, and the comparison finds the step's status and nothing else; one count in a goal of
+  PEAR's first goal write of an action: the line refuses pear.js's packet with the whole text of the error (the
+  tolerant line lets it pass and lists it, and the comparison counts it); one instruction packet more at the end
+  of a step of PEAR's run: the next step's mark is the error; one last bit of a measured position in a step's
+  result: the comparison finds that one difference. And the chain by itself, on a run of two steps written by
+  hand: the answers, the rule of a mark, the errors.
+- **Breaks of the port, in a scratch copy, one at a time**: the Status poll one read later
+  (`src/so101/hardware/arms.ts`): both runs of the 8 sessions end at `a short session from the rest pose / 001
+  open: instruction packet #127`; another prefix of the report (`src/protocol/turn_text.ts`): both fail, the exact
+  run with 77 steps that differ and every packet the same, the other at the turn's text; degrees to radians by a
+  factor one part in 2^52 off: the exact run ends at `001 open: instruction packet #154` (a goal one count apart),
+  the run with pear.js's own kinematics passes, as it must.
+- **Breaks of the replayed chain, likewise**: a line that compares nothing fails 2 tests (the run with pear.js's
+  own kinematics, whose 26 packets are then not listed, and the changed instruction packet); a mark that does not
+  look at what PEAR's run still holds fails 1; marks that take effect at once fail 1 (the chain by itself: in
+  process the runner's own packets never wait behind a mark).
+- **The runner's line over TCP after the change**, without the chain: a local socket in front of the replayed line,
+  the runner given no line, the shortest session with pear.js's own kinematics: one connection, 324 of 324
+  instruction packets, 85 differences in 4 steps, as on the chain.
+- **The gated test on the chain again, after the runner's change** and after the joint layer's parts that are
+  given no clock took another one (`loop.md`, deliberate difference 12; a stepped run gives every part its clock):
+  all 8 sessions, each way on a chain started anew: exact, 0 differences, and the reference's own tool finds none on
+  the byte log; with pear.js's own kinematics the same 9,159 differences and the same 26 packets as before.
+- Without the chain: `npx vitest run`: 75 files pass, 2 are skipped; 9,169 tests pass, 8 are skipped (the 4 gated
+  tests of `sim-bridge.test.ts`, the 2 of `station_chain.test.ts` and the 2 of the joint layer that measure real
+  time). `npx tsc --noEmit` is clean.
 
 ## Not verified
 
+- The replay on other engines than the two it has run on (Node 24.18.1 for Windows and Node 22.22.2 for Linux,
+  both x64: all 12 tests pass on both, and the run with pear.js's own kinematics gives the same counts on both, the
+  26 goal writes and the 9,048 numbers in 467 steps). The exact run takes PEAR's values for both known causes; the
+  run with pear.js's own kinematics uses the engine's functions, and whether another engine's last bits change a
+  count or a tick there is not known.
 - Anything on a real arm, and anything through Web Serial: the line here is a TCP connection in Node.
 - pear.js's loop on a timer against the chain's real-time clock: only the stepped run was made, so how much of a
   real-time run of the port is timing is not known (`station-reference.md` measures it for PEAR).
@@ -139,4 +254,7 @@ The arm then rests one count apart for the 4 steps that are left of the session.
 
 - A run of pear.js's station in real time (its control loop on the page's timer), beside the reference's two
   real-time runs.
-- The test needs the chain, so it does not run where the chain is not: nothing here runs in continuous integration.
+- The test on the chain needs the chain, so it does not run where the chain is not. Continuous integration runs
+  the replay instead: it holds pear.js's station to the stored result of PEAR's run, and not the chain, the
+  reference or a station that leaves PEAR's run to anything.
+- The first run of the replay on a hosted runner, and its time there.

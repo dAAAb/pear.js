@@ -340,5 +340,7 @@ Stepped run; a tick is 20 ms of the station's clock and of the simulated arm.
 ## Left
 
 - Done since (`station-chain.md`): a stepped runner of pear.js's station, and its result compared with the
-  reference's result of all 8 sessions.
+  reference's result of all 8 sessions. That result is in the repository now
+  (`tests/sim-bridge/station_reference.result.json.gz`, less the one entry of its `run` record that named a path),
+  and a test replays its line to pear.js's station where no chain is.
 - A run of pear.js's station in real time beside the two real-time runs of the reference above.

@@ -49,7 +49,7 @@ One turn of the station, as PEAR defines it and pear.js keeps it:
 | `src/feetech/` | Not PEAR's own code: the Feetech STS3215 protocol as the Feetech Python SDK and lerobot's `FeetechMotorsBus` speak it (PEAR drives the arm through them); a simulated servo chain |
 | `src/so101/hardware/` | `deploy/station/control/robots/so101/hardware/` `arms.py`, `driver.py`, `startup.py`, `arm_state.py`; lerobot's SO follower and its calibration file |
 | `src/ruckig/` | Not PEAR's own code: Ruckig 0.15.3, community edition (MIT), which `deploy/station/control/joint/trajectory.py` calls every control period |
-| `src/station/joint/`, `src/station/schemas.ts` | `deploy/station/control/schemas.py`; `deploy/station/control/joint/` `config.py`, `limits.py`, `layout.py`, `texts.py`, `arm_state.py`, `stability.py`, `tracking.py`, `action_guard.py`, `snapshot_checks.py`, `feedforward.py`, `driver.py`, and the control loop: `trajectory.py`, `operations.py`, `control_loop.py`, `recovery.py`; `deploy/station/exceptions.py` |
+| `src/station/joint/`, `src/station/schemas.ts` | `deploy/station/control/schemas.py`; `deploy/station/control/joint/` `config.py`, `limits.py`, `layout.py`, `texts.py`, `arm_state.py`, `stability.py`, `tracking.py`, `action_guard.py`, `snapshot_checks.py`, `feedforward.py`, `driver.py`, and the control loop: `trajectory.py`, `operations.py`, `control_loop.py`, `recovery.py`; `deploy/station/exceptions.py`. Not in PEAR: `clock.ts` and `deadline_clock.ts`, the time the joint layer reads and sleeps on where PEAR calls `time.monotonic()` and `time.sleep()` |
 | `src/so101/joint/` | `deploy/station/control/robots/so101/joint/` `feedforward.py`, `grippers.py`, `control_loop.py`; the checks of `deploy/station/control/robots/so101/config.py` are in `src/so101/config.ts` |
 | `src/agent/` | `deploy/station/agent_loop/` `agent_loop.py`, `schemas.py`, `config.py`, `messages.py` (the frames of a turn); `deploy/station/agent_loop/clients/` `client.py`, `vllm.py`, `schemas.py`, `metrics.py`, `health_checks.py`; what those run of the OpenAI Python SDK |
 | `src/python/` | Not PEAR's own code: what PEAR's texts and results take from Python itself (CPython 3.12), in one place for every module: the built-in exceptions under their names and bases, with how PEAR reads an error it caught (`type(error).__name__`, `isinstance(error, ValueError)`); `repr` of a float, `round` and the format specifications, `json.dumps` and `json.loads`, `repr` and `str` of a value, `str.isprintable`, whitespace |
@@ -70,8 +70,9 @@ Each step is claimed only when it has been run.
    clock stepped one control period at a time: on the stand-in arm of PEAR's own tests, the control loop period by
    period (`docs/progress/loop.md`) and the robot's sessions and the turn loop's 19 tasks
    (`docs/progress/robot.md`); on a simulated SO-101 servo chain, the whole station through 8 scripted sessions,
-   with the packets and the results of PEAR's own station on that chain (`docs/progress/station-chain.md`). Not
-   run: the station in real time.
+   with the packets and the results of PEAR's own station on that chain (`docs/progress/station-chain.md`). The
+   chain is not in this repository; what every run of the tests repeats is the station on the recorded line of
+   PEAR's run of those sessions, replayed. Not run: the station in real time.
 5. A real model drives the simulated arm through pear.js.
 6. A real SO-101, by a person at the arm.
 
@@ -94,7 +95,12 @@ library:
   pixel, and the file's bytes differ (`docs/progress/web.md`).
 
 The control loop: PEAR streams joint targets from a 50 Hz loop in its own process. pear.js ports that loop as it is,
-with the trajectory generator it calls (`src/ruckig`), and takes its clock as a parameter. PEAR's loop advances a
+with the trajectory generator it calls (`src/ruckig`), and takes its clock as a parameter. A loop that is given no
+clock does not sleep on the engine's timer, whose 20 ms take 31 ms on Node for Windows, too long for the loop to be
+enabled: it sleeps on a clock that leaves the wait to a timer until shortly before its hour and waits the rest out
+itself, which keeps the period and can cost a busy thread (`src/station/joint/deadline_clock.ts`;
+`docs/progress/loop.md`, deliberate difference 12). It is measured in Node only, not yet in a page or a worker.
+PEAR's loop advances a
 motion by one control period at each step, whatever the wall clock says, and never runs several periods in a burst
 after a stall: a period that comes late stretches the motion and skips none of it. That holds in a page too, where
 a hidden tab's timers are slowed, and between two steps the servos hold the last target they were sent. Measured in
