@@ -55,7 +55,7 @@ One turn of the station, as PEAR defines it and pear.js keeps it:
 | `src/python/` | Not PEAR's own code: what PEAR's texts and results take from Python itself (CPython 3.12), in one place for every module: the built-in exceptions under their names and bases, with how PEAR reads an error it caught (`type(error).__name__`, `isinstance(error, ValueError)`); `repr` of a float, `round` and the format specifications, `json.dumps` and `json.loads`, `repr` and `str` of a value, `str.isprintable`, whitespace |
 | `src/station/motion/`, `src/station/robot.ts`, `src/station/cameras.ts` | `deploy/station/control/motion/` `actions.py`, `results.py`, `execution.py`, `planning.py`, `homing.py`; `deploy/station/control/robot.py`, `cameras.py`. `robot.ts` also holds what is not in PEAR: the adapter through which the turn loop of `src/agent/` drives a robot |
 | `src/so101/motion/`, `src/so101/robot.ts`, `src/so101/formats.ts`, `src/so101/hardware/cameras.ts` | `deploy/station/control/robots/so101/` `motion/planning.py`, `motion/homing.py`, `motion/actions.py`, `motion/results.py`, `formats.py`, `robot.py`, `hardware/cameras.py` |
-| `web/` | Not in PEAR: the page, which GitHub Pages builds from this directory. It reaches the arm through Web Serial and the wrist camera through the browser. Its first version only reads: a guard between the bus and the port lets only PING, READ and SYNC READ through (`docs/progress/web.md`) |
+| `web/` | Not in PEAR: the page, which GitHub Pages builds from this directory. It reaches the arm through Web Serial and the wrist camera through the browser. With a real arm it only reads: a guard between the bus and the port lets only PING, READ and SYNC READ through. The station (the robot, its control loop, its driver) runs in a dedicated Worker of the page, so far only on a simulated arm that the Worker makes itself (`docs/progress/web.md`) |
 | `tests/sim-bridge/` | Not in PEAR: the servo layer on a simulated SO-101 servo chain over TCP, compared packet by packet with PEAR's Python on the same chain; PEAR's own robot stepped on that chain, recorded as the reference for step 4 of the ladder (`docs/progress/station-reference.md`); and pear.js's own station on that chain, stepped and in real time, compared with that reference (`docs/progress/station-chain.md`). The chain is not part of this repository, and the tests that need it are skipped without it |
 
 ## Verification ladder
@@ -74,8 +74,9 @@ Each step is claimed only when it has been run.
    chain is not in this repository; what every run of the tests repeats is the station on the recorded line of
    PEAR's run of those sessions, replayed. In real time (in Node; the port's own loop on its own clock) the
    station on that chain keeps every row that PEAR's own two real-time runs keep; where the arm stops after a
-   fault depends on the phase of PEAR's polls of the servos, in PEAR's runs too. Not run: the station in a
-   browser.
+   fault depends on the phase of PEAR's polls of the servos, in PEAR's runs too. In a browser the station runs
+   in a Worker of the page on a simulated arm of the Worker's own (`docs/progress/web.md`): the page's checks
+   hold it to the format's texts and to what the arm did, not to a run of PEAR's.
 5. A real model drives the simulated arm through pear.js.
 6. A real SO-101, by a person at the arm.
 
@@ -102,7 +103,8 @@ with the trajectory generator it calls (`src/ruckig`), and takes its clock as a 
 clock does not sleep on the engine's timer, whose 20 ms take 31 ms on Node for Windows, too long for the loop to be
 enabled: it sleeps on a clock that leaves the wait to a timer until shortly before its hour and waits the rest out
 itself, which keeps the period and can cost a busy thread (`src/station/joint/deadline_clock.ts`;
-`docs/progress/loop.md`, deliberate difference 12). It is measured in Node only, not yet in a page or a worker.
+`docs/progress/loop.md`, deliberate difference 12). It is measured in Node and, in a Worker of the page, in
+headless Chromium on Linux (`docs/progress/web.md`); not yet in a visible browser window or on macOS.
 PEAR's loop advances a
 motion by one control period at each step, whatever the wall clock says, and never runs several periods in a burst
 after a stall: a period that comes late stretches the motion and skips none of it. That holds in a page too, where

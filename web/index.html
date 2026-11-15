@@ -51,6 +51,7 @@
           <div class="actions">
             <button type="button" id="sim-cable"></button>
           </div>
+          <p class="hint" id="sim-driven" data-i18n="sim.driven" hidden></p>
         </div>
 
         <div id="arm-servos" hidden>
@@ -74,6 +75,7 @@
         <div id="arm-joints" hidden>
           <h3 data-i18n="joints.title"></h3>
           <p class="lead" data-i18n="joints.lead"></p>
+          <p class="hint" id="arm-driven-note" data-i18n="arm.driven.note" hidden></p>
           <div class="scroll"><table id="joint-table"></table></div>
 
           <h3 data-i18n="state.title"></h3>
@@ -150,6 +152,62 @@
       <section id="task" aria-labelledby="task-title">
         <h2 id="task-title"><span class="step" aria-hidden="true">4</span><span data-i18n="task.title"></span></h2>
         <p class="box info" data-i18n="task.notice"></p>
+
+        <div id="station" class="panel">
+          <h3 data-i18n="station.title"></h3>
+          <p class="lead" data-i18n="station.lead"></p>
+          <div class="actions">
+            <button type="button" id="station-enable" class="primary" data-i18n="station.enable" disabled></button>
+            <button type="button" id="station-disable" data-i18n="station.disable" hidden></button>
+          </div>
+          <p class="hint" id="station-why"></p>
+          <p class="hint" id="station-disable-note" data-i18n="station.disableNote" hidden></p>
+          <p class="status" id="station-status" role="status" aria-live="polite"></p>
+          <p class="muted small" id="station-timing"></p>
+          <p class="muted small" id="station-periods" aria-hidden="true"></p>
+          <p class="muted small" id="station-clock" aria-hidden="true"></p>
+          <div id="station-messages"></div>
+
+          <div id="station-controls" hidden>
+            <h3 data-i18n="station.stateTitle"></h3>
+            <p class="muted small" id="station-joints"></p>
+            <pre id="station-turn"></pre>
+
+            <h3 data-i18n="station.jogTitle"></h3>
+            <p class="lead" data-i18n="station.jogLead"></p>
+            <div id="station-jog" class="jog"></div>
+            <div class="actions">
+              <button type="button" id="station-home" data-i18n="station.home"></button>
+            </div>
+            <div id="station-plan" class="box warn" hidden>
+              <h4 data-i18n="station.planTitle"></h4>
+              <p data-i18n="station.planLead"></p>
+              <pre id="station-plan-text"></pre>
+              <div class="actions">
+                <button type="button" id="station-approve" class="primary" data-i18n="station.approve"></button>
+                <button type="button" id="station-refuse" data-i18n="station.refuse"></button>
+              </div>
+            </div>
+            <p class="status" id="station-action" role="status" aria-live="polite"></p>
+            <div id="station-report" hidden>
+              <h3 data-i18n="station.reportTitle"></h3>
+              <p class="status" id="station-report-line"></p>
+              <div id="station-report-model">
+                <p class="lead" data-i18n="station.reportLead"></p>
+                <pre id="station-feedback"></pre>
+                <details>
+                  <summary data-i18n="station.record"></summary>
+                  <pre id="station-record"></pre>
+                </details>
+              </div>
+              <div id="station-home-result" hidden>
+                <p class="lead" data-i18n="station.homeResultLead"></p>
+                <pre id="station-home-results"></pre>
+              </div>
+            </div>
+          </div>
+        </div>
+
         <div class="field">
           <label for="task-instruction" data-i18n="task.instruction"></label>
           <textarea id="task-instruction" rows="2" disabled data-i18n-placeholder="task.placeholder"></textarea>

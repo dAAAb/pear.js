@@ -1,17 +1,18 @@
 # Progress: web
 
-The page a person opens to use pear.js with their own SO-101 (`web/`). First version, read-only on purpose: it
-connects to the arm over Web Serial, shows that it is the arm PEAR expects, reads it live, shows the wrist camera
-and the frame a turn would send, and checks the model service. It never enables torque and never writes to a
-servo. A simulated arm lets anyone try it, and a machine test it, without hardware.
+The page a person opens to use pear.js with their own SO-101 (`web/`). With a real arm it is read-only on purpose:
+it connects to the arm over Web Serial, shows that it is the arm PEAR expects, reads it live, shows the wrist
+camera and the frame a turn would send, and checks the model service; it never enables torque and never writes to
+a servo. A simulated arm lets anyone try it, and a machine test it, without hardware; on that simulated arm, and
+only there, the second version's stage A runs PEAR's station in a Worker of the page, driven by hand ("The
+station in a Worker, on a simulated arm" below).
 
-State: ready to publish
+State: published. The first, read-only version on 2026-11-15; the second version's stage A on 2026-11-16.
 
-Checked: `npm run typecheck` passes on `web/` and the committed library (but not on
-`tests/agent/`, where the coordinator's staged changes have unresolved imports); `npm run build:web` passes with
-and without `GITHUB_SHA`; 1013 browser checks pass, 0 failed; `build_check.mjs --names-only`: 1032 references, 0
-case problems. **Nothing here has met a real adapter, a real servo, a real camera or macOS**; "First try on a real
-arm" below is how that is to happen.
+Checked on 2026-11-16, on the files as published: `npm run typecheck` passes; `npm run build:web` gives three
+files; 1,272 browser checks pass in 25 parts, 0 failed; `npx vitest run` passes (76 files, 9,180 tests).
+**Nothing here has met a real adapter, a real servo, a real camera, a browser with a visible window or macOS**;
+"First try on a real arm" below is how that is to happen.
 
 A session that restarts continues from "Left" and changes the files it finds in place.
 
@@ -42,6 +43,176 @@ What the page shows comes from the library: `WebSerialTransport`, `FeetechMotors
 `syncRead`, `readCalibration`, `isCalibrated`, `normalize`), `SO101Follower`, `parseCalibration`, `servoFaults`,
 `SO101Hardware.busPosition`, `SO101Kinematics.quantities`, `JointLimits.checkPositions`,
 `SINGLE_ARM_POSE_FORMAT.turnText`, `SO101_DEFAULT_CONFIG.camera`, `JPEG_QUALITY`, `HealthChecks`, `VLLMClient`.
+
+## The station in a Worker, on a simulated arm
+
+The page's second version begins with the station driving a simulated arm; no real arm can move. With a real
+arm connected the page is as before: read-only through the guard, and the station's Enable is disabled with a
+sentence that says why.
+
+- `web/src/station_host.ts`: the station as the Worker runs it. It makes its own simulated arm (the library's
+  `simulatedArm` on `SIM_CALIBRATION`, at 3,072 steps a second) and PEAR's robot on it (`SO101Robot` with the
+  control loop, the driver and the bus; no camera, so an observation holds the joints, the control snapshot and no
+  frame). It is never handed a port. It answers the requests of `web/src/station_protocol.ts` (enable, stop,
+  disable, jog, home, approve, visibility), each started when it arrives, so that a Stop is taken while an action
+  is under way; and it tells its status ten times a second (the robot's status, the control state, the fault, the
+  joints, the targets, the model's state, the turn's text, the loop's periods over the last second), what the
+  robot logs as warnings and errors, an action's phases, the Home plan and the timing self-check's numbers.
+- Before enabling, the timing self-check: 150 control periods of one SYNC READ of the positions and a wait, on
+  the clock the loop uses. Enabling is refused when a period is over 40 ms, more than 3 are over 25 ms, the mean
+  is over 20.5 ms, a read takes over 15 ms, or the page is hidden.
+- A jog is one action of the model's format (`single_arm_delta`, centimetres and radians; the gripper's command
+  +1 or -1), run as a turn of PEAR's agent loop runs it: `waitStationary`, `observe`, `execute` with that
+  observation as its reference; the page shows the format's `resultFeedback` of the result, which is what the
+  model would read, and the next turn's text. Home is the robot's `home` with its approval: the plan is shown and
+  the person approves or refuses it; a plan that gets no answer in two minutes counts as refused.
+- Stop (the stop bar) is the robot's `stop()`. Disable is the robot's `close()`. A hidden page: `stop()`, and no
+  action is started until it is visible again; the loop goes on and nothing is closed.
+- `web/src/station_worker.ts` is the Worker's entry and `web/src/station_client.ts` the window's side: requests
+  with an id and a time limit each, and a Worker that died or tells nothing for two seconds is shown as that.
+  The client imports the entry with `?worker&inline`: the build puts the Worker's bundle into the page's one
+  script as a text and starts the Worker from a Blob URL, so the built folder is still one page, one script and
+  one style sheet, and it works from a folder.
+- One arm, two phases: Enable ends the window's reading of the simulated arm and starts the Worker's arm where
+  that one stood; Disable hands it back where the station left it.
+- While the station drives, step 1 shows the driven arm from the Worker's status, about ten times a second: it
+  says that the station drives the simulated arm and shows the six joints (PEAR's values against PEAR's limits),
+  the model's state and the turn's text. The servos' steps and the marks against the limits are not in the
+  status: they are left out, with a sentence. The simulated arm's sliders, its fault choice and its cable button
+  are disabled from Enable to Disable, with a sentence.
+- The Worker's clock, for a measurement: the status carries `realTimeClock().stats()` since enabling (`sleeps`,
+  `timers`, `yields`, `spinMs`, `lateMeanMs`, `lateMaxMs`, `timerLateMaxMs`, `marginMs`; the times rounded to
+  0.001 ms; the clock's counts are reset when the robot opens, so the self-check's sleeps are not in them) and
+  the control periods since enabling (count, mean, longest, how many over 25 ms and over 40 ms). The panel shows
+  the clock as one line, in both languages. At Stop, at Disable and when the page becomes hidden the page writes
+  one line to its log, `Station: clock {...}`: JSON with `at` ("stop", "disable" or "hidden"), `steps`,
+  `periods`, `clock` and `timing` (the self-check's numbers), taken from the last status told, which is at most
+  about a tenth of a second old.
+- What an action did is in the report panel: first the page's own line about how the last action ended; then
+  what the model would read of it (an action of the format), or Home's stages and PEAR's result for each joint,
+  or, for an action that did not run (refused by the Worker or by the robot), nothing but that line, which
+  carries the station's own words. An action ended by the page's Stop, or by the page being hidden, keeps PEAR's
+  result as it is (`failed`, "Action cancelled by stop or another operation": that is what the model would
+  read); the page's own line says, in the page's language, that the person pressed Stop, or that the page was
+  hidden. Visible again, the hidden-page warning speaks in the past and no longer says that no action starts. A
+  failed timing self-check is told under its line in the page's language; the Worker's English error goes to
+  the log only.
+- The text the Worker is started from names none of `navigator.serial`, `requestPort`, `getPorts`: the browser
+  check reads the Blob behind the Worker's URL and looks for the three names.
+
+- The self-check's verdict is a pure function, `timingVerdict(numbers, limits, isHidden)`: the reasons to refuse,
+  each with its number and its limit. The Worker's error names them in English (`timingFailureText`); the page
+  has its own sentence for each in both languages.
+- The page says what it can move, at the top and in step 4, in both languages: this version moves only a
+  simulated arm, in a Worker of the page; with a real arm connected it only reads and cannot move it.
+
+What a stopped action's result is: PEAR's robot gives it the status `failed` with the error "Action cancelled by
+stop or another operation", and that is what the page shows. A refused Home plan ends as "HomeFailed: Home
+cancelled before execution".
+
+### Stage A on 2026-11-16: what is proven, what is not
+
+Stage A is the station in a Worker driving a simulated arm, with a real arm left read-only. It is **published
+on 2026-11-16 without one thing that was meant for it**: a fault while driving has no Recover control (see "Not
+done" below). Runs of 2026-11-16 on the files as published (Windows: Node 24.18.1; WSL: headless Chromium):
+
+- The whole browser check in one run: 1,272 checks in 25 parts, 0 failed. The part `station` (254
+  checks): Enable, the
+  status, Stop, the button `z +1 cm`, an action out of reach, Stop during a move, Home refused and approved, a
+  page that says it is hidden, Disable; served, from a folder and under a path; a Worker that is gone; a failed
+  self-check said in the page's sentence in both languages; a real arm (below); and, new on this day: step 1
+  while the station drives (22 checks), the Worker's text without the three names of Web Serial (1; the text
+  has 243,742 characters), the clock in the status, in the panel's line in both languages and in the log's
+  entries at Stop, at Disable and when the page becomes hidden (12), the report panel with the page's own
+  lines (8), each of the twelve action buttons (26), a Home that the person's Stop ends (9), and what the
+  review before publication changed (14; the last item below).
+- The clock on this machine (headless Chromium on Linux), in the log's entry at Stop, 96 steps after enabling:
+  95 periods, mean 20 ms, longest 20.2 ms, none over 25 ms; 120 sleeps, 121 timers, 12,318 turns without a
+  timer, 179.3 ms in busy waits, a sleep 0.01 ms late on average and 0.1 ms at most, a timer at most 0.3 ms
+  late, margin 1.5 ms. On macOS nothing was measured.
+- A real arm keeps the station disabled: a stand-in for `navigator.serial` that answers as six calibrated
+  STS3215 is read through the guard like any port. Enable is disabled with the real-arm sentence in both
+  languages, Stop is disabled, no Worker runs, the station's client refuses a request; and with the Worker
+  started by hand all the same, enable, one action and disable run on the Worker's own simulated arm while the
+  port is given only PING, READ and SYNC READ and the guard refuses nothing (17 checks).
+- `npx vitest run`: 76 files passed, 3 skipped; 9,180 tests passed, 11 skipped. `tests/web/station_host.test.ts`
+  runs 11 tests that need no time (the refusals before Enable in the robot's words, the UUIDs, the periods'
+  count, the self-check's verdict at each limit and its sentences in both languages) in 0.4 s; the session on
+  real time (enable, one action, out of reach, Stop during a move, Home, Disable) runs only with
+  `PEAR_JS_REAL_TIME=1` (12 passed in 11.6 s), so `npm test` does not depend on the machine's speed.
+- The checks can fail (breaks in a scratch copy): the two notices put back or cut: 5 of `load`'s and 2 of
+  `languages`' checks failed; `stationWhy()` without the real-arm sentence: 4 failed; the Worker started at page
+  load: 4 failed and the part stopped; a browser's port taken for the simulated one, Stop and the action
+  buttons never disabled: 18 failed, 8 of them of the real arm; the Worker telling no reasons: 2 failed; three
+  breaks of the verdict's function: 9 of the 11 Node tests failed. Not shown to fail: 6 of the 17 real-arm
+  checks (the Worker's own session by hand, "only PING, READ and SYNC READ reached the port", the page reading
+  on meanwhile, the port opened once and not closed, the guard refusing nothing, its self-test), which would
+  need a page that writes to the port.
+- The checks of step 1 while the station drives, of the Worker's text, of the clock and of the report panel can
+  fail too (three more scratch copies, the part `station` on each). Step 1 not rendered at a status event, its
+  sentence never hidden again, the simulated arm's controls left disabled, the Worker telling the gripper's
+  joint 0.01 off: 184 checks, 10 failed (the four checks of step 1 that an earlier break run had not reached,
+  three of them at each of the three Enables or Disables). The station's code naming `navigator.serial`, one of
+  the clock's numbers never a number, the Chinese line begun otherwise, no entry at Stop, the periods counted
+  twice: 197 checks, 13 failed, which are the 13 checks of the Worker's text and of the clock. Home's result
+  never shown, an action that did not run not told in the report panel, Stop and the hidden page not kept, the
+  warning never in the past, a failed self-check told with the Worker's English error: 205 checks, 8 failed,
+  which are the 8 checks of the report panel.
+- All twelve action buttons. After Home the check clicks each button once (x, y and z by 1 cm, pitch and roll
+  by 0.05 rad, the gripper closed and then opened) and reads a status that the Worker told after the action
+  had ended. For each button PEAR's record says `completed`, and the quantity that the button names, in the
+  model's state the Worker tells, changed by the button's amount with its sign: 1 cm within 0.15, 0.05 rad
+  within 0.02, which a wrong sign or another quantity cannot meet (in the runs each change was 1.0 cm or
+  0.05 rad as told, to 0.1 cm and 0.01 rad). The gripper's command is a direction and not an amount: the
+  simulated arm stands open at 6 cm after Home; on `width` -1 PEAR's record says `completed` with
+  `gripper_outcome` "closed", the report the model reads says `"gripper": "closed"` and the width is 0; on +1
+  they say "open" and the width is 6 again. The check asserts that (26 checks). They can fail: in a scratch
+  copy with `roll -0.05` negated, the quantities of `x +1` and `y +1` swapped and the number of Open negated,
+  5 of the part's 231 checks failed: the quantity's check of each of those three arm buttons, and of Open the
+  change's and the outcome's; the checks of the other eight buttons passed.
+- A Home that the person's Stop ends. Home keeps what of the page ended it, as an action of the model's
+  format does. The page's own line, which the report panel shows, then says "Home: you pressed Stop before it
+  was done, so it ended there. The robot says: " and the robot's error as it is (`station.action.homeStopped`;
+  for a page that was hidden `station.action.homeStoppedHidden`; both in English and in Chinese). The robot's
+  error is "HomeFailed: Home cancelled before execution" when Stop comes while the plan waits for an answer,
+  and "HomeFailed: Action cancelled by stop or another operation" when it comes while Home moves the arm.
+  Checks (9): Stop while the plan waits: the line's key is the new one and the line ends with the robot's
+  words, the plan is no longer shown, nothing moved. Stop while Home moves the arm (lowered by 4 cm first;
+  Stop is pressed once the tip has moved 0.3 cm): the same line, also in Chinese; the tip had left where it
+  stood and braked short of Home (in the run at z 18.2 cm on the way from 17.8 to Home's 20.9); the station
+  is still on with the robot READY in HOLD; half a second later the state is the same; an action runs after
+  it. They can fail: in a scratch copy in which Home does not keep what ended it, 3 of the part's 240 checks
+  failed (the line of each case and the Chinese line). The other six were not shown to fail, and no check
+  hides the page during a Home: the sentence for a hidden page was not seen in a run.
+- Found in the review before publication, and changed. While the station drove, Connect and Try without an arm
+  in step 1 could still be pressed: Try made the window read its own simulated arm again beside the station, and
+  Connect would have opened a real arm for reading while the station was enabled, against the sentence that a
+  real arm keeps the station disabled. Nothing could have been written to it: the guard and the Worker are as
+  they were. Now Connect, Try without an arm and Retry are disabled from Enable until the station is disabled,
+  and step 1 says "To connect an arm here, disable the station first" (in both languages). A Worker that does
+  not answer or has died is said with what to do, since no arm can be connected then: reload the page. Checks
+  (14): at each of the three Enables the two buttons are disabled, a click on Try connects nothing and the
+  sentence is shown; after each of the three Disables they can be used again; with the Worker gone the status
+  line says to reload and the two buttons stay disabled. They can fail (three scratch copies, the part
+  `station` on each): Try left enabled and the sentence cut: 10 of the part's 254 checks failed
+  (after the click the window read the arm again); the buttons left disabled after Disable:
+  3 failed; the sentence about reloading cut: 1 failed. On the way one check of the part was
+  made exact: "the loop steps about 50 times a second" took its first count from a status read some checks
+  earlier, so that every check put between them raised the rate it computed (56.6 with these); it now reads
+  the count when it starts its clock. And an Enable of the check that does not reach READY now reports what
+  the page says of it, not only a timeout: once, when two runs of the part were started at the same moment
+  while another check ran, both timed out at Enable, and the cause was not found; alone, and one after the
+  other, the part passes.
+
+Not done in stage A: a fault while driving has no Recover control (the page shows the fault; Disable and Enable
+begin again, which no run has tried in FAULT); and while the Worker is gone, step 1 still shows the last status
+it told. Not verified: a browser with
+a visible window, macOS (the clock's numbers are there to be measured on it), a real arm, a real adapter, a page
+that is really hidden, a slow machine. The check of the Worker's text is a check of three names in a text: it
+does not show that no other way to a port exists. Whether the Worker's scope has `navigator.serial` in this
+browser was not looked at in a run (the Web Serial specification gives a dedicated Worker `getPorts`). A Home
+that ends because the page was hidden has its own sentence, which no run has shown: no check hides the page
+during a Home.
 
 ## What the camera hands to a turn, in PEAR
 
@@ -78,7 +249,7 @@ machine.
 
 | Part | Checks | What is checked |
 | --- | --- | --- |
-| load | 17 | Unofficial, experimental, cannot move; links to the two repositories only; the guard's self-test (3 reading kinds pass, 12 writing or malformed inputs refused); Stop visible, fixed and disabled; the key's field is a password field; no form |
+| load | 21 | Unofficial, experimental; the notice and the task say that this version moves only a simulated arm, in a Worker, and only reads a real one; links to the two repositories only; the guard's self-test (3 reading kinds pass, 12 writing or malformed inputs refused); Stop visible, fixed and disabled; the key's field is a password field; no form |
 | stamp | 14 | The build stamp in the footer and as the first line of the log; "dev" when built without `GITHUB_SHA`, the first 7 characters of the commit when built with one; the pinned PEAR commit in both places |
 | sim | 23 | From the button to the live read-out, about ten readings a second; six servos, model 777, torque off as found; the registers shown are the servos'; a slider and the keyboard move a joint; Disconnect; `?arm=sim` |
 | expected | 203 | Four poses set by the sliders: every joint value equals Node's within 1e-12 and as shown within its last digit, in rad (the gripper as an opening); the six quantities of the model's state equal Node's and show PEAR's decimals and units; the turn's text is Node's, byte for byte; the mark against PEAR's limits (inside, within the feedback tolerance, outside) with PEAR's own refusal quoted |
@@ -91,7 +262,8 @@ machine.
 | camera | 50 | Chromium's fake camera: asked for exactly 640 x 480 at 30 fps; a captured frame read back from its bytes: JPEG, baseline, 640 x 480, three components, 4:2:0; the test picture through the same path, its colour bars within 12 counts (no swapped channels); no camera; a refusal the page has no words for; NotAllowedError and NotReadableError from a stand-in `getUserMedia` |
 | model | 40 | No key and no name (the one served model is found); the right key (sent as a bearer token after a preflight without it); a wrong key as vLLM refuses it (withheld by the browser: both reasons, the origin and what the operator must allow); a wrong key refused with the CORS header (401 shown); an origin not allowed, and exactly allowed; several models, none, another name; no `/v1`; another service; no answer in 3 s; nothing listening; three addresses refused before any request |
 | privacy | 28 | After all of the above: `localStorage`, `sessionStorage`, cookies, IndexedDB and caches empty; the key, the wrong key and a password put into an address are not in the page's address, log, text or markup; in the recorded requests the key occurs only in the `Authorization` header of requests to the addresses given as the model service; the stand-in saw it there only; the page's own question "is the address there" carried none; gone after a reload; a line trace from a failed read contains no key |
-| languages | 201 | The first language by the browser's (zh-TW, zh-HK, en-GB, ja-JP); `?lang=`; in 23 states of the page (reading, seven faults including ids-at-another-baud-rate and other-ids, probing status, limits, cable, three calibration verdicts, camera, nine outcomes of the model check) no text is empty or unfilled in either language, every message of the Chinese page holds Chinese and none of the English page does |
+| station | 162 | The station in the page's Worker on a simulated arm, and a real arm left read-only: see "Stage A on 2026-11-16" above |
+| languages | 202 | The first language by the browser's (zh-TW, zh-HK, en-GB, ja-JP); `?lang=`; in 23 states of the page (reading, seven faults including ids-at-another-baud-rate and other-ids, probing status, limits, cable, three calibration verdicts, camera, nine outcomes of the model check) no text is empty or unfilled in either language, every message of the Chinese page holds Chinese and none of the English page does |
 | keyboard | 6 | Every field has a label; only native controls; Tab reaches them in the page's order after a skip link; Enter connects; a focus ring |
 | layout | 33 | English and Chinese, light and dark, 1280 x 800 and 390 x 844: nothing sticks out of the viewport before a connection, while reading, with the longest message and after a failure (tables scroll in their own box); 64 screenshots |
 | folder | 9 | `dist-web/index.html` from a `file://` URL: runs, styled, reads the simulated arm, captures a frame, reaches a service that allows every origin, and says that its origin is "null" to one that does not |
@@ -276,7 +448,14 @@ For the coordinator's files:
 
 ## Left
 
-- The page in a hidden tab; a real arm.
-- The typecheck in `build_check.mjs` fails on `tests/agent/` because of staged-but-uncommitted changes in the
-  coordinator's files; `web/` and `src/` pass. The job's `npm run typecheck` will pass when those changes are
-  committed together.
+- Stage A: a Recover control for a fault while driving; the page while the Worker is gone; a Home ended by a
+  hidden page, seen in a run.
+- The page in a browser with a visible window and on macOS (the log's lines `Station: timing self-check` and
+  `Station: clock` are the measurement to send back), in a tab that is really hidden; a real arm, read-only
+  first.
+- Stage B: the wrist camera and the model in the Worker, so that a turn of PEAR's agent loop drives the
+  simulated arm.
+- `web/tests/build_check.mjs`: on the second version only its comparison of names was run, in a checkout
+  without the installed packages (1,316 references; the one it did not find is a file of an installed
+  package). Its clean build was not run; the job's steps (install, type check, tests, build) were run on
+  Linux instead.

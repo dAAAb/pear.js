@@ -11,7 +11,8 @@ exits with 0 only if every check passed. Screenshots and report.json go to --out
 default; never a directory of the repository).
 
 Parts: load, stamp, sim, expected, guard, cable, faults, calibration, serial, diagnostics, camera, model,
-privacy, languages, keyboard, layout, folder, subpath, hosted, insecure, log, transport, timing, selftest.
+privacy, languages, keyboard, layout, folder, subpath, hosted, insecure, log, transport, timing, selftest,
+station.
 """
 
 from __future__ import annotations
@@ -545,7 +546,10 @@ def part_load(check: Check, context: BrowserContext, base: str) -> None:
     page = open_page(check, context, base)
     check.equal("the page starts not connected", phase(page), "idle")
     check.ok("the notice says unofficial and experimental", "unofficial, experimental" in page.locator("#notice").inner_text())
-    check.ok("the notice says it cannot move the arm", "cannot move the arm" in page.locator("#notice").inner_text())
+    notice = page.locator("#notice").inner_text()
+    check.ok("the notice says this version moves only a simulated arm, in a Worker of the page", "moves only a simulated arm, in a Worker of this page" in notice, notice)
+    check.ok("the notice says that with a real arm it only reads and cannot move it", "With a real arm connected it only reads" in notice and "cannot move the real arm" in notice, notice)
+    check.ok("the notice no longer says that the page cannot move the arm at all", "cannot move the arm" not in notice and "first version only reads" not in notice, notice)
     links = page.evaluate("[...document.querySelectorAll('a[href]')].map(link => link.getAttribute('href'))")
     outside = sorted({link for link in links if not link.startswith("#")})
     check.equal(
@@ -563,7 +567,10 @@ def part_load(check: Check, context: BrowserContext, base: str) -> None:
     check.ok("Stop stays in view at the bottom", page.evaluate("getComputedStyle(document.getElementById('stopbar')).position") == "fixed")
     check.ok("Start is disabled", page.locator("#task-start").is_disabled())
     check.ok("the instruction is disabled", page.locator("#task-instruction").is_disabled())
-    check.ok("the task says this version cannot move the arm", "cannot move the arm" in page.locator("#task").inner_text())
+    task_text = page.locator("#task").inner_text()
+    check.ok("the task says this version moves only a simulated arm, in a Worker of the page", "moves only a simulated arm, in a Worker of this page" in task_text, task_text[:300])
+    check.ok("the task says that with a real arm it only reads and cannot move it", "With a real arm connected it only reads and cannot move the real arm" in task_text, task_text[:300])
+    check.ok("the station cannot be enabled without an arm", page.locator("#station-enable").is_disabled())
     check.equal("the key's field hides what is typed", page.locator("#model-key").get_attribute("type"), "password")
     check.equal("no form that a browser would offer to remember", page.locator("form").count(), 0)
     scripts = page.evaluate("[...document.scripts].map(script => [script.src, script.type])")
@@ -1077,6 +1084,29 @@ FIVE_AND_A_STRANGER = """(bytes) => {
     if (instruction === 1) return here.includes(id) ? status(id, []) : [];
     if (instruction === 2) return here.includes(id) ? status(id, memory(parameters[0], parameters[1])) : [];
     if (instruction === 0x82) return parameters.slice(2).filter(each => here.includes(each)).flatMap(each => status(each, memory(parameters[0], parameters[1])));
+    return [];
+}"""
+# six servos that answer PING, READ and SYNC READ as STS3215 do (model 777, firmware 3.10) and hold a calibration
+# and a pose (those of the page's simulated arm): what the page reads as a calibrated arm on a port that is not
+# its simulated one. Whatever is not a read gets no answer.
+SIX_CALIBRATED = """(bytes) => {
+    const status = (id, data) => { const body = [id, data.length + 2, 0, ...data]; return [0xff, 0xff, ...body, ~body.reduce((sum, byte) => sum + byte, 0) & 0xff]; };
+    const word = (value) => [value & 0xff, value >> 8];
+    // by id: Homing_Offset, Min_Position_Limit, Max_Position_Limit, Present_Position
+    const servos = { 1: [-1470, 758, 3292, 2025], 2: [97, 857, 3284, 1540], 3: [1238, 836, 3069, 2003], 4: [-1028, 838, 3138, 2915], 5: [-233, 0, 4095, 996], 6: [1269, 2037, 3499, 3499] };
+    const here = (each) => Object.hasOwn(servos, each);
+    const memory = (id, address, length) => {
+        const [homing, low, high, position] = servos[id];
+        const offset = word(homing < 0 ? -homing | 0x800 : homing);  // sign and magnitude, the sign in bit 11
+        const table = { 0: 3, 1: 10, 3: 0x09, 4: 0x03, 5: id, 9: word(low)[0], 10: word(low)[1], 11: word(high)[0], 12: word(high)[1],
+                        31: offset[0], 32: offset[1], 56: word(position)[0], 57: word(position)[1], 62: 120, 63: 30 };
+        return Array.from({ length }, (_, index) => table[address + index] ?? 0);
+    };
+    const id = bytes[2], instruction = bytes[4], parameters = bytes.slice(5, -1);
+    if (instruction === 1 && id === 0xfe) return [1, 2, 3, 4, 5, 6].flatMap(each => status(each, []));
+    if (instruction === 1) return here(id) ? status(id, []) : [];
+    if (instruction === 2) return here(id) ? status(id, memory(id, parameters[0], parameters[1])) : [];
+    if (instruction === 0x82) return parameters.slice(2).filter(each => here(each)).flatMap(each => status(each, memory(each, parameters[0], parameters[1])));
     return [];
 }"""
 # servos that answer only when all are asked at once
@@ -1620,7 +1650,16 @@ def part_languages(check: Check, browser, base: str, service: str) -> None:
     check.equal("?lang=zh-TW pins Chinese", page.evaluate("document.documentElement.lang"), "zh-Hant-TW")
     check.ok("the title is Chinese", has_han(page.title()), page.title())
     check.equal("no text is missing at the start (Chinese)", texts_filled(page), [])
-    check.ok("the notice says unofficial, experimental, cannot move", all(word in page.locator("#notice").inner_text() for word in ("非官方", "實驗", "不會讓手臂動")))
+    check.ok(
+        "the notice says unofficial, experimental, moves only a simulated arm in a Worker, only reads a real one",
+        all(word in page.locator("#notice").inner_text() for word in ("非官方", "實驗", "只會讓模擬手臂動", "Worker", "連接真實的手臂時，它只讀不寫", "不會讓真實的手臂動")),
+        page.locator("#notice").inner_text(),
+    )
+    check.ok(
+        "the task says the same in Chinese",
+        all(word in page.locator("#task").inner_text() for word in ("只會讓模擬手臂動", "Worker", "連接真實的手臂時，它只讀取，不會讓真實的手臂動")),
+        page.locator("#task").inner_text()[:200],
+    )
     check.equal("the Chinese button is the pressed one", page.locator("#language-zh").get_attribute("aria-pressed"), "true")
 
     # every state the page can be brought to here, in both languages: no name left unfilled, and the Chinese
@@ -2154,10 +2193,647 @@ def part_selftest(check: Check, browser) -> None:
         pages.server_close()
 
 
+# Keeps the Blob behind every URL the page makes of one. The Worker's text is a Blob of the page's one script, and
+# the Worker revokes its own URL as it starts, so the page cannot fetch that URL afterwards: the text the Worker
+# was started from is read from the Blob kept here, found by the Worker's URL.
+BLOB_TEXTS = """(() => {
+    const made = new Map();
+    const create = URL.createObjectURL.bind(URL);
+    URL.createObjectURL = object => { const url = create(object); made.set(url, object); return url; };
+    window.blobOf = url => made.get(url) ?? null;
+})();"""
+
+# The entry points of Web Serial: the Worker's text names none of them.
+WEB_SERIAL_NAMES = ("navigator.serial", "requestPort", "getPorts")
+
+# The numbers of the Worker's clock (realTimeClock().stats()), as the status and the panel's line carry them.
+CLOCK_NUMBERS = ("sleeps", "timers", "yields", "spinMs", "lateMeanMs", "lateMaxMs", "timerLateMaxMs", "marginMs")
+
+
+def is_number(value: object) -> bool:
+    """Whether ``value`` is a finite number (and not a truth value)."""
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and value == value and abs(value) != float("inf")
+
+
+def as_number(text: object) -> float | None:
+    """Returns the number that ``text`` writes, or None when it writes none."""
+    try:
+        return float(text) if isinstance(text, str) and text.strip() != "" else None
+    except ValueError:
+        return None
+
+
+def json_or_none(text: str | None) -> object:
+    """Returns what ``text`` writes as JSON, or None when it is empty or is no JSON."""
+    try:
+        return json.loads(text) if text else None
+    except ValueError:
+        return None
+
+
+def clock_entries(page: Page, at: str) -> list:
+    """Returns the entries of the Worker's clock that the page's log holds for ``at`` ("stop", "disable" or
+    "hidden"), each read back as JSON; an entry that does not parse is returned as None."""
+    entries = []
+    for line in log_lines(page):
+        if line.startswith("Station: clock "):
+            try:
+                entry = json.loads(line.removeprefix("Station: clock "))
+            except ValueError:
+                entry = None
+            if not isinstance(entry, dict) or entry.get("at") == at:
+                entries.append(entry if isinstance(entry, dict) else None)
+    return entries
+
+
+def clock_plausible(entry: object) -> bool:
+    """Whether a clock entry of the log has plausible counts: the clock has slept, the periods since enabling are
+    one fewer than the steps (2 at most), those over 40 ms are among those over 25 ms, and the timing self-check
+    is the one of 150 periods, with its numbers."""
+    if not isinstance(entry, dict):
+        return False
+    clock, periods, timing, steps = entry.get("clock"), entry.get("periods"), entry.get("timing"), entry.get("steps")
+    if not (isinstance(clock, dict) and isinstance(periods, dict) and isinstance(timing, dict) and is_number(steps)):
+        return False
+    if not all(is_number(clock.get(name)) for name in ("sleeps", "timers", "yields")):
+        return False
+    if not all(is_number(periods.get(name)) for name in ("count", "meanMs", "maxMs", "over25", "over40")):
+        return False
+    if not all(is_number(timing.get(name)) for name in ("periods", "meanMs", "maxMs", "over25", "maxReadMs")):
+        return False
+    return (
+        clock["sleeps"] > 0
+        and periods["count"] > 0
+        and 0 <= steps - periods["count"] <= 2
+        and 0 <= periods["over40"] <= periods["over25"] <= periods["count"]
+        and timing["periods"] == 150
+    )
+
+
+def station_view(page: Page) -> dict:
+    """Returns what the page holds of the station: its phase, the Worker's last status, and what is under way."""
+    return page.evaluate(
+        """(() => {
+            const view = window.pearjs.station();
+            return { phase: view.phase, status: view.status, lost: view.lost, problem: view.problem, timing: view.timing,
+                     action: view.action, outcome: view.outcome, plan: view.plan, report: view.report };
+        })()"""
+    )
+
+
+def wait_station(page: Page, condition: str, timeout_ms: int = 20000) -> None:
+    """Waits until ``condition``, an expression of JavaScript about ``view`` (the page's station), holds."""
+    page.wait_for_function(f"(() => {{ const view = window.pearjs.station(); return {condition}; }})()", timeout=timeout_ms)
+
+
+def station_enabled(check: Check, page: Page, label: str) -> dict:
+    """Connects the simulated arm, moves one of its joints, enables the station and checks what the Worker
+    tells: the robot at rest in a hold, at the pose the window's arm had, its loop keeping its 20 ms."""
+    check.equal(f"{label}: without an arm the page says why Enable is disabled", [page.locator("#station-enable").is_disabled(), page.locator("#station-why").get_attribute("data-why")], [True, "station.why.noArm"])
+    check.ok(f"{label}: Stop is disabled while the station holds no arm", page.locator("#task-stop").is_disabled())
+    check.equal(f"{label}: no Worker runs before Enable", len(page.workers), 0)
+    connect_sim(page)
+    set_slider(page, "wrist_roll", 1100)
+    wait_raw(page, {"wrist_roll": 1100})
+    page.wait_for_function("!document.getElementById('station-enable').disabled")
+    check.equal(f"{label}: with the simulated arm read, Enable is offered", page.locator("#station-why").get_attribute("data-why"), "station.why.ready")
+    turn_before = page.locator("#turn-text").text_content()
+    joints_before = page.evaluate("window.pearjs.arm.view.live.joints")
+    page.click("#station-enable")
+    try:
+        wait_station(page, "view.phase === 'on' && view.status !== null && view.status.robot === 'READY'")
+    except Exception as error:  # a failed Enable is otherwise only a timeout: say what the page says of it
+        seen = station_view(page)
+        said = json.dumps({name: seen[name] for name in ("phase", "problem", "lost", "timing")})
+        raise RuntimeError(f"{label}: Enable did not reach READY; the page says {said[:700]}") from error
+    view = station_view(page)
+    status = view["status"]
+    check.equal(f"{label}: the robot is READY in a settled HOLD, without a fault", [status["robot"], status["control"], status["isSettled"], status["fault"]], ["READY", "HOLD", True, None])
+    check.equal(f"{label}: the status line shows it", [page.locator("#station-status").get_attribute("data-phase"), page.locator("#station-status").get_attribute("data-robot")], ["on", "READY"])
+    check.ok(f"{label}: six joints and six targets are told", len(status["joints"]) == 6 and len(status["targets"]) == 6, status)
+    check.equal(f"{label}: the station starts where the window's arm stood: the same turn's text", status["turnText"], turn_before)
+    check.equal(f"{label}: the page shows the turn's text of the Worker", page.locator("#station-turn").text_content(), status["turnText"])
+    check.equal(f"{label}: the window's reading of the arm has ended", phase(page), "idle")
+    workers = [worker.url for worker in page.workers]
+    check.ok(f"{label}: one Worker runs, started from a Blob URL", len(workers) == 1 and workers[0].startswith("blob:"), workers)
+    check.ok(f"{label}: Stop is enabled while the station holds the arm", not page.locator("#task-stop").is_disabled())
+    check.ok(f"{label}: Disable is offered with its sentence about the torque", page.locator("#station-disable").is_visible() and "torque" in page.locator("#station-disable-note").inner_text())
+    check.ok(f"{label}: Enable is no longer offered", not page.locator("#station-enable").is_visible())
+
+    # step 1 while the station drives: what the Worker tells of the arm, not "Not connected"
+    arm_status = page.locator("#arm-status")
+    check.equal(f"{label}: step 1 says that the station drives the simulated arm", [arm_status.get_attribute("data-driven"), "The station drives the simulated arm" in arm_status.inner_text()], ["true", True])
+    check.ok(f"{label}: the Worker's joints are the ones the window read, in the same units", len(status["joints"]) == 6 and all(abs(told - read) < 0.002 for told, read in zip(status["joints"], joints_before)), [status["joints"], joints_before])
+    shown_joints = page.evaluate("[...document.querySelectorAll('#joint-table tbody tr [data-field=value]')].map(cell => Number(cell.dataset.value))")
+    check.ok(f"{label}: step 1 shows the six joints of the Worker's status and says what it leaves out", page.locator("#arm-joints").is_visible() and len(shown_joints) == 6 and page.locator("#arm-driven-note").is_visible() and page.locator("#joint-table [data-field=raw]").count() == 0, shown_joints)
+    shown_state = page.evaluate("Object.fromEntries([...document.querySelectorAll('#model-state [data-quantity]')].map(node => [node.dataset.quantity, Number(node.dataset.value)]))")
+    told_state = station_view(page)["status"]["state"]
+    check.equal(f"{label}: the model's state that step 1 shows is the Worker's", shown_state, {**{name: told_state["arm"][name] for name in ("x", "y", "z", "pitch", "roll")}, "width": told_state["gripper"]["width"]})
+    check.ok(f"{label}: the simulated arm's sliders, its fault and its cable are disabled while the station drives", page.evaluate("[...document.querySelectorAll('#sim-sliders input'), document.getElementById('sim-scenario'), document.getElementById('sim-cable')].every(control => control.disabled)") and page.locator("#sim-driven").is_visible())
+    check.equal(f"{label}: while the station drives no arm can be connected beside it: Connect and Try without an arm are disabled", [page.locator("#arm-connect").is_disabled(), page.locator("#arm-sim").is_disabled()], [True, True])
+    page.click("#arm-sim", force=True, timeout=2000)
+    page.wait_for_timeout(200)
+    check.equal(f"{label}: a click on the disabled Try without an arm connects nothing", [phase(page), station_view(page)["phase"]], ["idle", "on"])
+    check.ok(f"{label}: step 1 says how to connect an arm: disable the station first", "disable the station first" in arm_status.inner_text(), arm_status.inner_text())
+
+    timing = view["timing"]
+    check.equal(f"{label}: the timing self-check ran 150 periods before enabling and passed", [timing["periods"], timing["failures"]], [150, []])
+    check.ok(f"{label}: its numbers are within the limits", 19.5 <= timing["meanMs"] <= 20.5 and timing["maxMs"] <= 40 and timing["over25"] <= 3 and timing["maxReadMs"] <= 15, timing)
+    check.equal(f"{label}: the page shows the self-check as passed", page.locator("#station-timing").get_attribute("data-verdict"), "passed")
+    check.ok(f"{label}: and the log holds its numbers", any(line.startswith('Station: timing self-check {"periods":150,') for line in log_lines(page)))
+    check.numbers.setdefault("station", {})[f"{label}: timing self-check"] = timing
+
+    # the status events and the loop's periods over a second and a half
+    first = station_view(page)["status"]["steps"]  # read now: the checks above took time, and the loop ran on
+    began = time.monotonic()
+    page.wait_for_timeout(1500)
+    elapsed = time.monotonic() - began
+    status = station_view(page)["status"]
+    periods = status["periods"]
+    rate = (status["steps"] - first) / elapsed
+    check.ok(f"{label}: the loop steps about 50 times a second", 44 <= rate <= 56, rate)
+    check.ok(f"{label}: about 50 periods in the last second", 44 <= periods["count"] <= 52, periods)
+    check.ok(f"{label}: the periods' mean is 20 ms", 19.5 <= periods["meanMs"] <= 20.5, periods)
+    check.ok(f"{label}: no period over 40 ms", periods["maxMs"] <= 40, periods)
+    check.equal(f"{label}: the page shows the periods", page.locator("#station-periods").get_attribute("data-count"), str(periods["count"]))
+    check.numbers.setdefault("station", {})[label] = {"periods": periods, "steps a second": round(rate, 2)}
+
+    # the Worker's clock, for a measurement: in the status, and as one line of the station's panel
+    told_clock = status.get("clock") or {}
+    check.ok(f"{label}: the Worker's status carries the clock's eight numbers, each a number, and the clock has slept", sorted(told_clock) == sorted(CLOCK_NUMBERS) and all(is_number(told_clock[name]) for name in CLOCK_NUMBERS) and told_clock["sleeps"] > 0, told_clock)
+    clock_line = page.locator("#station-clock")
+    shown_clock = page.evaluate("Object.assign({}, document.getElementById('station-clock').dataset)")
+    check.ok(f"{label}: the station's panel shows the clock as one line, each of its eight numbers a number", clock_line.is_visible() and "\n" not in clock_line.inner_text().strip() and "The Worker's clock since enabling" in clock_line.inner_text() and sorted(shown_clock) == sorted(CLOCK_NUMBERS) and all(is_number(as_number(shown_clock[name])) for name in CLOCK_NUMBERS), [clock_line.inner_text(), shown_clock])
+    check.numbers["station"][f"{label}: the clock"] = {"clock": told_clock, "since enabling": status.get("since"), "steps": status["steps"]}
+    return status
+
+
+def station_disabled(check: Check, page: Page, label: str, turn_text: str) -> None:
+    """Disables the station and checks that the window reads the simulated arm again, where the station left it."""
+    page.click("#station-disable")
+    wait_station(page, "view.phase === 'off'")
+    wait_phase(page, "reading")
+    check.equal(f"{label}: after Disable the window reads the simulated arm again", phase(page), "reading")
+    page.wait_for_function("document.getElementById('turn-text').textContent !== ''")
+    # the state the model reads is the first line of a turn's text; the station's text may end with a report
+    check.equal(f"{label}: where the station left it: the same state", page.locator("#turn-text").text_content().split("\n")[0], turn_text.split("\n")[0])
+    check.ok(f"{label}: Stop is disabled again", page.locator("#task-stop").is_disabled())
+    check.equal(f"{label}: step 1 reads the arm itself again: not driven, the servos' steps shown", [page.locator("#arm-status").get_attribute("data-driven"), page.locator("#joint-table [data-field=raw]").count(), page.locator("#arm-driven-note").is_visible()], ["false", 6, False])
+    check.ok(f"{label}: the simulated arm's sliders, its fault and its cable can be used again", page.evaluate("[...document.querySelectorAll('#sim-sliders input'), document.getElementById('sim-scenario'), document.getElementById('sim-cable')].every(control => !control.disabled)") and not page.locator("#sim-driven").is_visible())
+    check.equal(f"{label}: after Disable an arm can be connected again: Try without an arm, and Connect where the browser has Web Serial", [page.locator("#arm-sim").is_disabled(), page.locator("#arm-connect").is_disabled()], [False, page.evaluate("navigator.serial == null")])
+    check.ok(f"{label}: Enable is offered again", page.locator("#station-enable").is_visible() and not page.locator("#station-enable").is_disabled())
+    entries = clock_entries(page, "disable")
+    check.ok(f"{label}: at Disable the log holds the clock's entry: one line of JSON with plausible counts", len(entries) == 1 and clock_plausible(entries[0]), entries)
+    lines = log_lines(page)
+    check.ok(f"{label}: the log tells of enabling and disabling", any(line.startswith("Station: enabled; the robot opened in ") for line in lines) and any(line.startswith("Station: disabled; the simulated arm stands at ") for line in lines), lines[-6:])
+    guard = page.locator("#guard-line")
+    check.equal(f"{label}: the guard refused nothing", guard.get_attribute("data-refused"), "0")
+    check.equal(f"{label}: the guard's self-test still reads as passed", page.evaluate("window.pearjs.selfTest().failures"), [])
+
+
+def delta_action(**arm: float) -> str:
+    """Returns, as JavaScript, an action of the model's format that moves the arm's tip by ``arm`` (cm, rad)."""
+    return json.dumps({"type": "single_arm_delta", "arm": {"x": 0, "y": 0, "z": 0, "pitch": 0, "roll": 0, **arm}, "gripper": {"width": 0}})
+
+
+def station_actions(check: Check, page: Page) -> dict:
+    """On the enabled station: one action by its button, an action out of reach, Stop during a move, and Home
+    with its plan refused and approved. Returns the Worker's status at the end."""
+    before = station_view(page)["status"]
+    shown_z = "Number(document.querySelector('#model-state [data-quantity=z]').dataset.value)"
+    z_before = page.evaluate(shown_z)
+
+    # one action of the model's format by its button: 1 cm up
+    page.click("#station-jog button[data-jog='z-plus']")
+    wait_station(page, "view.action === null && view.report !== null", 30000)
+    report = station_view(page)["report"]
+    check.equal("action: the button z +1 cm is one action that completed", report["record"]["status"], "completed")
+    wait_station(page, "view.status.robot === 'READY' && view.status.isSettled === true")
+    page.wait_for_timeout(250)
+    check.ok("action: after z +1 cm the z that step 1 shows is 1 cm higher", abs(page.evaluate(shown_z) - z_before - 1) < 0.15, [z_before, page.evaluate(shown_z)])
+    check.equal("action: the page shows the report as the model would read it", page.locator("#station-feedback").text_content(), report["feedback"])
+    check.ok("action: the report ends as every report of the format does", report["feedback"].endswith(" Use the new measured observation."), report["feedback"])
+    told = json.loads(report["feedback"].removesuffix(" Use the new measured observation."))
+    check.equal("action: the report is the format's: completed, requested, settled, reached", [told.get(key) for key in ("status", "execution_requested", "settled", "reached")], ["completed", True, True, True])
+    check.ok("action: the next turn's text carries the report", report["turnText"].endswith(f"Previous execution: {report['feedback']}"), report["turnText"])
+    wait_station(page, "view.status.robot === 'READY'")
+    after = station_view(page)["status"]
+    check.close("action: the arm's tip is 1 cm higher", after["state"]["arm"]["z"] - before["state"]["arm"]["z"], 1.0, 0.15)
+    check.ok("action: the turn's text the page shows ends with the report", page.locator("#station-turn").text_content().endswith(report["feedback"]), page.locator("#station-turn").text_content())
+    lines = log_lines(page)
+    check.ok("action: the log holds the action, its phases and its result", any(line.startswith('Station: action {"type":"single_arm_delta"') for line in lines) and "Station: phase Planning" in lines and "Station: phase Executing" in lines and f"Station: result {report['feedback']}" in lines, lines[-8:])
+    check.equal("action: the action's line names the button and the status", [page.locator("#station-action").get_attribute("data-status"), "z +1 cm" in page.locator("#station-action").inner_text()], ["completed", True])
+
+    # out of reach: the whole action is rejected with the format's own text, and nothing moves
+    page.evaluate(f"window.pearjs.jog({delta_action(x=60)})")
+    report = station_view(page)["report"]
+    check.equal("out of reach: the action is rejected", report["record"]["status"], "rejected")
+    check.ok("out of reach: the report is the format's own text", '"code": "out_of_reach"' in report["feedback"] and "Nothing moved: the whole action was discarded (arm and gripper)." in report["feedback"], report["feedback"])
+    wait_station(page, "view.status.robot === 'READY'")
+    check.equal("out of reach: nothing moved", station_view(page)["status"]["state"], after["state"])
+
+    # Stop while a move is under way: the action ends as not completed, and the arm holds where it braked
+    page.evaluate(f"void window.pearjs.jog({delta_action(z=-6)})")
+    wait_station(page, "view.status.control !== 'HOLD'", 10000)
+    check.ok("stop: while an action is under way no other is offered", page.evaluate("[...document.querySelectorAll('#station-jog button')].every(button => button.disabled)") and page.locator("#station-home").is_disabled())
+    page.click("#task-stop")
+    wait_station(page, "view.action === null", 15000)
+    report = station_view(page)["report"]
+    check.ok("stop: Stop during a move ends the action, and not as completed", report["record"]["status"] in ("failed", "stopped", "cancelled"), report["record"])
+    # PEAR's result is what the model would read and stays as it is; the page's own line says who stopped it
+    stopped_line = page.locator("#station-action").inner_text()
+    check.equal("stop: PEAR's result stays what it is, and the page's own line and the report panel say that the person stopped it", [report["record"]["status"], (report["record"].get("error") or {}).get("message"), page.locator("#station-feedback").text_content() == report["feedback"], "you pressed Stop while it ran" in stopped_line, "you pressed Stop while it ran" in page.locator("#station-report-line").inner_text()], ["failed", "Action cancelled by stop or another operation", True, True, True])
+    page.click("#language-zh")
+    check.ok("stop: the page's own line is in Chinese when the page is Chinese", "你在它執行時按了停止" in page.locator("#station-action").inner_text(), page.locator("#station-action").inner_text())
+    page.click("#language-en")
+    check.numbers.setdefault("station", {})["a stopped action"] = {"status": report["record"]["status"], "error": report["record"].get("error"), "feedback": report["feedback"]}
+    wait_station(page, "view.status.robot === 'READY'")
+    held = station_view(page)["status"]
+    lowered = after["state"]["arm"]["z"] - held["state"]["arm"]["z"]
+    check.ok("stop: the arm braked on the way, short of the 6 cm", -0.2 <= lowered < 5.5, lowered)
+    check.equal("stop: the station still holds the arm", [station_view(page)["phase"], held["control"]], ["on", "HOLD"])
+    page.wait_for_timeout(600)
+    check.equal("stop: the arm holds: half a second later it is where it was", station_view(page)["status"]["state"], held["state"])
+
+    # Home: PEAR's plan is shown and waits; refused, nothing moves; approved, the arm goes Home
+    page.click("#station-home")
+    wait_station(page, "view.plan !== null", 15000)
+    check.ok("home: PEAR's plan is shown and waits for an answer", page.locator("#station-plan").is_visible() and "operation_seconds_estimate" in page.locator("#station-plan-text").text_content(), page.locator("#station-plan-text").text_content())
+    page.click("#station-refuse")
+    wait_station(page, "view.action === null", 15000)
+    view = station_view(page)
+    check.equal("home: a refused plan ends Home as not run", view["outcome"]["key"], "station.action.failed")
+    not_run = page.locator("#station-report-line").inner_text()
+    check.ok("home: a Home the robot did not run is told in the report panel, in the robot's words, and no earlier report is shown there", page.locator("#station-report").is_visible() and "did not run" in not_run and str(view["outcome"]["values"].get("error")) in not_run and not page.locator("#station-report-model").is_visible() and not page.locator("#station-home-result").is_visible(), not_run)
+    check.numbers["station"]["a refused Home"] = view["outcome"]["values"]
+    wait_station(page, "view.status.robot === 'READY'")
+    check.equal("home: and nothing moved", station_view(page)["status"]["state"], held["state"])
+    page.click("#station-home")
+    wait_station(page, "view.plan !== null", 15000)
+    page.click("#station-approve")
+    wait_station(page, "view.action === null", 90000)
+    view = station_view(page)
+    check.equal("home: an approved plan is run to its end", view["outcome"]["key"], "station.action.homed")
+    check.ok("home: the page names the stages", "Home is done" in page.locator("#station-action").inner_text(), page.locator("#station-action").inner_text())
+    home_shown = json_or_none(page.locator("#station-home-results").text_content())
+    home_logged = json_or_none(next((line.removeprefix("Station: Home done: ") for line in reversed(log_lines(page)) if line.startswith("Station: Home done: ")), ""))
+    check.ok("home: the report panel shows Home's stages and PEAR's result for each joint, and no earlier report", page.locator("#station-report").is_visible() and page.locator("#station-home-result").is_visible() and not page.locator("#station-report-model").is_visible() and "Home is done" in page.locator("#station-report-line").inner_text() and isinstance(home_logged, dict) and len(home_logged) > 0 and home_shown == {"stages": view["outcome"]["values"]["stages"].split(", "), "results": home_logged}, home_shown)
+    wait_station(page, "view.status.robot === 'READY'")
+    homed = station_view(page)["status"]
+    check.ok("home: the arm moved", homed["state"] != held["state"], homed["state"])
+    check.numbers["station"]["Home"] = {"stages": view["outcome"]["values"], "state": homed["state"], "periods": homed["periods"]}
+    check.ok("home: the loop kept its periods through the actions", homed["periods"]["maxMs"] <= 40 and 44 <= homed["periods"]["count"] <= 52, homed["periods"])
+    lines = log_lines(page)
+    check.ok("home: the log holds the plan, the answers and the end", any(line.startswith("Station: Home plan {") for line in lines) and "Station: Home plan refused" in lines and "Station: Home plan approved" in lines and any(line.startswith("Station: Home done: ") for line in lines), lines[-6:])
+    return homed
+
+
+# The twelve buttons, in the order the check clicks them (each pair ends where it began): the button's id, the
+# part and the quantity of the model's state that it names, its amount with its sign (cm, rad), and the tolerance.
+# A wrong sign or another quantity cannot meet the tolerance; the state is told to 0.1 cm and 0.01 rad.
+# The gripper's command is a direction, not an amount: PEAR closes it wholly on `width` -1 and opens it wholly on
+# +1, and tells the outcome ("closed", "open") in its record and in the report. The simulated arm stands open
+# after Home, at 6 cm, and closed at 0 cm: so the check closes before it opens. The last entry is that outcome.
+JOG_BUTTONS = (
+    ("x-plus", "arm", "x", 1.0, 0.15, None),
+    ("x-minus", "arm", "x", -1.0, 0.15, None),
+    ("y-plus", "arm", "y", 1.0, 0.15, None),
+    ("y-minus", "arm", "y", -1.0, 0.15, None),
+    ("z-minus", "arm", "z", -1.0, 0.15, None),
+    ("z-plus", "arm", "z", 1.0, 0.15, None),
+    ("pitch-plus", "arm", "pitch", 0.05, 0.02, None),
+    ("pitch-minus", "arm", "pitch", -0.05, 0.02, None),
+    ("roll-plus", "arm", "roll", 0.05, 0.02, None),
+    ("roll-minus", "arm", "roll", -0.05, 0.02, None),
+    ("gripper-close", "gripper", "width", -6.0, 0.15, "closed"),
+    ("gripper-open", "gripper", "width", 6.0, 0.15, "open"),
+)
+
+
+def settled_status(page: Page) -> dict:
+    """Returns a status the Worker told after this call began (ten control steps newer than the one the page
+    holds now), with the robot at rest."""
+    steps = station_view(page)["status"]["steps"]
+    wait_station(page, f"view.status.steps >= {steps + 10} && view.status.robot === 'READY' && view.status.isSettled === true")
+    return station_view(page)["status"]
+
+
+def station_buttons(check: Check, page: Page) -> dict:
+    """On the enabled station, after Home: each of the twelve buttons is one action of the model's format that
+    completes and changes the quantity it names, in the model's state the Worker tells, by its amount with its
+    sign. Returns the Worker's status at the end."""
+    seen = {}
+    status = settled_status(page)
+    for button, part, quantity, amount, tolerance, gripper in JOG_BUTTONS:
+        before = status
+        page.click(f"#station-jog button[data-jog='{button}']")
+        wait_station(page, "view.action === null && view.outcome !== null", 30000)
+        view = station_view(page)
+        report = view["report"] or {}
+        record = report.get("record") or {}
+        status = settled_status(page)
+        change = status["state"][part][quantity] - before["state"][part][quantity]
+        check.equal(f"buttons: {button} is one action that completed", [view["outcome"]["key"], record.get("status")], ["station.action.done", "completed"])
+        check.close(f"buttons: {button} changed {part}.{quantity} of the model's state by {amount:+g}", change, amount, tolerance)
+        seen[button] = {"status": record.get("status"), "change": round(change, 4), "before": before["state"], "after": status["state"]}
+        if gripper is not None:
+            told = json_or_none(str(report.get("feedback") or "").removesuffix(" Use the new measured observation.")) or {}
+            check.equal(f"buttons: {button}: PEAR's record and the report the model reads tell the gripper as {gripper}", [record.get("gripper_outcome"), told.get("gripper")], [gripper, gripper])
+            seen[button].update({"record": record, "feedback": report.get("feedback")})
+    check.numbers.setdefault("station", {})["buttons"] = seen
+    return status
+
+
+def station_home_stopped(check: Check, page: Page) -> dict:
+    """A Home that the person's Stop ends, while its plan waits for an answer and while it moves the arm: the
+    page's own line says that the person pressed Stop, followed by the robot's own words. Called where the arm
+    stands away from Home. Returns the Worker's status at the end."""
+    report_line = page.locator("#station-report-line")
+    expected = ["station.action.homeStopped", "station.action.homeStopped", True, True]
+
+    def at_rest() -> dict:
+        steps = station_view(page)["status"]["steps"]
+        wait_station(page, f"view.status.steps >= {steps + 10} && view.status.robot === 'READY'")
+        return station_view(page)["status"]
+
+    def told() -> tuple:
+        outcome = station_view(page)["outcome"] or {"key": None, "values": {}}
+        line = report_line.inner_text()
+        error = str(outcome["values"].get("error") or "")
+        return outcome, [outcome["key"], report_line.get_attribute("data-outcome"), "you pressed Stop before it was done" in line, error != "" and line.endswith(f"The robot says: {error}")]
+
+    # Stop while the plan waits for an answer: Home ends there, the plan is no longer shown, and nothing moved
+    before = at_rest()
+    page.click("#station-home")
+    wait_station(page, "view.plan !== null", 15000)
+    page.click("#task-stop")
+    wait_station(page, "view.action === null && view.outcome !== null", 15000)
+    outcome, shown = told()
+    check.equal("home stopped: Stop while the plan waits: the page's own line in the report panel says that the person pressed Stop, followed by the robot's words", shown, expected)
+    check.equal("home stopped: Stop while the plan waits: the plan is no longer shown", [station_view(page)["plan"], page.locator("#station-plan").is_visible()], [None, False])
+    waited = at_rest()
+    check.equal("home stopped: Stop while the plan waits: nothing moved", waited["state"], before["state"])
+    check.numbers.setdefault("station", {})["a Home stopped while its plan waited"] = outcome
+
+    # Stop while Home moves the arm: the arm holds where it braked, the station is still on, and an action runs after it.
+    # Home is given a way to go (the arm is lowered by 4 cm first), and Stop is pressed once the tip has moved 0.3 cm
+    page.evaluate(f"window.pearjs.jog({delta_action(z=-4)})")
+    low = settled_status(page)
+    page.click("#station-home")
+    wait_station(page, "view.plan !== null", 15000)
+    page.click("#station-approve")
+    wait_station(page, f"view.status.control !== 'HOLD' && ['x', 'y', 'z'].some(name => Math.abs(view.status.state.arm[name] - {json.dumps(low['state']['arm'])}[name]) >= 0.3)", 15000)
+    page.click("#task-stop")
+    wait_station(page, "view.action === null && view.outcome !== null", 15000)
+    outcome, shown = told()
+    check.equal("home stopped: Stop while Home moves the arm: the page's own line in the report panel says that the person pressed Stop, followed by the robot's words", shown, expected)
+    page.click("#language-zh")
+    check.ok("home stopped: the page's own line is in Chinese when the page is Chinese", "\u4f60\u5728\u5b83\u5b8c\u6210\u4e4b\u524d\u6309\u4e86\u505c\u6b62" in report_line.inner_text() and "\u6a5f\u5668\u4eba\u56de\u5831\uff1a" in report_line.inner_text(), report_line.inner_text())
+    page.click("#language-en")
+    held = at_rest()
+    check.equal("home stopped: Stop while Home moves the arm: the station is still on, the robot READY in HOLD", [station_view(page)["phase"], held["robot"], held["control"]], ["on", "READY", "HOLD"])
+    page.wait_for_timeout(500)
+    check.equal("home stopped: the arm holds: half a second later its state is the same", station_view(page)["status"]["state"], held["state"])
+    home_arm = ((check.numbers["station"].get("Home") or {}).get("state") or {}).get("arm") or {}
+    left = max(abs(held["state"]["arm"][name] - low["state"]["arm"][name]) for name in ("x", "y", "z"))
+    short = max((abs(held["state"]["arm"][name] - home_arm[name]) for name in ("x", "y", "z") if name in home_arm), default=0)
+    check.ok("home stopped: Stop while Home moves the arm: the tip had left where it stood and braked short of Home", left >= 0.3 and short >= 0.3, [low["state"], held["state"], home_arm])
+    check.numbers["station"]["a Home stopped while the arm moved"] = {**outcome, "state before": low["state"], "state held": held["state"], "Home": home_arm}
+    page.click("#station-jog button[data-jog='z-plus']")
+    wait_station(page, "view.action === null && view.outcome !== null", 30000)
+    check.equal("home stopped: an action runs after it", ((station_view(page)["report"] or {}).get("record") or {}).get("status"), "completed")
+    return settled_status(page)
+
+
+def set_hidden(page: Page, is_hidden: bool) -> None:
+    """Makes the page hold itself for hidden, or visible again, and tells it so. A headless page cannot be
+    hidden: what is shown is what the page does when the browser says that it is."""
+    page.evaluate(
+        """isHidden => {
+            Object.defineProperty(document, 'hidden', { configurable: true, get: () => isHidden });
+            Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => (isHidden ? 'hidden' : 'visible') });
+            document.dispatchEvent(new Event('visibilitychange'));
+        }""",
+        is_hidden,
+    )
+
+
+def station_hidden(check: Check, page: Page, status: dict) -> dict:
+    """The page hidden while the station drives: the action under way is stopped, no action is started, the loop
+    goes on and nothing is closed; visible again, actions are offered. Returns the Worker's status at the end."""
+    page.evaluate(f"void window.pearjs.jog({delta_action(z=-6)})")
+    wait_station(page, "view.status.control !== 'HOLD'", 10000)
+    set_hidden(page, True)
+    wait_station(page, "view.action === null && view.status.isHidden === true", 15000)
+    view = station_view(page)
+    check.equal("hidden: the action under way is stopped", [view["report"]["record"]["status"], (view["report"]["record"].get("error") or {}).get("message")], ["failed", "Action cancelled by stop or another operation"])
+    check.ok("hidden: the page's own line says that the page was hidden while the action ran", "the page was hidden while it ran, so the station stopped it" in page.locator("#station-action").inner_text() and page.locator("#station-action").get_attribute("data-status") == "failed", page.locator("#station-action").inner_text())
+    wait_station(page, "view.status.robot === 'READY'")
+    held = station_view(page)["status"]
+    check.ok("hidden: the arm braked on the way", status["state"]["arm"]["z"] - held["state"]["arm"]["z"] < 5.5, [status["state"], held["state"]])
+    check.equal("hidden: the station still holds the arm; nothing is closed", [station_view(page)["phase"], held["robot"], held["control"]], ["on", "READY", "HOLD"])
+    check.ok("hidden: no action is offered", page.evaluate("[...document.querySelectorAll('#station-jog button')].every(button => button.disabled)") and page.locator("#station-home").is_disabled())
+    check.equal("hidden: an action asked for all the same is refused by the Worker", page.evaluate(f"window.pearjs.stationClient.request({{ type: 'jog', action: {delta_action(z=1)} }}).then(() => 'answered', error => error.message)"), "RuntimeError: The page is hidden: no action is started")
+    check.equal("hidden: Home too", page.evaluate("window.pearjs.stationClient.request({ type: 'home' }).then(() => 'answered', error => error.message)"), "RuntimeError: The page is hidden: no action is started")
+    page.evaluate(f"window.pearjs.jog({delta_action(z=1)})")
+    wait_station(page, "view.action === null")
+    not_run = page.locator("#station-report-line").inner_text()
+    check.ok("hidden: an action the Worker refused is told in the report panel as not run, in the Worker's words, and no earlier report is shown there", page.locator("#station-report").is_visible() and "did not run" in not_run and "The page is hidden: no action is started" in not_run and not page.locator("#station-report-model").is_visible(), not_run)
+    before = held["steps"]
+    page.wait_for_timeout(400)
+    check.ok("hidden: the loop goes on", station_view(page)["status"]["steps"] - before >= 15, station_view(page)["status"]["steps"] - before)
+    check.ok("hidden: the page says what happened", page.locator("#station-messages [data-kind='station-hidden']").count() == 1 and "hidden" in page.locator("#station-messages").inner_text())
+    entries = clock_entries(page, "hidden")
+    check.ok("hidden: the log holds the clock's entry written when the page became hidden: one line of JSON with plausible counts", len(entries) == 1 and clock_plausible(entries[0]), entries)
+    check.ok("hidden: Stop stays enabled", not page.locator("#task-stop").is_disabled())
+    set_hidden(page, False)
+    wait_station(page, "view.status.isHidden === false")
+    check.ok("visible again: actions are offered", page.evaluate("[...document.querySelectorAll('#station-jog button')].every(button => !button.disabled)") and not page.locator("#station-home").is_disabled())
+    page.wait_for_timeout(300)
+    warning = page.locator("#station-messages [data-kind='station-hidden']")
+    warning_text = warning.inner_text() if warning.count() == 1 else ""
+    check.ok("visible again: the warning speaks in the past and no longer says that no action starts", "The page was hidden for a while: the station stopped then" in warning_text and "starts no action" not in warning_text, warning_text)
+    page.click("#station-jog button[data-jog='z-plus']")
+    wait_station(page, "view.action === null && view.report.record.status === 'completed'", 30000)
+    wait_station(page, "view.status.robot === 'READY'")
+    check.ok("visible again: an action runs", True)
+    lines = log_lines(page)
+    check.ok("hidden: the log tells of both", "Station: the page is hidden: stop, and no action until it is visible" in lines and "Station: the page is visible again" in lines, lines[-8:])
+    return station_view(page)["status"]
+
+
+def station_real_arm(check: Check, browser, base: str) -> None:
+    """A port that is not the simulated one, read as a calibrated arm: the station stays disabled and says why, in
+    both languages; and whatever is asked of the station's client all the same, nothing but reads is written to
+    that port (the Worker has no way to it: it drives an arm it makes itself)."""
+    own = browser.new_context(viewport={"width": 1280, "height": 800}, locale="en-US")
+    check.watch(own)
+    own.add_init_script(scripted_port(USB_ADAPTER, SIX_CALIBRATED))
+    page = open_page(check, own, base)
+    page.click("#arm-connect")
+    wait_phase(page, "reading")
+    page.wait_for_function("window.pearjs.arm.view.live !== null")
+    view = page.evaluate("(() => { const view = window.pearjs.arm.view; return { isSimulated: view.isSimulated, isUncalibrated: view.isUncalibrated, servos: view.servos.length, hasLive: view.live !== null }; })()")
+    check.equal("a real arm: the stand-in port is read as a calibrated arm of six servos, not the simulated one", view, {"isSimulated": False, "isUncalibrated": False, "servos": 6, "hasLive": True})
+    check.ok("a real arm: the log names the port as the browser's own", "Port chosen (Web Serial): USB vendor 1a86, product 55d3" in log_lines(page), log_lines(page)[:8])
+
+    why = page.locator("#station-why")
+    check.equal("a real arm: Enable is disabled, for the reason of a real arm", [page.locator("#station-enable").is_disabled(), why.get_attribute("data-why")], [True, "station.why.realArm"])
+    check.ok("a real arm: the sentence says that a real arm is only read and the station cannot be enabled on it", all(words in why.inner_text() for words in ("A real arm is connected", "only reads a real arm and never writes to it", "the station cannot be enabled on it")), why.inner_text())
+    page.click("#language-zh")
+    check.ok("a real arm: the same sentence in Chinese", all(words in why.inner_text() for words in ("目前連接的是真實的手臂", "只會讀取真實的手臂，絕不寫入", "不能在它上面啟用工作站")), why.inner_text())
+    page.click("#language-en")
+    check.ok("a real arm: Stop is disabled", page.locator("#task-stop").is_disabled())
+    check.ok("a real arm: no action is offered", page.locator("#station-home").is_disabled() and page.evaluate("[...document.querySelectorAll('#station-jog button')].every(button => button.disabled)"))
+    check.equal("a real arm: no Worker runs", len(page.workers), 0)
+    page.click("#station-enable", force=True, timeout=2000)
+    page.wait_for_timeout(300)
+    check.equal("a real arm: a click on the disabled Enable starts no Worker", [len(page.workers), station_view(page)["phase"]], [0, "off"])
+
+    # a request sent to the station's client all the same: without a Worker it is not even sent
+    check.equal("a real arm: a request to the station's client is refused, as no Worker runs", page.evaluate("window.pearjs.stationClient.request({ type: 'enable', positions: {}, isHidden: false }).then(() => 'answered', error => error.message)"), "the Worker does not run")
+    # and with the Worker started by hand (which the page never does on a real arm): the Worker drives the arm it
+    # makes itself, and the port is given nothing but reads
+    written_before = page.evaluate("window.portLog.written.length")
+    asked = page.evaluate(
+        f"""(async () => {{
+            const client = window.pearjs.stationClient;
+            client.start();
+            const positions = {{ shoulder_pan: 2025, shoulder_lift: 1540, elbow_flex: 2003, wrist_flex: 2915, wrist_roll: 996, gripper: 3499 }};
+            const enabled = await client.request({{ type: 'enable', positions, isHidden: false }});
+            const report = await client.request({{ type: 'jog', action: {delta_action(z=1)} }});
+            const disabled = await client.request({{ type: 'disable' }});
+            return {{ failures: enabled.timing.failures, status: report.record.status, motors: Object.keys(disabled.positions).length }};
+        }})()"""
+    )
+    check.equal("a real arm: asked all the same, the Worker enables, runs one action and disables on its own simulated arm", asked, {"failures": [], "status": "completed", "motors": 6})
+    port_log = page.evaluate("window.portLog")
+    instructions = sorted({entry["bytes"][4] for entry in port_log["written"]})
+    check.ok("a real arm: every packet the port was given is a PING, a READ or a SYNC READ", len(instructions) > 0 and set(instructions) <= {1, 2, 0x82}, instructions)
+    check.ok("a real arm: the page went on reading the arm meanwhile", len(port_log["written"]) > written_before + 10, [written_before, len(port_log["written"])])
+    check.equal("a real arm: the port was opened once, at the servos' baud rate, and not closed", [[entry["baudRate"] for entry in port_log["opened"]], port_log["closed"]], [[1000000], 0])
+    check.equal("a real arm: the guard refused nothing", page.locator("#guard-line").get_attribute("data-refused"), "0")
+    check.equal("a real arm: the guard's self-test still reads as passed", page.evaluate("window.pearjs.selfTest().failures"), [])
+    check.equal("a real arm: the page still reads the arm and Enable stays disabled for the same reason", [phase(page), page.locator("#station-enable").is_disabled(), why.get_attribute("data-why")], ["reading", True, "station.why.realArm"])
+    own.close()
+
+
+def part_station(check: Check, browser, context: BrowserContext, base: str, dist: Path) -> None:
+    """The station in the page's Worker on the simulated arm: Enable, the status events, Stop and Disable; from a
+    host, from a folder and under a path of a host; and a Worker that is gone."""
+    context.add_init_script(BLOB_TEXTS)
+    page = open_page(check, context, base)
+    status = station_enabled(check, page, "served")
+
+    # the text the Worker was started from (the Blob behind the Worker's URL) has no way to Web Serial
+    worker_text = page.evaluate("async url => { const blob = window.blobOf(url); return blob === null ? null : await blob.text(); }", page.workers[0].url if page.workers else "")
+    named = [name for name in WEB_SERIAL_NAMES if name in (worker_text or "")]
+    check.equal("served: the text the Worker was started from is the station's code and names none of navigator.serial, requestPort, getPorts", [worker_text is not None and "The timing self-check failed" in worker_text, named], [True, []])
+    check.numbers["station"]["the Worker's text"] = {"characters": len(worker_text or ""), "names of Web Serial in it": named}
+    page.click("#language-zh")
+    page.wait_for_timeout(300)
+    check.ok("served: the clock's line is in Chinese when the page is Chinese", "啟用以來 Worker 的時鐘" in page.locator("#station-clock").inner_text(), page.locator("#station-clock").inner_text())
+    page.click("#language-en")
+
+    # Stop while the arm holds: the robot's stop(), which never closes
+    page.click("#task-stop")
+    page.wait_for_function("document.getElementById('log-output').value.includes('Station: stopped')")
+    entries = clock_entries(page, "stop")
+    check.ok("served: at Stop the log holds the clock, the periods since enabling and the self-check's numbers: one line of JSON with plausible counts", len(entries) == 1 and clock_plausible(entries[0]), entries)
+    if len(entries) == 1 and entries[0] is not None:
+        check.numbers["station"]["the log's entry at Stop"] = entries[0]
+    wait_station(page, "view.status.robot === 'READY'")
+    view = station_view(page)
+    check.equal("served: after Stop the station still holds the arm, at rest", [view["phase"], view["status"]["robot"], view["status"]["control"]], ["on", "READY", "HOLD"])
+    check.equal("served: Stop moved nothing", view["status"]["turnText"], status["turnText"])
+    before = view["status"]["steps"]
+    page.wait_for_timeout(300)
+    check.ok("served: the loop goes on after Stop", station_view(page)["status"]["steps"] > before)
+    check.equal("served: a request the station refuses comes back in the robot's words", page.evaluate("window.pearjs.stationClient.request({ type: 'enable', positions: {}, isHidden: false }).then(() => 'answered', error => error.message)"), "RuntimeError: Station already open")
+    station_actions(check, page)
+    status = station_buttons(check, page)
+    status = station_hidden(check, page, status)
+    status = station_home_stopped(check, page)
+    page.screenshot(path=str(check.out / "station.png"), full_page=True)
+    station_disabled(check, page, "served", status["turnText"])
+
+    # a hidden page fails the timing self-check, which refuses to enable; the window reads the arm again
+    set_hidden(page, True)
+    page.click("#station-enable")
+    wait_station(page, "view.phase === 'off' && view.problem !== null", 15000)
+    problem = station_view(page)["problem"]
+    check.ok("hidden: enabling on a hidden page is refused by the timing self-check", "The timing self-check failed" in problem["error"] and "the page is not visible" in problem["error"], problem)
+    check.equal("hidden: the page shows the self-check as failed", page.locator("#station-timing").get_attribute("data-verdict"), "failed")
+    timing_line = page.locator("#station-timing").inner_text()
+    check.ok("hidden: the self-check's line gives the reason in the page's own sentence", "failed, so the station was not enabled (the page is not visible)" in timing_line, timing_line)
+    page.click("#language-zh")
+    timing_line = page.locator("#station-timing").inner_text()
+    check.ok("hidden: and in Chinese when the page is Chinese", "未通過，所以沒有啟用工作站（頁面目前沒有顯示在畫面上）" in timing_line, timing_line)
+    box_zh = page.locator("#station-messages").inner_text()
+    page.click("#language-en")
+    check.ok("hidden: and says that the station could not be enabled", "could not be enabled" in page.locator("#station-messages").inner_text(), page.locator("#station-messages").inner_text())
+    box_en = page.locator("#station-messages").inner_text()
+    check.equal("hidden: the box under the self-check says in the page's language that the self-check failed; the Worker's English error is in the log only", ["the timing self-check failed. Its line above gives the reasons" in box_en, "計時自我檢查未通過" in box_zh, any(words in text for words in ("RuntimeError", "The timing self-check failed:") for text in (box_en, box_zh)), any(line.startswith("Station: could not be enabled: RuntimeError: The timing self-check failed: the page is not visible") for line in log_lines(page))], [True, True, False, True])
+    wait_phase(page, "reading")
+    check.ok("hidden: Stop stays disabled", page.locator("#task-stop").is_disabled())
+    set_hidden(page, False)
+
+    # a second session in the same Worker
+    page.click("#station-enable")
+    wait_station(page, "view.phase === 'on' && view.status !== null && view.status.robot === 'READY'")
+    check.equal("served: the station can be enabled again, in the same Worker", len(page.workers), 1)
+
+    # a Worker that is gone is shown as that, and the page offers nothing that would need it
+    page.evaluate("window.pearjs.stationClient.worker.terminate()")
+    wait_station(page, "view.lost !== null", 8000)
+    check.equal("served: a Worker that tells nothing is shown as not answering", page.locator("#station-status").get_attribute("data-phase"), "lost")
+    check.ok("served: and the page says so", "does not answer" in page.locator("#station-status").inner_text(), page.locator("#station-status").inner_text())
+    check.ok("served: and what to do about it: reload the page", "reload the page" in page.locator("#station-status").inner_text(), page.locator("#station-status").inner_text())
+    check.equal("served: with the Worker gone no arm can be connected beside the station it held", [page.locator("#arm-connect").is_disabled(), page.locator("#arm-sim").is_disabled()], [True, True])
+    check.ok("served: no action is offered then", page.locator("#station-home").is_disabled() and page.evaluate("[...document.querySelectorAll('#station-jog button')].every(button => button.disabled)"))
+    page.click("#task-stop")
+    page.wait_for_function("document.getElementById('log-output').value.includes('Station: Stop got no answer')", timeout=8000)
+    check.ok("served: a Stop that is not answered is told", "Stop got no answer" in page.locator("#station-messages").inner_text(), page.locator("#station-messages").inner_text())
+    check.ok("served: the log tells that the Worker does not answer", any(line.startswith("Station: the Worker does not answer") for line in log_lines(page)))
+    page.close()
+
+    # a port that is not the simulated one, read as an arm: the station stays disabled
+    station_real_arm(check, browser, base)
+
+    # from a folder: the Worker starts from a Blob URL of a page that has no origin
+    folder = browser.new_context(viewport={"width": 1280, "height": 800}, locale="en-US")
+    check.watch(folder)
+    page = folder.new_page()
+    page.goto(f"{dist.as_uri()}/index.html?lang=en")
+    page.wait_for_function("window.pearjs !== undefined && window.pearjs.selfTest() !== null", timeout=10000)
+    check.equal("from a folder: the page's own address", page.evaluate("location.protocol"), "file:")
+    status = station_enabled(check, page, "from a folder")
+    station_disabled(check, page, "from a folder", status["turnText"])
+    folder.close()
+
+    # under a path of a host, as GitHub Pages serves a project's page
+    UnderPath.served = []
+    server, origin = serve(functools.partial(UnderPath, directory=str(dist)))
+    try:
+        hosted = browser.new_context(viewport={"width": 1280, "height": 800}, locale="en-US")
+        check.watch(hosted)
+        page = hosted.new_page()
+        page.goto(f"{origin}{HOSTED_PATH}/?lang=en")
+        page.wait_for_function("window.pearjs !== undefined && window.pearjs.selfTest() !== null", timeout=10000)
+        status = station_enabled(check, page, "under a path")
+        station_disabled(check, page, "under a path", status["turnText"])
+        hosted.close()
+        asked = sorted({urlsplit(entry[0]).path for entry in UnderPath.served})
+        check.ok("under a path: the station asked the host for nothing but the page, its script and its style sheet", len(asked) == 3 and all(path.startswith(f"{HOSTED_PATH}/") for path in asked), asked)
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
 PARTS = [
     "load", "stamp", "sim", "expected", "guard", "cable", "faults", "calibration", "serial", "diagnostics", "camera",
     "model", "privacy", "languages", "keyboard", "layout", "folder", "subpath", "hosted", "insecure", "log",
-    "transport", "timing", "selftest",
+    "transport", "timing", "selftest", "station",
 ]
 
 
@@ -2243,6 +2919,7 @@ def main() -> int:
             run("transport", lambda: part_transport(check))
             run("timing", lambda: part_timing(check, context, base))
             run("selftest", lambda: part_selftest(check, browser))
+            run("station", lambda: part_station(check, browser, context, base, dist))
 
             check.part = "whole run"
             check.equal("no uncaught error in any page", check.page_errors, [])

@@ -20,6 +20,9 @@ import { PageLog, redact } from "./log";
 import { checkModel, type ModelCheck } from "./model";
 import { type GuardSelfTest, guardSelfTest } from "./readonly";
 import { SIM_CALIBRATION, SIM_SCENARIOS, SimArm, type SimScenario } from "./sim_port";
+import { StationClient } from "./station_client";
+import { CLOCK_NUMBERS } from "./station_protocol";
+import type { ActionReport, HomeResult, StationEvent, StationStatus, TimingCheck } from "./station_protocol";
 import type { TextKey } from "./texts";
 import { formatStats, measureTiming, READS, TIMER_PERIOD_MS, TIMER_PERIODS, type TimingReport } from "./timing";
 
@@ -427,8 +430,43 @@ function calibrationVerdict(): Node[] {
 
 const MARK_TONE: Record<BoundsMark, string> = { inside: "ok", tolerated: "warn", outside: "error" };
 
+/** What the Worker tells of the arm while the station drives it; null while the window reads the arm itself. */
+function drivenStatus(): StationStatus | null {
+  return stationView.phase === "on" || stationView.phase === "disabling" ? stationView.status : null;
+}
+
+/** The joints as the Worker's status tells them while the station drives: PEAR's values against PEAR's limits.
+ * The servos' steps and the marks against the limits are not in the status, so they are not shown. */
+function drivenJointTable(joints: readonly number[]): Node[] {
+  const limits = arm.kinematics.limits;
+  const body = element(
+    "tbody",
+    {},
+    MOTORS.map((motor, index) => {
+      const unit = t(index >= JOINTS.length ? "joints.unit.opening" : "joints.unit.rad");
+      const value = joints[index];
+
+      return row(
+        [
+          cell(motor, "name"),
+          cell(value === undefined ? DASH : `${fixed(value, 3)} ${unit}`, "number", {
+            field: "value",
+            value: value === undefined ? "" : String(value),
+          }),
+          cell(`${fixed(limits.lowerBounds[index] as number, 3)} … ${fixed(limits.upperBounds[index] as number, 3)}`, "number"),
+        ],
+        { motor },
+      );
+    }),
+  );
+
+  return [headRow(["joints.joint", "joints.value", "joints.limits"], ["joints.value", "joints.limits"]), body];
+}
+
 function jointTable(): Node[] {
   const live = arm.view.live;
+  const driven = drivenStatus();
+  if (driven?.joints != null) return drivenJointTable(driven.joints);
   if (live === null) return [];
 
   const limits = arm.kinematics.limits;
@@ -476,7 +514,7 @@ function jointTable(): Node[] {
 const STATE_UNITS: Record<string, string> = { x: "cm", y: "cm", z: "cm", pitch: "rad", roll: "rad", width: "cm" };
 
 function modelState(): Node[] {
-  const state = arm.view.live?.state ?? null;
+  const state = drivenStatus()?.state ?? arm.view.live?.state ?? null;
   if (state === null) return [element("p", { className: "muted", text: t("state.none") })];
 
   const decimals = SO101Kinematics.DECIMALS;
@@ -538,11 +576,13 @@ function renderArm(): void {
   const isOpen = isBusy || view.phase === "reading";
   const isGuardBroken = selfTest !== null && selfTest.failures.length > 0;
 
-  byId<HTMLButtonElement>("arm-connect").disabled = isBusy || isGuardBroken || webSerial() === null;
-  byId<HTMLButtonElement>("arm-sim").disabled = isBusy || isGuardBroken;
+  // while the station holds the simulated arm, this section is the station's: no arm is connected beside it
+  const isHeldByStation = stationView.phase !== "off";
+  byId<HTMLButtonElement>("arm-connect").disabled = isBusy || isGuardBroken || isHeldByStation || webSerial() === null;
+  byId<HTMLButtonElement>("arm-sim").disabled = isBusy || isGuardBroken || isHeldByStation;
   const retry = byId<HTMLButtonElement>("arm-retry");
   retry.hidden = !(view.phase === "failed" && arm.lastPort !== null);
-  retry.disabled = isGuardBroken;
+  retry.disabled = isGuardBroken || isHeldByStation;
   byId<HTMLButtonElement>("arm-disconnect").hidden = !isOpen;
 
   const statusKey: TextKey =
@@ -554,8 +594,11 @@ function renderArm(): void {
           : "arm.status.reading"
       : (PHASE_STATUS[view.phase] ?? "arm.status.idle");
   const status = byId<HTMLElement>("arm-status");
+  // while the station drives the simulated arm, this section shows what the Worker tells of it
+  const driven = drivenStatus();
   status.dataset.phase = view.isStalled ? "stalled" : view.phase;
-  setText(status, t(statusKey));
+  status.dataset.driven = String(driven !== null);
+  setText(status, t(driven !== null ? "arm.status.driven" : statusKey));
   setText(
     byId<HTMLElement>("arm-readings"),
     view.phase === "reading" && view.live !== null ? t("arm.readings", { count: count(view.live.count) }) : "",
@@ -572,15 +615,22 @@ function renderArm(): void {
   renderOnce(byId("calibration-verdict"), JSON.stringify([view.file, fileProblem]), calibrationVerdict);
   byId<HTMLButtonElement>("calibration-remove").hidden = view.file === null;
 
-  byId("arm-joints").hidden = view.live === null;
-  renderOnce(byId("joint-table"), JSON.stringify([view.live?.raw, view.live?.joints, view.live?.marks]), jointTable);
-  renderOnce(byId("model-state"), JSON.stringify(view.live?.state ?? null), modelState);
-  byId("turn-details").hidden = view.live?.turnText == null;
-  setText(byId("turn-text"), view.live?.turnText ?? "");
+  byId("arm-joints").hidden = view.live === null && driven?.joints == null;
+  byId("arm-driven-note").hidden = driven === null;
+  renderOnce(
+    byId("joint-table"),
+    JSON.stringify([view.live?.raw, view.live?.joints, view.live?.marks, driven?.joints ?? null]),
+    jointTable,
+  );
+  renderOnce(byId("model-state"), JSON.stringify(driven?.state ?? view.live?.state ?? null), modelState);
+  const turnText = driven !== null ? driven.turnText : (view.live?.turnText ?? null);
+  byId("turn-details").hidden = turnText == null;
+  setText(byId("turn-text"), turnText ?? "");
 
   renderGuard();
   renderSim();
   renderTiming();
+  renderStation();
 }
 
 async function connectSerial(): Promise<void> {
@@ -738,6 +788,13 @@ function renderSim(): void {
   const cable = byId<HTMLButtonElement>("sim-cable");
   cable.dataset.plugged = String(simulated.port.isPlugged);
   setText(cable, t(simulated.port.isPlugged ? "sim.unplug" : "sim.plug"));
+
+  // while the station holds the arm, the arm is the station's: its sliders, its fault and its cable are disabled
+  const isStations = stationView.phase !== "off";
+  select.disabled = isStations;
+  cable.disabled = isStations;
+  for (const input of byId("sim-sliders").querySelectorAll("input")) input.disabled = isStations;
+  byId("sim-driven").hidden = !isStations;
 }
 
 // ---------------------------------------------------------------- the camera
@@ -969,6 +1026,495 @@ async function runModelCheck(): Promise<void> {
   renderModel();
 }
 
+// ---------------------------------------------------------------- the station
+//
+// The station (PEAR's robot, its control loop and its driver) runs in a Worker on a simulated arm of the Worker's
+// own; this window asks and shows. One arm, two phases: while the window reads the simulated arm ("look") the
+// station is off, and enabling the station ("drive") ends the reading and hands the arm over where it stands.
+
+interface StationView {
+  phase: "off" | "enabling" | "on" | "disabling";
+  /** The Worker's last status; null while the station is off. */
+  status: StationStatus | null;
+  /** The Worker died or does not answer. */
+  lost: { reason: "silent" | "died"; detail: string } | null;
+  /** A request of the page that failed, in the station's own words. */
+  problem: { key: TextKey; error: string } | null;
+  /** The action under way and its last phase; `endedBy` is what of the page ended it, if the page did: the
+   * person's Stop, or the page being hidden. */
+  action: { name: string; phase: string | null; endedBy: "stop" | "hidden" | null } | null;
+  /** How the last action ended. */
+  outcome: { key: TextKey; values: Record<string, string> } | null;
+  /** The Home plan that waits for an answer. */
+  plan: Readonly<Record<string, unknown>> | null;
+  report: ActionReport | null;
+  /** PEAR's Home report, when the last action was a Home that ran. */
+  home: HomeResult | null;
+  /** The numbers of the last timing self-check before enabling. */
+  timing: TimingCheck | null;
+  /** Whether the page was hidden while the station was enabled. */
+  wasHidden: boolean;
+}
+
+const stationView: StationView = {
+  phase: "off",
+  status: null,
+  lost: null,
+  problem: null,
+  action: null,
+  outcome: null,
+  plan: null,
+  report: null,
+  home: null,
+  timing: null,
+  wasHidden: false,
+};
+
+const station = new StationClient({
+  onEvent: (event) => onStationEvent(event),
+  onLost: (reason, detail) => {
+    if (stationView.lost?.reason !== reason) log.add(`Station: the Worker ${reason === "died" ? "died" : "does not answer"}: ${detail}`);
+    stationView.lost = { reason, detail };
+    renderStation();
+  },
+});
+
+/** The buttons that are each one action of the model's format: centimetres, radians, and the gripper's command. */
+const JOGS: ReadonlyArray<{
+  id: string;
+  label: string | TextKey;
+  arm?: Partial<Record<"x" | "y" | "z" | "pitch" | "roll", number>>;
+  width?: number;
+}> = [
+  { id: "x-plus", label: "x +1 cm", arm: { x: 1 } },
+  { id: "x-minus", label: `x ${MINUS}1 cm`, arm: { x: -1 } },
+  { id: "y-plus", label: "y +1 cm", arm: { y: 1 } },
+  { id: "y-minus", label: `y ${MINUS}1 cm`, arm: { y: -1 } },
+  { id: "z-plus", label: "z +1 cm", arm: { z: 1 } },
+  { id: "z-minus", label: `z ${MINUS}1 cm`, arm: { z: -1 } },
+  { id: "pitch-plus", label: "pitch +0.05 rad", arm: { pitch: 0.05 } },
+  { id: "pitch-minus", label: `pitch ${MINUS}0.05 rad`, arm: { pitch: -0.05 } },
+  { id: "roll-plus", label: "roll +0.05 rad", arm: { roll: 0.05 } },
+  { id: "roll-minus", label: `roll ${MINUS}0.05 rad`, arm: { roll: -0.05 } },
+  { id: "gripper-open", label: "station.jog.open", width: 1 },
+  { id: "gripper-close", label: "station.jog.close", width: -1 },
+];
+
+function jogLabel(jog: (typeof JOGS)[number]): string {
+  return jog.label.startsWith("station.") ? t(jog.label as TextKey) : jog.label;
+}
+
+function errorText(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+/** Why the station cannot be enabled now; null when it can. */
+function stationWhy(): TextKey | null {
+  if (stationView.lost !== null) return "station.why.lost";
+  const view = arm.view;
+  if (view.phase === "idle" || view.phase === "failed") return "station.why.noArm";
+  if (!view.isSimulated) return "station.why.realArm";
+  if (sim === null || sim.scenario !== "normal") return "station.why.scenario";
+  if (view.phase !== "reading" || view.live === null) return "station.why.busy";
+
+  return null;
+}
+
+function onStationEvent(event: StationEvent): void {
+  if (event.type === "status") {
+    stationView.status = event.status;
+    if (stationView.lost?.reason === "silent") stationView.lost = null; // it answers again
+  } else if (event.type === "log") {
+    log.add(`Station ${event.level} [${event.logger}]: ${event.message}`);
+  } else if (event.type === "phase") {
+    if (stationView.action !== null) stationView.action.phase = event.phase;
+    log.add(`Station: phase ${event.phase}`);
+  } else if (event.type === "plan") {
+    stationView.plan = event.plan;
+    log.add(`Station: Home plan ${JSON.stringify(event.plan)}`);
+  } else {
+    stationView.timing = event.timing;
+    log.add(`Station: timing self-check ${JSON.stringify(event.timing)}`);
+  }
+  renderArm(); // step 1 shows the driven arm from the status; it renders the station's panel too
+}
+
+/** Writes one line of JSON to the log, for a measurement that is read back from the log: the Worker's clock and
+ * the control periods since enabling, as the last status told them (at most about a tenth of a second old), and
+ * the numbers of the timing self-check before enabling. `at` is what the page did then. */
+function logClock(at: "stop" | "disable" | "hidden"): void {
+  const status = stationView.status;
+  if (status === null) return;
+  const timing = stationView.timing;
+  const entry = {
+    at,
+    steps: status.steps,
+    periods: status.since,
+    clock: status.clock,
+    timing:
+      timing === null
+        ? null
+        : {
+            periods: timing.periods,
+            meanMs: timing.meanMs,
+            maxMs: timing.maxMs,
+            over25: timing.over25,
+            maxReadMs: timing.maxReadMs,
+          },
+  };
+  log.add(`Station: clock ${JSON.stringify(entry)}`);
+}
+
+/** "Drive": ends the window's reading of the simulated arm and enables the station on that arm where it stands. */
+async function enableStation(): Promise<void> {
+  if (stationView.phase !== "off" || stationWhy() !== null || sim === null) return;
+  const simulated = sim;
+  const positions = Object.fromEntries(MOTORS.map((motor) => [motor, simulated.position(motor)]));
+  stationView.phase = "enabling";
+  stationView.problem = null;
+  stationView.outcome = null;
+  stationView.report = null;
+  stationView.home = null;
+  stationView.timing = null;
+  stationView.wasHidden = false;
+  renderArm();
+  await arm.disconnect();
+  log.add(`Station: enabling on the simulated arm at ${JSON.stringify(positions)}`);
+  try {
+    station.start();
+    const enabled = await station.request({ type: "enable", positions, isHidden: document.hidden });
+    station.expectsStatus = true;
+    stationView.phase = "on";
+    log.add(`Station: enabled; the robot opened in ${enabled.openMs} ms`);
+    if (document.hidden) await tellVisibility();
+  } catch (error) {
+    stationView.phase = "off";
+    // a failed timing self-check is said in the page's language (its line gives the reasons); the Worker's
+    // English error goes to the log only
+    const timing = stationView.timing as TimingCheck | null; // the Worker's event has set it meanwhile
+    const isTimingFailure = timing !== null && timing.failures.length > 0;
+    stationView.problem = { key: isTimingFailure ? "station.enableFailed.timing" : "station.enableFailed", error: errorText(error) };
+    log.add(`Station: could not be enabled: ${errorText(error)}`);
+    await connectSim();
+  }
+  renderArm(); // step 1 shows the driven arm as soon as the station is on
+}
+
+/** "Look" again: closes the station and gives the simulated arm, where it stands, back to the window's reading. */
+async function disableStation(): Promise<void> {
+  if (stationView.phase !== "on") return;
+  stationView.phase = "disabling";
+  logClock("disable");
+  renderArm();
+  try {
+    const { positions } = await station.request({ type: "disable" });
+    station.expectsStatus = false;
+    stationView.phase = "off";
+    stationView.status = null;
+    stationView.action = null;
+    stationView.plan = null;
+    stationView.problem = null;
+    log.add(`Station: disabled; the simulated arm stands at ${JSON.stringify(positions)}`);
+    if (sim !== null) {
+      for (const motor of MOTORS) sim.setPosition(motor, positions[motor] as number);
+      byId("sim-sliders").dataset.signature = "";
+    }
+    renderStation();
+    await connectSim();
+  } catch (error) {
+    stationView.phase = "on"; // as far as the page knows, the station still holds the arm
+    stationView.problem = { key: "station.disableFailed", error: errorText(error) };
+    log.add(`Station: could not be disabled: ${errorText(error)}`);
+  }
+  renderStation();
+}
+
+/** The stop bar's button: the robot's `stop()`, which brakes and holds. It never closes the station. */
+async function stopStation(): Promise<void> {
+  if (stationView.phase !== "on" && stationView.phase !== "disabling") return;
+  if (stationView.action !== null) stationView.action.endedBy = "stop";
+  log.add("Station: Stop");
+  try {
+    await station.request({ type: "stop" });
+    log.add("Station: stopped");
+    logClock("stop");
+  } catch (error) {
+    stationView.problem = { key: "station.stopFailed", error: errorText(error) };
+    log.add(`Station: Stop got no answer: ${errorText(error)}`);
+  }
+  renderStation();
+}
+
+/** Runs one action of the model's format, as a turn would, and shows the report the model would read. */
+async function runAction(name: string, action: Record<string, unknown>): Promise<void> {
+  if (stationView.phase !== "on" || stationView.action !== null) return;
+  const running: NonNullable<StationView["action"]> = { name, phase: null, endedBy: null };
+  stationView.action = running;
+  stationView.outcome = null;
+  stationView.problem = null;
+  log.add(`Station: action ${JSON.stringify(action)}`);
+  renderStation();
+  try {
+    const report = await station.request({ type: "jog", action });
+    const status = String(report.record["status"]);
+    const endedBy = running.endedBy as "stop" | "hidden" | null;
+    stationView.report = report;
+    stationView.home = null;
+    // PEAR's result stays what it is; the page's own line says what of the page ended the action, if it did
+    stationView.outcome = {
+      key:
+        status === "completed" || endedBy === null
+          ? "station.action.done"
+          : endedBy === "stop"
+            ? "station.action.stopped"
+            : "station.action.stoppedHidden",
+      values: { action: name, status },
+    };
+    log.add(`Station: result ${report.feedback}`);
+  } catch (error) {
+    stationView.report = null; // the report panel tells that this action did not run, not the action before it
+    stationView.home = null;
+    stationView.outcome = { key: "station.action.failed", values: { action: name, error: errorText(error) } };
+    log.add(`Station: the action did not run: ${errorText(error)}`);
+  }
+  stationView.action = null;
+  renderStation();
+}
+
+/** Home: PEAR's plan is shown and waits for the person's answer; only an approved plan moves the arm. */
+async function runHome(): Promise<void> {
+  if (stationView.phase !== "on" || stationView.action !== null) return;
+  const name = t("station.home");
+  const running: NonNullable<StationView["action"]> = { name, phase: null, endedBy: null };
+  stationView.action = running;
+  stationView.outcome = null;
+  stationView.problem = null;
+  log.add("Station: Home asked");
+  renderStation();
+  try {
+    const home = await station.request({ type: "home" });
+    stationView.home = home;
+    stationView.report = null;
+    stationView.outcome = { key: "station.action.homed", values: { stages: home.stages.join(", ") } };
+    log.add(`Station: Home done: ${JSON.stringify(home.results)}`);
+  } catch (error) {
+    stationView.home = null;
+    stationView.report = null; // the report panel tells that Home did not run, not the action before it
+    // the robot's error stays what it is; the page's own line says what of the page ended Home, if the page did
+    const homeEndedBy = running.endedBy as "stop" | "hidden" | null;
+    stationView.outcome = {
+      key:
+        homeEndedBy === "stop"
+          ? "station.action.homeStopped"
+          : homeEndedBy === "hidden"
+            ? "station.action.homeStoppedHidden"
+            : "station.action.failed",
+      values: { action: name, error: errorText(error) },
+    };
+    log.add(
+      `Station: Home ${homeEndedBy === "stop" ? "ended by Stop" : homeEndedBy === "hidden" ? "ended by the hidden page" : "did not run"}: ${errorText(error)}`,
+    );
+  }
+  stationView.action = null;
+  stationView.plan = null;
+  renderStation();
+}
+
+async function answerPlan(isApproved: boolean): Promise<void> {
+  if (stationView.plan === null) return;
+  stationView.plan = null;
+  log.add(`Station: Home plan ${isApproved ? "approved" : "refused"}`);
+  renderStation();
+  await station.request({ type: "approve", isApproved }).catch((error: unknown) => {
+    log.add(`Station: the answer to the plan was not taken: ${errorText(error)}`);
+  });
+}
+
+/** A hidden page stops the station and starts no action; the loop goes on and nothing is closed. */
+async function tellVisibility(): Promise<void> {
+  if (stationView.phase !== "on") return;
+  const isHidden = document.hidden;
+  if (isHidden) stationView.wasHidden = true;
+  if (isHidden && stationView.action !== null && stationView.action.endedBy === null) stationView.action.endedBy = "hidden";
+  log.add(`Station: the page is ${isHidden ? "hidden: stop, and no action until it is visible" : "visible again"}`);
+  if (isHidden) logClock("hidden");
+  await station.request({ type: "visibility", isHidden }).catch((error: unknown) => {
+    log.add(`Station: the Worker was not told: ${errorText(error)}`);
+  });
+  renderStation();
+}
+
+function renderStation(): void {
+  const view = stationView;
+  const status = view.status;
+  const isOn = view.phase === "on";
+  const isHeld = isOn || view.phase === "disabling";
+  const why = view.phase === "off" ? stationWhy() : null;
+
+  const enable = byId<HTMLButtonElement>("station-enable");
+  enable.hidden = isHeld;
+  enable.disabled = view.phase !== "off" || why !== null;
+  const disable = byId<HTMLButtonElement>("station-disable");
+  disable.hidden = !isHeld;
+  disable.disabled = !isOn;
+  byId("station-disable-note").hidden = !isHeld;
+  const whyNode = byId("station-why");
+  whyNode.hidden = view.phase !== "off";
+  whyNode.dataset.why = why ?? "station.why.ready";
+  setText(whyNode, t(why ?? "station.why.ready", { scenario: sim === null ? "" : t(`sim.scenario.${sim.scenario}`) }));
+
+  const line = byId("station-status");
+  line.dataset.phase = view.lost !== null ? "lost" : view.phase;
+  line.dataset.robot = status?.robot ?? "OFF";
+  line.dataset.control = status?.control ?? "";
+  setText(
+    line,
+    view.lost !== null
+      ? t(view.lost.reason === "died" ? "station.status.lostDied" : "station.status.lostSilent", { detail: view.lost.detail })
+      : view.phase === "enabling"
+        ? t("station.status.enabling")
+        : view.phase === "disabling"
+          ? t("station.status.disabling")
+          : isOn && status !== null
+            ? status.fault !== null
+              ? t("station.status.fault", { fault: status.fault })
+              : t("station.status.on", { robot: status.robot, control: status.control ?? DASH })
+            : t("station.status.off"),
+  );
+
+  const timing = byId("station-timing");
+  timing.dataset.verdict = view.timing === null ? "" : view.timing.failures.length === 0 ? "passed" : "failed";
+  setText(
+    timing,
+    view.timing === null
+      ? ""
+      : t("station.timing", {
+          periods: count(view.timing.periods),
+          mean: fixed(view.timing.meanMs, 2),
+          max: fixed(view.timing.maxMs, 2),
+          over: count(view.timing.over25),
+          read: fixed(view.timing.maxReadMs, 2),
+          verdict:
+            view.timing.failures.length === 0
+              ? t("station.timing.passed")
+              : t("station.timing.failed", {
+                  failures: view.timing.reasons
+                    .map((reason) => t(`station.timing.fail.${reason.code}`, { value: reason.value ?? "", limit: reason.limit ?? "" }))
+                    .join(t("station.timing.fail.join")),
+                }),
+        }),
+  );
+
+  const periods = byId("station-periods");
+  const measured = isOn && status !== null ? status.periods : null;
+  periods.dataset.count = String(measured?.count ?? "");
+  periods.dataset.mean = String(measured?.meanMs ?? "");
+  periods.dataset.max = String(measured?.maxMs ?? "");
+  periods.dataset.over = String(measured?.over25 ?? "");
+  periods.dataset.steps = String(isOn && status !== null ? status.steps : "");
+  setText(
+    periods,
+    measured === null || status === null
+      ? ""
+      : t("station.periods", {
+          count: count(measured.count),
+          mean: fixed(measured.meanMs, 2),
+          max: fixed(measured.maxMs, 2),
+          over: count(measured.over25),
+          steps: count(status.steps),
+        }),
+  );
+
+  // the Worker's clock since enabling, for a measurement: one line, and each number as an attribute
+  const clockLine = byId("station-clock");
+  const clock = isOn && status !== null ? status.clock : null;
+  for (const name of CLOCK_NUMBERS) clockLine.dataset[name] = String(clock?.[name] ?? "");
+  setText(
+    clockLine,
+    clock === null
+      ? ""
+      : t("station.clock", {
+          sleeps: count(clock.sleeps),
+          timers: count(clock.timers),
+          yields: count(clock.yields),
+          spin: fixed(clock.spinMs, 1),
+          lateMean: fixed(clock.lateMeanMs, 3),
+          lateMax: fixed(clock.lateMaxMs, 2),
+          timerLate: clock.timerLateMaxMs === null ? DASH : fixed(clock.timerLateMaxMs, 2),
+          margin: fixed(clock.marginMs, 2),
+        }),
+  );
+
+  const messages: HTMLElement[] = [];
+  if (view.problem !== null) messages.push(box("error", "station-problem", null, [t(view.problem.key, { error: view.problem.error })]));
+  if (isOn && (view.wasHidden || status?.isHidden === true)) {
+    // while the page is hidden no action starts; visible again, the warning speaks of what happened then
+    const isHiddenNow = status?.isHidden === true || document.hidden;
+    messages.push(box("warn", "station-hidden", null, [t(isHiddenNow ? "station.hidden" : "station.wasHidden")]));
+  }
+  renderOnce(byId("station-messages"), messages.map((message) => message.outerHTML).join(""), () => messages);
+
+  byId("station-controls").hidden = !isOn;
+  const isIdle = isOn && view.action === null && view.lost === null && status?.isHidden !== true;
+  renderOnce(byId("station-jog"), "jog", () =>
+    JOGS.map((jog) => {
+      const button = element("button", { text: jogLabel(jog), data: { jog: jog.id } });
+      button.type = "button";
+      button.addEventListener("click", () => {
+        const action = {
+          type: "single_arm_delta",
+          arm: { x: 0, y: 0, z: 0, pitch: 0, roll: 0, ...jog.arm },
+          gripper: { width: jog.width ?? 0 },
+        };
+        void runAction(jogLabel(jog), action);
+      });
+
+      return button;
+    }),
+  );
+  for (const button of byId("station-jog").querySelectorAll("button")) button.disabled = !isIdle;
+  byId<HTMLButtonElement>("station-home").disabled = !isIdle;
+
+  byId("station-plan").hidden = view.plan === null;
+  setText(byId("station-plan-text"), view.plan === null ? "" : JSON.stringify(view.plan, null, 2));
+
+  const actionLine = byId("station-action");
+  actionLine.dataset.running = String(view.action !== null);
+  actionLine.dataset.status = view.outcome?.values["status"] ?? "";
+  setText(
+    actionLine,
+    view.action !== null
+      ? t("station.action.running", { action: view.action.name, phase: view.action.phase ?? t("station.action.resting") })
+      : view.outcome !== null
+        ? t(view.outcome.key, view.outcome.values)
+        : "",
+  );
+
+  setText(
+    byId("station-joints"),
+    status?.joints == null ? "" : t("station.joints", { joints: status.joints.map((value) => fixed(value, 4)).join(", ") }),
+  );
+  setText(byId("station-turn"), status?.turnText ?? "");
+
+  // the report panel: the page's own line about how the last action ended (also one that did not run), then
+  // what the model would read of it, or Home's stages and PEAR's per-joint results
+  const hasEnded = view.action === null && view.outcome !== null;
+  byId("station-report").hidden = view.report === null && view.home === null && !hasEnded;
+  const reportLine = byId("station-report-line");
+  reportLine.dataset.outcome = hasEnded && view.outcome !== null ? view.outcome.key : "";
+  setText(reportLine, hasEnded && view.outcome !== null ? t(view.outcome.key, view.outcome.values) : "");
+  byId("station-report-model").hidden = view.report === null;
+  setText(byId("station-feedback"), view.report?.feedback ?? "");
+  setText(byId("station-record"), view.report === null ? "" : JSON.stringify(view.report.record, null, 2));
+  byId("station-home-result").hidden = view.home === null;
+  setText(
+    byId("station-home-results"),
+    view.home === null ? "" : JSON.stringify({ stages: view.home.stages, results: view.home.results }, null, 2),
+  );
+
+  byId<HTMLButtonElement>("task-stop").disabled = !isHeld;
+}
+
 // ---------------------------------------------------------------- timing
 
 function renderTiming(): void {
@@ -1058,6 +1604,11 @@ const debug: {
   camera: CameraSession;
   log: PageLog;
   sim: () => SimArm | null;
+  /** The station: what the page shows of it, its Worker's client, and one action of the model's format run as a
+   * button's is. */
+  station: () => StationView;
+  stationClient: StationClient;
+  jog: (action: Record<string, unknown>) => Promise<void>;
   selfTest: () => GuardSelfTest | null;
   timing: TimingReport | null;
   build: string;
@@ -1070,6 +1621,9 @@ const debug: {
   camera,
   log,
   sim: () => sim,
+  station: () => stationView,
+  stationClient: station,
+  jog: (action) => runAction("action", action),
   selfTest: () => selfTest,
   timing: null,
   build: __PEARJS_BUILD__,
@@ -1142,6 +1696,14 @@ function start(): void {
   byId("camera-start").addEventListener("click", () => void camera.start(camera.view.selectedId));
   byId("camera-stop").addEventListener("click", () => camera.stop());
   byId("camera-capture").addEventListener("click", () => void camera.capture());
+
+  byId("station-enable").addEventListener("click", () => void enableStation());
+  byId("station-disable").addEventListener("click", () => void disableStation());
+  byId("station-home").addEventListener("click", () => void runHome());
+  byId("station-approve").addEventListener("click", () => void answerPlan(true));
+  byId("station-refuse").addEventListener("click", () => void answerPlan(false));
+  byId("task-stop").addEventListener("click", () => void stopStation());
+  document.addEventListener("visibilitychange", () => void tellVisibility());
 
   byId("model-check").addEventListener("click", () => void runModelCheck());
   for (const id of ["model-url", "model-name", "model-key"]) {
