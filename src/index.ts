@@ -3,6 +3,7 @@
  *
  *   protocol   the texts a PEAR model reads and the action it writes
  *   agent      the model client (an OpenAI-compatible service, streamed) and the turn loop
+ *   console    PEAR's operator console: so far the loop that runs a task's turns one after another
  *   station    the station's joint layer: configuration, limits, safety monitors
  *   so101      the SO-101 arm: joint layout and default settings, kinematics, servo layer, feedforward
  *   feetech    the Feetech STS3215 serial protocol and bus, over an abstract transport
@@ -10,6 +11,7 @@
  *   python     what every module shares of Python itself: its exceptions under their names, how it writes a value
  */
 export * as agent from "./agent/index";
+export * as console from "./console/index";
 export * as feetech from "./feetech/index";
 export * as protocol from "./protocol/index";
 export * as python from "./python/index";
