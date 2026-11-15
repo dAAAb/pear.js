@@ -12,7 +12,9 @@
 // (_home). And four lines the records run without showing what they do: a task whose images cannot be attached
 // leaves no folder (the record lists files, and the folder is empty); a draft image that cannot be removed does
 // not hold the task back (no record has one); clear forgets the count of steps (it is 0 in every record, where
-// no turn runs); a recovery clears a failure shown while it ran (the command has cleared the earlier one).
+// no turn runs); a recovery clears a failure shown while it ran (the command has cleared the earlier one). And one
+// line no record can show: start counts a new task's steps and turns from the beginning (in every record the
+// counts are 0 already, on a new console or after a clear; after `disable` or a Home they are the last task's).
 
 import { describe, expect, it } from "vitest";
 
@@ -462,6 +464,27 @@ describe("Commands, by hand", () => {
       "recordings.start",
       "recordings.stop:Task paused",
     ]);
+  });
+
+  it("counts a new task's steps and turns from the beginning, whatever the last task left", async () => {
+    // `disable` and a Home end a task without `clear`: the task run then still holds the last task's counts
+    const { station, commands } = makeCommands();
+    const taskRun = station.taskRun;
+    taskRun.totalSteps = 5;
+    taskRun.turnNumber = 7;
+    taskRun.activeAttemptId = "attempt-7";
+    taskRun.activeTurn = { attempt: "attempt-7", turn_number: 7 } as unknown as typeof taskRun.activeTurn;
+    taskRun.run = () => Promise.resolve(); // no turn is run here
+
+    expect(await commands.run("start", { instruction: "Stack the cubes" })).toEqual({ accepted: true });
+    await station.worker!.ended;
+
+    expect(taskRun.totalSteps).toBe(0);
+    expect(taskRun.turnNumber).toBe(0);
+    expect(taskRun.activeAttemptId).toBeNull();
+    expect(taskRun.activeTurn).toBeNull();
+    // the task's event is not of the last task's turn: it carries none of that turn's fields
+    expect(Object.keys(station.events[0]!.data)).toEqual(["id", "instruction", "created", "model", "model_label", "images"]);
   });
 
   it("leaves nothing of a task whose images cannot be attached", async () => {

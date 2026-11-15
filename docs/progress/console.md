@@ -549,16 +549,18 @@ draft image that cannot be removed (no record has one); the count of steps `clea
 record, where no turn runs); the failure a recovery clears (the command has cleared the earlier one). Each of
 them now fails a test written by hand, as do 15 more changes in the same parts.
 
-Those tests are `tests/console/commands_by_hand.test.ts` (12 tests) and
+Those tests are `tests/console/commands_by_hand.test.ts` (13 tests) and
 `tests/console/periodic_thread_by_hand.test.ts` (6 tests). They compare with nothing of PEAR's: their
 expectations were typed from a reading of `commands.py` and `periodic_thread.py`, and their robot, records and
 clock are stand-ins of their own. They hold the table's names in order, three refusals of `run`, and that STOP
 has stopped the robot when `run` returns its promise; a Home that is admitted, from the task's end through the
 stages' phases, the plan's review and its file to the report's file, the Home status and the notice; the answer
 `home_confirm` passes on (true for `confirm: true` alone) and its refusal for another plan; the arm and the
-grippers' choice of a robot whose class has them; the four single lines of the paragraph above; and when a
-periodic thread waits (at once or after one period, a whole period after a step's end or a period after its
-start, never less than `MIN_WAIT_S`, and `close` with `JOIN_S`).
+grippers' choice of a robot whose class has them; the four single lines of the paragraph above; that `start`
+counts a new task's steps and turns from the beginning, which no record can show (the counts are 0 already on a
+new console and after a `clear`; after `disable` or a Home they are the last task's); and when a periodic thread
+waits (at once or after one period, a whole period after a step's end or a period after its start, never less
+than `MIN_WAIT_S`, and `close` with `JOIN_S`).
 
 ### Fixes of the commands' port
 
@@ -691,7 +693,7 @@ session; `clear` leaving the session; `resume` without the recording; an operato
 
 Four passed, and each changes nothing these scenarios can show: `start` not resetting the count of steps (a new
 console's is 0, and `clear` has reset it before the second `start`; a `start` after `disable` or after Home
-would show it); the recording started after the launch (the port's worker begins on a later microtask, so the
+would show it, and a test written by hand holds that line now); the recording started after the launch (the port's worker begins on a later microtask, so the
 recording is started before the worker's first step either way; in PEAR the two would race); the interrupted
 turn's phase set to another word at the turn's end (the record of the interruption sets it again before the
 step ends, in PEAR as here); `clear` taking the latch into account for its phase (no scenario clears under the
