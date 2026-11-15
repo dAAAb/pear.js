@@ -353,7 +353,7 @@ reservations". Its ten findings, and what became of each:
 | 4 | `actions.ts`: the shown input cut at 50 characters, not 50 bytes; keys that read as an index come first | differences | the same section |
 | 5 | an observation handed back with other measured joints is accepted and moves the arm elsewhere | equal to PEAR | run on PEAR and pinned; through the adapter one defect was found and fixed ("By hand") |
 | 6 | planning holds the page's one thread | real time | deliberate difference 16; "Not verified"; "Left" |
-| 7 | `AgentRobotAdapter`: what no test reaches | test gaps | the observation it hands back: "By hand"; the rest (the cancellation of `waitStationary`, the frame encoder, the snapshot of `failureResult`): "Left" |
+| 7 | `AgentRobotAdapter`: what no test reaches | test gaps | the observation it hands back: "By hand"; the cancellation of `waitStationary`, the frame encoder, the snapshot of `failureResult` and the cameras: "By hand, second part" |
 | 8 | a handler or an approval that never settles keeps the robot taken for good | equal to PEAR, easier on a page | deliberate difference 4; what a handler can do was run on PEAR and pinned ("By hand") |
 | 9 | `close()` during an action can reject although it has closed the arm | equal to PEAR by reading | deliberate difference 15; pinned ("By hand") |
 | 10 | statements of this note that did not hold | | corrected: "State", "Left", "Deliberate differences", the re-exports, `BREAKAGE.md` |
@@ -462,6 +462,27 @@ R05, R06 and H02 to fail nothing.
 **Counts.** The four files of this part add 66 tests (`observation` 34, `periods` 7, `handlers` 23, `close` 2), of
 which `periods.test.ts` takes about 2 s.
 
+**By hand, second part: the cameras, the adapter, the session's edges.** Four more files of expectations written
+by hand, each with the rows of a run of PEAR's own classes at its top. No source file changed for them: every row
+that PEAR gave is what pear.js does.
+
+- `cameras.test.ts` (18): PEAR's `CameraFeed` holds one lock over every read, preview, new reader and close, and
+  its `WristCamera` hands on a copy of each frame; the port's queue and its copy are held to the rows that PEAR's
+  feed gave with threads (reads at once, a read while a close is pending, a reader replaced while a read is under
+  way, a reader that reuses its buffer). PEAR's lock promises no order among waiting calls; the port serves them in
+  the order they were made.
+- `adapter.test.ts` (23): the frame encoder is to pear.js what the saving of the JPEG files is to PEAR, and a
+  failure there ends a step as PEAR's does when its message cannot be built: the loop stops the robot and throws,
+  and no turn is counted (the adapter alone does not stop the arm; the turn loop over it does). An encoder's
+  result that is no JPEG is refused by the loop with the same ending. The cancellation of a wait, a failure's
+  result at a snapshot, and copies of an observation of another session or operation are pinned too.
+- `session.test.ts` (13): a control loop closed under the robot reads OFF; an open that fails closes what it
+  opened; every open makes the configurations again; `modelState` refuses a state that is no number with pydantic's
+  text; a stop while Home observes is refused as PEAR refuses it ("Observation invalidated by another operation",
+  not the guard's later text).
+- `guards.test.ts` (8): a progress handler that stops the robot at "Executing" of an action with no arm move gets
+  `failed` and no further camera read.
+
 ### PEAR's records for the guards of motion
 
 No new record showed a difference between the port and PEAR: the seven new sessions and the 82 new cases (listed
@@ -523,27 +544,26 @@ its own. They are what a page gets that calls the robot with an action it made i
 
 ### The audit's breaks, run again
 
-The audit's 225 breaks, each alone, on the merged state against `tests/station-robot` (4,966 tests; every file
-restored): 4 could not be made, because the lines they change were rewritten (A05, A22 and A24 in `actions.ts`,
-which were made again on the new lines and fail a test there, as do 16 further breaks of those lines; the
-adapter's R54); of the other 221, **200 fail a test and 21 fail nothing** (in the audit: 167 and 58). No break that
-the audit saw noticed went unnoticed. The two files as they were before their fixes fail the new tests: the old
-`actions.ts` 359 of them, the old adapter 5. Of the 58:
+The audit's 225 breaks, each alone, against `tests/station-robot` as it is now (5,028 tests; every file restored):
+4 can no longer be made, because the lines they change were rewritten (A05, A22 and A24 in `actions.ts`, which
+were made again on the new lines and fail a test there, as do 16 further breaks of those lines; the adapter's R54,
+made again in the new code and failing two tests); of the other 221, **214 fail a test and 7 fail nothing** (in
+the audit: 167 and 58). No break that the audit saw noticed went unnoticed. The two files as they were before
+their fixes fail the new tests: the old `actions.ts` 359 of them, the old adapter 5. Of the audit's 58:
 
-- 36 fail a test now: 28 of the 35 that would change what a real arm or an operator gets, and 8 of the 14 that
-  show only at an exact bound or in a refusal's order.
-- 21 still fail nothing: the nine for which nothing can differ in the port (E07, E09, H25, R07, R20, R25, B08, E03,
-  H21: the same check follows with no wait between, or the guard raises first); six at a bound or in an order
-  (R34, R41, R42, B20, SH2, SH3); and six that a real arm or an operator would notice, all in the adapter and the
-  cameras: R49, R51, R53, C02, C04, W06 ("Left").
-- 1 is gone (R54); the breaks of the rewritten `stationObservation` are under "By hand".
+- 50 fail a test now: 36 since the records and the first part by hand, 14 more since the second part.
+- 7 still fail nothing, and for each of them nothing outside the port can differ: E09, H25, R20, R25, B08, E03, H21
+  (the check before or after is the same one with no turn of the event loop between, the code between is
+  synchronous, or the guard raises first). The audit named nine such; two of them, R07 and E07, can be told after
+  all by an action with no arm move whose handler stops the robot, and fail a test now.
+- 1 is gone (R54).
 
-**Counts after Round 4.** `tests/station-robot`: 9 files, 4,966 tests in about 3 s (before the audit: 5 files,
+**Counts after Round 4.** `tests/station-robot`: 13 files, 5,028 tests in about 3 s (before the audit: 5 files,
 4,223): `actions` 1,246, `parts` 1,745, `sessions` 75, `capstone` 21, `engine` 1,813, `observation` 34,
-`handlers` 23, `periods` 7, `close` 2. Of them 3,053 compare with PEAR's record exactly, 1,811 with pear.js's own
-kinematics within 1e-9, 22 with PEAR's answer to the input as JavaScript holds it, 12 are bookkeeping and 68 are
-written by hand (most of them from a run of PEAR by a script). The whole suite: 68 files pass, 1 skipped; 9,076
-tests pass, 4 skipped. `npx tsc --noEmit`: 0 errors.
+`handlers` 23, `periods` 7, `close` 2, `cameras` 18, `adapter` 23, `session` 13, `guards` 8. Of them 3,053 compare
+with PEAR's record exactly, 1,811 with pear.js's own kinematics within 1e-9, 22 with PEAR's answer to the input as
+JavaScript holds it, 12 are bookkeeping and 130 are written by hand (most of them from a run of PEAR by a
+script). The whole suite: 72 files pass, 1 skipped; 9,138 tests pass, 4 skipped. `npx tsc --noEmit`: 0 errors.
 
 ## Not verified
 
@@ -679,8 +699,7 @@ From the independent audit (the numbers are its findings; Round 4 has the table)
 
 - 1: the interleavings that no test runs: a fault of the arm, a recovery or a joint chunk while control periods are
   under way; and anything on a real line.
-- 2: six breaks that show only at an exact bound or in a refusal's order still fail nothing (R34, R41, R42, B20,
-  SH2, SH3); "Home target changed" is reached by no session; an action's own waits are pinned from below only.
+- 2: "Home target changed" is reached by no session; an action's own waits are pinned from below only.
 - 3 and 4: **a lone surrogate is refused with another text than PEAR's** (found in Round 4, not fixed). For a JSON
   `"\ud800"` as a literal's value PEAR says `Input should be a valid string, unable to parse raw data as a unicode
   string [type=string_unicode, ...]` and pear.js `Input should be 'open' or 'close' [type=literal_error, ...]`; as a
@@ -689,14 +708,15 @@ From the independent audit (the numbers are its findings; Round 4 has the table)
   Both refuse and nothing moves. Deliberate difference 17 is held by no fixture. A hole of a sparse array is read
   as `undefined` by the list's validation (JSON gives none; no test).
 - 6: planning on a slow device was not measured and nothing was changed (deliberate difference 16).
-- 7: of `AgentRobotAdapter`, no test reaches the cancellation of `waitStationary` (the audit's break R49), a frame
-  encoder that is not awaited, throws, takes long or returns no bytes (R51; the encoder's result is handed on
-  unchecked), and the snapshot of `failureResult` (R53). Of the cameras: a read or a new reader that does not wait
-  its turn, a read during a pending close (C02, C04), and a reader that reuses its buffer (W06).
+- 7: a cancellation that is set while `waitStationary` is already waiting (the rows are of one set before); the
+  turn loop with an encoder that takes long (pinned at the adapter only).
 - 9: PEAR's side of a `close()` that rejects is from reading; its stepped rig cannot make that interleaving.
-- The rows of `tests/station-robot/observation.test.ts` are a run of PEAR by a script that is not in the
-  repository (it imports `tools/fixtures/robot_fixtures.py` for its rig); if it is to be run again with a new PEAR
-  it belongs under `tools/`.
+- `modelState` of a joint vector of fewer than six entries: PEAR raises `IndexError: list index out of range`,
+  pear.js pydantic's text for `gripper.width`. Only a caller that hands a short vector meets it.
+- The rows of the files written by hand (`observation`, `handlers`, `cameras`, `adapter`, `session`, `guards`) are
+  runs of PEAR by scripts that are not in the repository (all but the cameras' import
+  `tools/fixtures/robot_fixtures.py` for its rig); if they are to be run again with a new PEAR they belong under
+  `tools/`.
 
 If PEAR is updated: run `tools/fixtures/robot_fixtures.py` in the new environment,
 then `npx vitest run tests/station-robot/parts.test.ts`, `sessions.test.ts` and `capstone.test.ts` one at a time,

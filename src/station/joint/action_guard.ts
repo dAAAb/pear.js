@@ -3,6 +3,13 @@
 // PEAR's guard takes the control loop's lock around each check and each submission, so that no stop, fault or other
 // operation falls between a check and what follows it. A page has one thread: what runs between two awaits is
 // already indivisible, so the guard takes no lock, and a submitted method must do its work before it first awaits.
+//
+// PEAR's lock does one thing more, which this guard does not: it keeps a check and a submission out of a control
+// period. Here both can run while a period is suspended at an await of its driver, and the operation a submission
+// begins is then taken up by that period or by the next. That this is safe rests on the control loop, which treats
+// such a call as one made just before the period or just after it (tests/station-loop/interleaving.test.ts and
+// sweep.test.ts; with a robot above it, tests/station-robot/periods.test.ts; docs/progress/robot.md, deliberate
+// difference 3).
 
 import { ControlState, type ControlSnapshot } from "../schemas";
 import { OperatorPaused, RuntimeError, type Cancellation } from "./errors";
