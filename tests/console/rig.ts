@@ -740,7 +740,7 @@ export class ConsoleRig implements RigHooks, CallContext, ConsoleStation {
   private drawn: Ids = { task_run: [], session: [], robot: [] };
   private pending: Array<Promise<void>> = [];
   private turns: Array<{ model: ScriptOperation[] }> = [];
-  private hooks: ScriptHook[] = [];
+  protected hooks: ScriptHook[] = [];
   private phases: string[] = [];
   private modelInputs: ModelInput[] = [];
   private firstEventId = 1;

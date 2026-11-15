@@ -33,8 +33,12 @@ it (in `calls`, below) and answers None unless said here:
   annotations    update answers None (no scenario has tags, so it is not called)
   health_checks  get answers None (asked only for a task with images)
 
-Not here: the console's watchdog (so the phase Stopping that a pause leaves is never settled into an idle phase),
-the page's service and its lease, the real recordings and the preview's encoders.
+The watchdog is PEAR's Watchdog (watchdog.py) made without its constructor, which starts its thread: nothing
+checks by itself, so the phase Stopping that a pause leaves stays until a step {"op": "watchdog_check"}, which
+calls PEAR's Watchdog._check() once, on the main thread (in PEAR it runs every Watchdog.PERIOD_S on a thread of
+its own, so there the phase settles at some moment after the worker has ended, not at a step of the operator's).
+
+Not here: the page's service and its lease, the real recordings and the preview's encoders.
 
 Deterministic: time.monotonic and time.sleep are the stand-in clock (a new one for every scenario, first reading
 meta.start_s; a sleep steps the control loop once); `time` of console.py, task_run.py and commands.py is replaced,
@@ -44,15 +48,18 @@ clients/schemas.py (the session's episode, a frame's uuid) and of control/robot.
 observations) are seeded sequences, new for every scenario. Two runs give the same bytes, and so does a run with
 --dwell-s.
 
-The threads. "main" gives the commands; "worker" is the console's worker; "model" is any other thread, which here
-is the thread in which the session asks the scripted model (the model's events are published from it).
+The threads. "main" gives the commands; "worker" is the console's worker (every Console.launch starts a new
+thread of that name: a task's loop after `start` and after each `resume`, and the operation of `clear`); "model"
+is any other thread, which here is the thread in which the session asks the scripted model (the model's events
+are published from it).
 
 The order of the two threads. A command is given on the main thread while the worker runs a turn. The script
 chooses the moment: a hand-over, {"do": "hand_over", "point": name}, in the scripted model's answer (or as a
 hook's action inside Console.emit), stops that thread at the named point until the main thread has given its
 commands there. The record of a step is taken when the worker has ended (`until` "ended": the main thread has
-joined it) or when it waits at a point (`until` the point's name). What the record of a command given during a
-turn pins:
+joined it) or when it waits at a point (`until` the point's name). A command given at a point and recorded at
+the same point (`at` and `until` are equal) leaves the worker waiting there: a command that is refused while the
+worker runs. What the record of a command given during a turn pins:
 
   1. before the command: the worker has opened the turn and waits for the model's answer; the model has reported
      what its script says before the hand-over and the loop has looked at the robot's hold at least once
@@ -78,6 +85,22 @@ PEAR's, in PEAR's order. So a test may hold the order within each thread as PEAR
 threads (the events' ids, a call's `after_event`, the stand-in clock) as this script's choice among the orders
 PEAR allows.
 
+A command given while an action moves the arm. A hook {"on": "phase", "phase": "Executing", "do": "hand_over",
+"point": name, "after_sleeps": n} hands over n control periods after the event that announces the action, inside
+the worker's sleep of the stand-in clock within robot.execute (not inside Console.emit): the arm is moving, and
+the record of the step before shows the robot's status word BUSY and the call of execute not yet ended. The
+command (`stop`) runs whole on the main thread while the worker is held there: PEAR's robot lets a second thread
+ask for the stop meanwhile, and robot.stop() steps no control period (stop_request_seconds is 0.0). The worker
+goes on when the command has returned: the control periods in which the arm brakes and settles are the worker's
+(the step's clock.sleeps), execute ends with the robot's own result of the stopped action, and no request of the
+model is open, so no event of the model's thread follows the command.
+
+A command that stops the worker itself. `clear` given while the task runs waits for the worker inside the command
+(Commands._stop_before joins it), so the worker must leave its point before the command has returned: such a step
+says `release` "stopped", and the worker leaves when Console.stop() has returned and its cancellation is set. The
+rest is PEAR's own order: the first worker ends, then the main thread waits for the robot to settle and launches
+the command's operation on a second worker.
+
 The kinematics. The answers of PEAR's kinematics (SO101Kinematics.joint_target) are in every step's `ik`, as
 tools/fixtures/robot_fixtures.py records them (its Rig), so a test can give the port's robot PEAR's joint targets
 in the place of its own solver's. Not recorded: the values of the C library that PEAR's other arithmetic reads.
@@ -95,11 +118,17 @@ The file: {"meta": {...}, "scenarios": [...]}, one scenario a line. A scenario:
   console_before, robot_status_before, ik_before
                the console's fields (as a step's `console`), the robot's status word and the kinematics' answers
                (as a step's `ik`) before the first step
-  steps        in order, each one command:
+  steps        in order, each one command or one check of the watchdog:
+    op         only in a step that is no command, and then its first key: "watchdog_check", PEAR's
+               Watchdog._check() once on the main thread; such a step's `command`, `data` and `returned` are
+               null, and `raised` is what _check() raised
     command, data  the command's name and data, as Commands.run(name, data) is given them
     at         null, or the point at which the worker waits while the command is given
     until      "ended": the record is taken when the worker has ended (or there is none); else the point at which
                the worker waits when the record is taken
+    release    only in a step whose command stops the running operation and waits for its worker itself
+               (Commands._stop_before): "stopped", the worker leaves its point when Console.stop() has returned,
+               inside the command, and no longer when the command has returned
     script     what the step sets of the scripted model: `turns` (the model's requests from this step on, in
                order, each {"model": [operations]} as in console_fixtures.py, with the hand-over besides) and
                `hooks` (as in console_fixtures.py); absent keys leave what an earlier step set
@@ -144,6 +173,7 @@ import argparse
 import copy
 import gzip
 import hashlib
+import itertools
 import json
 import sys
 import tempfile
@@ -164,10 +194,12 @@ import console_core_fixtures as core  # noqa: E402  (the stand-in that records t
 import robot_fixtures  # noqa: E402
 
 from pear.deploy.station.gui.console import commands as commands_module  # noqa: E402
+from pear.deploy.station.gui.console import console as console_module  # noqa: E402
 from pear.deploy.station.gui.console.commands import Commands  # noqa: E402
 from pear.deploy.station.gui.console.console import Console  # noqa: E402
 from pear.deploy.station.gui.console.lease import ControlLease  # noqa: E402
 from pear.deploy.station.gui.console.task_run import RECORD_URL  # noqa: E402
+from pear.deploy.station.gui.console.watchdog import Watchdog  # noqa: E402
 from pear.deploy.station.records.task_files import TaskFiles  # noqa: E402
 
 REPOSITORY = Path(__file__).resolve().parents[2]
@@ -177,6 +209,8 @@ PACK_ABOVE_BYTES = 300_000  # a larger file is written as gzip (NAME + ".gz"), a
 NUMBER_BASE = 700  # a scenario's number in the rig's seeds is this plus its place: sequences of this file's own
 THREADS = ("main", "worker", "model")
 ENDED = "ended"  # a step's `until`: the worker has ended
+CHECK = "watchdog_check"  # a step's `op`: PEAR's Watchdog._check() in the place of a command
+STOPPED = "stopped"  # a step's `release`: the worker leaves its point when Console.stop() has returned
 PLACEHOLDER = "placeholder"  # the folder the rig's constructor makes for a task; no task is there before `start`
 WAIT_S = task_rig.WAIT_S  # (on the machine's clock) the longest this script waits for another thread
 REAL_MONOTONIC = task_rig.REAL_MONOTONIC
@@ -218,6 +252,7 @@ class Stage(task_rig.Stage):
         self.raises: dict[str, Any] | None = None  # (a stand-in reads it: no call of one fails here)
         self.reached, self.released = threading.Event(), threading.Event()
         self.point: str | None = None  # where the worker waits for the main thread
+        self.is_released_by_stop = False  # (a step's `release`) the worker leaves its point as stop() returns
         self.dwell_s = dwell_s
         super().__init__(rig, monkeypatch, number, root, {"id": PLACEHOLDER})
         (root / PLACEHOLDER).rmdir()
@@ -230,6 +265,11 @@ class Stage(task_rig.Stage):
         monkeypatch.setattr(
             commands_module, "time", SimpleNamespace(time=self.wall.time, monotonic=lambda: time.monotonic())
         )
+
+        # console.py names the record of a fault or of a failed Home by time.time_ns(), which the task run's rig
+        # gives its stand-in `time` no reading of; no scenario here reaches one yet
+        ns_counter = itertools.count(int(task_rig.WallClock.START_S * 1_000_000_000), 1_000_000)
+        console_module.time.time_ns = lambda: next(ns_counter)
 
         # what Commands, Console.launch and Console._operate read besides what the task run's rig gives a console
         console.worker = None
@@ -244,6 +284,8 @@ class Stage(task_rig.Stage):
         console.preview = core.StandIn(self, "preview", is_encoding=True, error_text=None)
         console.recordings = Recordings(self, "recordings", is_enabled=True, active_segment=None)
         console.commands = Commands(console)
+        self.watchdog = object.__new__(Watchdog)  # PEAR's own, without its thread: a step calls its _check
+        self.watchdog.console = console
 
         emit, stop = console.emit, console.stop  # PEAR's own, which still run
         set_phase = Console.set_phase.__get__(console)  # PEAR's own, in the place of the rig's recording one
@@ -268,6 +310,10 @@ class Stage(task_rig.Stage):
             finally:
                 console.cancellation = cancellation
                 cancellation.set()
+                if self.is_released_by_stop and self.point is not None:
+                    # the command itself waits for the worker to end: the worker leaves its point here
+                    self.point = None
+                    self.released.set()
 
         console.emit = recorded_emit
         console.set_phase = recorded_set_phase
@@ -347,10 +393,15 @@ class Stage(task_rig.Stage):
         self.dwell()
         first_event = console.last_event_id
         returned = raised = None
+        self.is_released_by_stop = spec.get("release") == STOPPED
         try:
-            returned = console.commands.run(spec["command"], copy.deepcopy(spec["data"]))
+            if spec.get("op") == CHECK:
+                self.watchdog._check()  # noqa: SLF001
+            else:
+                returned = console.commands.run(spec["command"], copy.deepcopy(spec["data"]))
         except Exception as error:  # noqa: BLE001
             raised = {"type": type(error).__name__, "message": str(error)}
+        self.is_released_by_stop = False
         self.dwell()
 
         until = spec["until"]
@@ -421,10 +472,12 @@ class Stage(task_rig.Stage):
 
         return self.scrubbed(
             {
-                "command": spec["command"],
-                "data": spec["data"],
+                **({"op": spec["op"]} if "op" in spec else {}),
+                "command": spec.get("command"),
+                "data": spec.get("data"),
                 "at": spec.get("at"),
                 "until": spec["until"],
+                **({"release": spec["release"]} if "release" in spec else {}),
                 "script": {key: spec[key] for key in ("turns", "hooks") if key in spec},
                 "returned": None if returned is None else core.plain(returned),
                 "raised": raised,
@@ -489,6 +542,11 @@ class Scenarios:
     """The scenarios of PEAR's Commands running a task, in the order a task goes through them."""
 
     ASKED = "turn 3: the model is asked"  # the point at which the first scenario's pause is given
+    # the second scenario's points
+    SECOND = "turn 2: the model is asked"
+    RESUMED = "turn 4: the model is asked"
+    AGAIN = "the second task's turn 2: the model is asked"
+    MOVING = "turn 1: the action moves the arm"  # ten control periods into the action, inside its next sleep
 
     def __init__(self, rig: Any, monkeypatch: pytest.MonkeyPatch, directory: Path, dwell_s: float) -> None:
         self.rig = rig
@@ -525,18 +583,27 @@ class Scenarios:
 
         return recorded
 
-    def all(self) -> list[dict[str, Any]]:
-        lift = turn(task_rig.Scenarios.LIFT)  # a small move: half a centimetre up
-        grip = turn(action(-1.0), "Close the gripper.")  # a gripper action: the arm stays where it is
-        asked = {
+    @staticmethod
+    def asked(point: str) -> dict[str, Any]:
+        """A request during which the main thread gives commands: the model reports, waits until the loop has
+        looked at the robot's hold, hands over at ``point``, then waits until the loop stops its request and
+        answers."""
+        return {
             "model": [
                 {"emit": ["reasoning_delta", {"text": "Still thinking.", "reasoning_kind": "full"}]},
                 {"do": "wait_watch"},
-                {"do": "hand_over", "point": self.ASKED},
+                {"do": "hand_over", "point": point},
                 {"do": "wait_stop"},
                 *says(action(z=0.5), ""),
             ]
         }
+
+    def all(self) -> list[dict[str, Any]]:
+        lift = turn(task_rig.Scenarios.LIFT)  # a small move: half a centimetre up
+        grip = turn(action(-1.0), "Close the gripper.")  # a gripper action: the arm stays where it is
+        asked = self.asked(self.ASKED)
+        check = {"op": CHECK, "until": ENDED}
+        rise = turn("Higher.\n" + action(z=1.5), "A longer move.")  # a move of many control periods
 
         return [
             self.play(
@@ -557,6 +624,107 @@ class Scenarios:
                         "until": self.ASKED,
                     },
                     {"command": "pause", "data": {}, "at": self.ASKED, "until": ENDED},
+                ],
+            ),
+            self.play(
+                "pause, the watchdog's check, resume, a resume refused, pause, clear, start again",
+                "commands.py: `start` (219 to 277) and, while the second turn's model is asked, `pause` (111 to 113), "
+                "as in the first scenario: the turn ends as interrupted and the session is kept (task_run.py 109 to "
+                "112). watchdog.py: a check (_check, 30 to 66) that has nothing else to do settles the phase "
+                "Stopping into the idle phase of a ready robot that has a task, Paused (58 to 66), on the thread "
+                "that checks. commands.py: `resume` (279 to 290) starts the recorded loop again (424 to 438: a new "
+                "cancellation, recordings.start, Console.launch); task_run.py: run (64 to 112) finds the session "
+                "and no resume pending (72 to 75), so no session is opened and no event session is published: turn "
+                "3 opens in the same episode, its request tells the model of the interrupted turn (the previous "
+                "execution's error OperatorPaused), it completes, and turn 4's model is asked. A second `resume` "
+                "given there is refused because the worker runs (commands.py 86 and 87) and changes nothing: no "
+                "event, phase, call, file or reading of a clock. `pause` again; then `clear` (292 to 294; nothing "
+                "runs, so _stop_before, 84 and 85, is not called) launches _clear_task (296 to 305) on a new "
+                "worker: the session is closed, the event task_end is saved in the task's events.jsonl, task, "
+                "total_steps, active_attempt_id and active_turn are reset (turn_number is not: _start resets it, "
+                "274) and the phase is the idle phase of a ready robot without a task, Holding (305); _operate "
+                "has no recording to stop (console.py 257). `start` again (commands.py 223: no task is there) "
+                "makes a new task id and a second folder beside the first under the same root, opens a new session "
+                "(task_run.py 74 and 75) and counts the turns from 1; a last `pause` ends the worker",
+                [
+                    {
+                        "command": "start",
+                        "data": {"instruction": "Lift the cube."},
+                        "turns": [lift, self.asked(self.SECOND)],
+                        "until": self.SECOND,
+                    },
+                    {"command": "pause", "data": {}, "at": self.SECOND, "until": ENDED},
+                    check,
+                    {"command": "resume", "data": {}, "turns": [grip, self.asked(self.RESUMED)], "until": self.RESUMED},
+                    {"command": "resume", "data": {}, "at": self.RESUMED, "until": self.RESUMED},
+                    {"command": "pause", "data": {}, "at": self.RESUMED, "until": ENDED},
+                    {"command": "clear", "data": {}, "until": ENDED},
+                    {
+                        "command": "start",
+                        "data": {"instruction": "Lift the cube again."},
+                        "turns": [lift, self.asked(self.AGAIN)],
+                        "until": self.AGAIN,
+                    },
+                    {"command": "pause", "data": {}, "at": self.AGAIN, "until": ENDED},
+                ],
+            ),
+            self.play(
+                "clear while the task runs",
+                "commands.py: `clear` is given while the second turn's model is asked: the worker runs, so run (84 "
+                "and 85) calls _stop_before (99 to 109) on the main thread: Console.stop with the reason "
+                "\"Stopping before clear\" (103; console.py 109 to 131: robot.stop, the phase Stopping, "
+                "recordings.stop with that reason, the event stopping), then the join of the worker (105), which "
+                "ends the turn as interrupted (task_run.py 109 to 112), sets the phase Stopping and stops the "
+                "recording with \"Task paused\" (console.py 241, 242, 257 and 258), then robot.wait_settled, the "
+                "robot being neither off nor faulted (108 and 109). Nothing runs any more (86), so _clear (292 to "
+                "294) launches _clear_task (296 to 305) on a new worker: the session is closed, the event task_end "
+                "is saved, the task's fields are reset and the phase is the idle phase without a task (305)",
+                [
+                    {
+                        "command": "start",
+                        "data": {"instruction": "Lift the cube."},
+                        "turns": [lift, self.asked(self.SECOND)],
+                        "until": self.SECOND,
+                    },
+                    {"command": "clear", "data": {}, "at": self.SECOND, "release": STOPPED, "until": ENDED},
+                ],
+            ),
+            self.play(
+                "STOP MOTION while an action moves the arm, reset, resume",
+                "commands.py: `stop` (115 to 117; immediate: 81 and 82) is given ten control periods into the first "
+                "turn's action, while the worker is inside robot.execute and the arm moves: Console.stop with "
+                "is_latching and the reason \"STOP MOTION activated\" (console.py 109 to 131: robot.stop, the latch "
+                "at 121 and 122, the phase Stopping, recordings.stop with that reason, the event stopping); the "
+                "action ends where the arm stopped, the turn ends as interrupted (task_run.py 109 to 112) and the "
+                "worker ends (console.py 241, 242, 257 and 258). `resume` is refused by the latch (commands.py 88 "
+                "and 89) and changes nothing. watchdog.py: the check settles the phase Stopping into the idle "
+                "phase of a latched console, Stopped (58 to 66). commands.py: `reset_stop` (125 to 139) releases "
+                "the latch of the stopped, stable robot and shows the idle phase of a task, Paused (134 to 137). "
+                "`resume` (279 to 290) runs the task's turns again in its session: turn 2's request tells the "
+                "model of the action that was stopped (the previous execution failed, not reached, with the error "
+                "OperatorPaused); a `pause` while that model is asked ends the worker",
+                [
+                    {
+                        "command": "start",
+                        "data": {"instruction": "Lift the cube."},
+                        "turns": [rise],
+                        "hooks": [
+                            {
+                                "on": "phase",
+                                "phase": "Executing",
+                                "do": "hand_over",
+                                "point": self.MOVING,
+                                "after_sleeps": 10,
+                            }
+                        ],
+                        "until": self.MOVING,
+                    },
+                    {"command": "stop", "data": {}, "at": self.MOVING, "until": ENDED},
+                    {"command": "resume", "data": {}, "until": ENDED},
+                    check,
+                    {"command": "reset_stop", "data": {}, "until": ENDED},
+                    {"command": "resume", "data": {}, "turns": [self.asked(self.SECOND)], "until": self.SECOND},
+                    {"command": "pause", "data": {}, "at": self.SECOND, "until": ENDED},
                 ],
             ),
         ]

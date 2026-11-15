@@ -10,16 +10,23 @@
 // stand-in console of that rig is not made (`console` stays unset), and `made` is the port's.
 //
 // What stands in, each recording its calls in PEAR's form and answering what the script's docstring says: the
-// recordings, the preview, the camera feed, the uploads, the annotations and the health checks. There is no
-// watchdog, as in the record.
+// recordings, the preview, the camera feed, the uploads, the annotations and the health checks. The watchdog is
+// the port's Watchdog made without its constructor, which would start its loop: nothing checks by itself, and a
+// step {"op": "watchdog_check"} calls its check once on the main thread, as the script calls PEAR's _check.
 //
 // The threads. PEAR's three (`main` gives the commands, `worker` is the console's worker, `model` is the thread in
 // which the session asks the scripted model) are one thread here; an async context tells them apart, as
 // console_rig.ts does: one around what Console.launch starts, one around the scripted model's request.
 //
-// The hand-over. {"do": "hand_over", "point": name} in the scripted model's answer holds the model's request until
-// the main thread has given its commands there: a step whose `until` is a point ends when the request waits at
-// it, and the next step gives its command and then lets the request go on.
+// The hand-over. {"do": "hand_over", "point": name} holds a thread at the named point until the main thread has
+// given its commands there: a step whose `until` is a point ends when the thread waits at it, and the next step
+// gives its command and then lets it go on. In the scripted model's answer it holds the model's request (the
+// worker is idle in the session's watch loop). As a hook with `after_sleeps` it holds the worker inside a sleep of
+// the stand-in clock within the robot's execute, that many control periods after the hook's event: the arm moves,
+// and the control period of that sleep has been stepped. A command given at a point and recorded at the same
+// point (`at` equals `until`) leaves the thread there: a command that is refused. A step with `release` "stopped"
+// lets the thread go on inside the command, when Console.stop() has returned and the worker's cancellation is
+// set: a command that stops the running operation and waits for its worker itself (Commands' stopBefore).
 //
 // The order between the threads. The port's Console.stop sets the cancellation at its first line, as PEAR's does.
 // The fixture script wrapped PEAR's: stop() runs with a cancellation of the script's own, and the worker's is set
@@ -39,6 +46,7 @@ import { resultRecord } from "../../src/agent/robot";
 import { Commands, type CommandsConsole, type CommandsRobot } from "../../src/console/commands";
 import { Console, type ConsoleOptions } from "../../src/console/console";
 import { Phase } from "../../src/console/phase";
+import { Watchdog } from "../../src/console/watchdog";
 import type { ModelState, SingleArmDelta } from "../../src/protocol/types";
 import { pythonErrorMessage, pythonErrorName } from "../../src/python/errors";
 import { SO101Robot } from "../../src/so101/robot";
@@ -56,6 +64,7 @@ import {
   type PublishedEvent,
   type RobotCall,
   type RecordedScenario,
+  type ScriptHook,
   type ScriptOperation,
 } from "./rig";
 
@@ -83,13 +92,18 @@ export interface RecordedAnswer {
   out: Outcome<number[]>;
 }
 
-/** One command of a scenario and what PEAR's console left after it. */
+/** One step of a scenario, a command or a check of the watchdog, and what PEAR's console left after it. */
 export interface TaskCommandsStep {
-  command: string;
-  data: Record<string, unknown>;
+  /** Only in a step that is no command: "watchdog_check". */
+  op?: string;
+  /** The command and its data; null in a step that is no command. */
+  command: string | null;
+  data: Record<string, unknown> | null;
   at: string | null;
   until: string;
-  script: { turns?: Array<{ model: ScriptOperation[] }>; hooks?: unknown[] };
+  /** "stopped": the thread at the point `at` goes on when Console.stop() has returned, inside the command. */
+  release?: string;
+  script: { turns?: Array<{ model: ScriptOperation[] }>; hooks?: ScriptHook[] };
   returned: Record<string, unknown> | null;
   raised: { type: string; message: string } | null;
   events: Record<string, unknown>[];
@@ -148,7 +162,7 @@ export function loadTaskCommandsFixture(): TaskCommandsFixture {
 }
 
 /** What a step of the replay made: every part of a step's record but its script and PEAR's kinematics' answers. */
-export type StepMade = Omit<TaskCommandsStep, "command" | "data" | "at" | "until" | "script" | "ik">;
+export type StepMade = Omit<TaskCommandsStep, "op" | "command" | "data" | "at" | "until" | "release" | "script" | "ik">;
 
 /** What the rig is before the first step, as the scenario's `..._before` give it. */
 export interface MadeBefore {
@@ -222,12 +236,18 @@ export class TaskCommandsRig extends ConsoleRig {
   private readonly idQueues: JoinedIds = { task_run: [], session: [], robot: [], commands: [] };
   private idsDrawn: JoinedIds = { task_run: [], session: [], robot: [], commands: [] };
   private stepTurns: Array<{ model: ScriptOperation[] }> = [];
-  /** The names of the frames the model was sent so far, and each file's record at the step before. */
-  private readonly frameNames: string[] = [];
+  /** The names of the frames the model was sent so far, by the task whose turn sent them (the port's loop writes
+   * no frame: a frame is a file of its task by its name), and each file's record at the step before. */
+  private readonly frameNames = new Map<string, string[]>();
   private filesBefore = new Map<string, string>();
   private readonly answers = new Map<string, Outcome<number[]>>();
-  /** The point at which the model's request waits, and what lets it go on. */
+  /** The point at which a thread waits (the model's request, or the worker inside the robot's execute), and what
+   * lets it go on. */
   private waiting: { point: string; release: () => void } | null = null;
+  /** The point whose thread goes on when Console.stop() has returned (a step's `release` "stopped"). */
+  private releaseAtStop: string | null = null;
+  /** The port's watchdog, made without its constructor: it checks at a step, never by itself. */
+  private watchdog!: Watchdog<ModelState, SingleArmDelta>;
 
   private constructor(
     private readonly given: TaskCommandsMeta,
@@ -438,7 +458,7 @@ export class TaskCommandsRig extends ConsoleRig {
             uuid: () => this.drawId("commands"),
           },
         )),
-      watchdog: () => ({ close: async () => undefined }), // (the record's rig has no watchdog)
+      watchdog: () => ({ close: async () => undefined }), // (no loop that checks by itself: see `watchdog` below)
       wallClock: () => this.wallClock(),
       clock: () => this.monotonic(),
       timeNs: () => this.timeNs(),
@@ -479,11 +499,22 @@ export class TaskCommandsRig extends ConsoleRig {
       } finally {
         console.cancellation = workers;
         this.threads.run("worker", () => workers.abort());
+        if (this.releaseAtStop !== null) {
+          // a command that waits for the worker itself: the thread at the point goes on now, inside the command
+          const point = this.releaseAtStop;
+          this.releaseAtStop = null;
+          this.release(point);
+        }
       }
     };
 
     this.made = console;
     this.taskRun = console.taskRun;
+
+    // PEAR's Watchdog made without its constructor (the script: object.__new__(Watchdog), its console set)
+    const watchdog = Object.create(Watchdog.prototype) as Watchdog<ModelState, SingleArmDelta>;
+    Object.defineProperty(watchdog, "console", { value: console, enumerable: true });
+    this.watchdog = watchdog;
   }
 
   // ---- what the robot, the traced robot and the scripted model ask of the rig ----
@@ -494,6 +525,13 @@ export class TaskCommandsRig extends ConsoleRig {
 
   override lastEventId(): number {
     return this.made === undefined ? 0 : this.made.lastEventId;
+  }
+
+  /** Whether a hook acts on the thread that asks. A call of the robot from the main thread while a hook holds the
+   * worker inside the robot's execute is the operator's command, and it is in the record: the script keeps the
+   * robot's calls by thread, where the task run's script told a call the robot makes of itself by its one thread. */
+  override isHookActing(): boolean {
+    return this.thread() !== "main" && super.isHookActing();
   }
 
   /** PEAR's kinematics' answer to this question, from the record's `ik`; a question the record does not hold is
@@ -516,6 +554,16 @@ export class TaskCommandsRig extends ConsoleRig {
   override nextTurn(modelInput: ModelInput): ScriptOperation[] {
     this.traced.holdCalls = 0;
     this.stepInputs.push(modelInput);
+    const taskId = this.made.taskRun.task?.id;
+    if (taskId !== undefined) {
+      const names = this.frameNames.get(taskId) ?? [];
+      this.frameNames.set(taskId, names);
+      for (const image of modelInput.images) {
+        if (image.name !== undefined && !names.includes(image.name)) {
+          names.push(image.name);
+        }
+      }
+    }
     const turn = this.stepTurns.shift();
     if (turn === undefined) {
       throw new Error("the model was asked more often than the steps' scripts have turns");
@@ -524,7 +572,8 @@ export class TaskCommandsRig extends ConsoleRig {
     return turn.model;
   }
 
-  /** A model's operation: the hand-over holds the request at its point; any other is rig.ts's. */
+  /** An operation of the model's answer or of a hook: the hand-over holds its thread at the point; any other is
+   * rig.ts's. */
   override async act(operation: ScriptOperation): Promise<void> {
     const given = operation as { do?: string; point?: string };
     if (given.do !== "hand_over") {
@@ -539,13 +588,22 @@ export class TaskCommandsRig extends ConsoleRig {
 
   // ---- the steps ----
 
-  /** Gives one command on the main thread, as the record's step does, and returns what it left: when the worker
-   * has ended (`until` "ended") or when the model's request waits at the point `until`. */
+  /** Does one step on the main thread, as the record's step does (a command, or a check of the watchdog), and
+   * returns what it left: when the worker has ended (`until` "ended") or when a thread waits at the point
+   * `until`. */
   async step(step: TaskCommandsStep): Promise<StepMade> {
+    if (step.op !== undefined && step.op !== "watchdog_check") {
+      throw new Error(`the rig does not know the step "${step.op}"`);
+    }
     this.queue(step.ids);
+    // (absent keys leave what an earlier step set)
     if (step.script.turns !== undefined) {
       this.stepTurns = [...step.script.turns];
     }
+    if (step.script.hooks !== undefined) {
+      this.hooks = structuredClone(step.script.hooks);
+    }
+    this.releaseAtStop = step.release === "stopped" ? step.at : null;
     this.stepEvents = [];
     this.stepPhases = { main: [], worker: [], model: [] };
     this.stepCalls = { main: [], worker: [], model: [] };
@@ -554,12 +612,21 @@ export class TaskCommandsRig extends ConsoleRig {
     let returned: StepMade["returned"] = null;
     let raised: StepMade["raised"] = null;
     try {
-      returned = (await this.commands.run(step.command, step.data)) as unknown as Record<string, unknown>;
+      if (step.op === "watchdog_check") {
+        await (this.watchdog as unknown as { check(): Promise<void> }).check();
+      } else {
+        returned = (await this.commands.run(step.command!, step.data)) as unknown as Record<string, unknown>;
+      }
     } catch (error) {
       raised = { type: pythonErrorName(error), message: pythonErrorMessage(error) };
     }
-    if (step.at !== null && step.until !== step.at) {
-      this.release(step.at); // the main thread has given its command at the point: the request goes on
+    if (this.releaseAtStop !== null) {
+      // the command was to stop the running operation and did not call Console.stop(): the thread still waits
+      this.releaseAtStop = null;
+      throw new Error(`the command ${String(step.command)} did not stop the operation that waits at "${String(step.at)}"`);
+    }
+    if (step.at !== null && step.until !== step.at && step.release === undefined) {
+      this.release(step.at); // the main thread has given its command at the point: the thread there goes on
     }
     if (step.until === "ended") {
       await this.ended();
@@ -569,11 +636,6 @@ export class TaskCommandsRig extends ConsoleRig {
 
     const taskRun = this.made.taskRun;
     const session = taskRun.session;
-    for (const image of this.stepInputs.flatMap((input) => input.images)) {
-      if (image.name !== undefined && !this.frameNames.includes(image.name)) {
-        this.frameNames.push(image.name);
-      }
-    }
 
     return {
       returned,
@@ -644,7 +706,9 @@ export class TaskCommandsRig extends ConsoleRig {
       taskIds.push(current);
     }
     const files = taskIds
-      .flatMap((taskId) => this.records.files(taskId, this.frameNames).map((file) => ({ ...file, name: `${taskId}/${file.name}` })))
+      .flatMap((taskId) =>
+        this.records.files(taskId, this.frameNames.get(taskId) ?? []).map((file) => ({ ...file, name: `${taskId}/${file.name}` })),
+      )
       .sort((one, other) => (one.name < other.name ? -1 : one.name > other.name ? 1 : 0));
     const before = this.filesBefore;
     this.filesBefore = new Map(files.map((file) => [file.name, JSON.stringify(file)]));
@@ -659,28 +723,28 @@ export class TaskCommandsRig extends ConsoleRig {
     return drawn;
   }
 
-  /** Waits, on the machine's clock, until the model's request waits at ``point``. */
+  /** Waits, on the machine's clock, until a thread waits at ``point``. */
   private async reached(point: string): Promise<void> {
     const deadline = Date.now() + WAIT_MS;
     while (this.waiting?.point !== point) {
       const console = this.made;
       if (!console.isBusy) {
         throw new Error(
-          `the worker ended before the model's request reached the point "${point}" (phase ${console.phase}, error ${String(console.error)})`,
+          `the worker ended before the point "${point}" was reached (phase ${console.phase}, error ${String(console.error)})`,
         );
       }
       if (Date.now() > deadline) {
-        throw new Error(`the model's request did not reach the point "${point}" within ${WAIT_MS / 1000} s`);
+        throw new Error(`the point "${point}" was not reached within ${WAIT_MS / 1000} s`);
       }
       await new Promise((resolve) => setTimeout(resolve, 1));
     }
   }
 
-  /** Lets the model's request that waits at ``point`` go on. */
+  /** Lets the thread that waits at ``point`` go on. */
   private release(point: string): void {
     const waiting = this.waiting;
     if (waiting === null || waiting.point !== point) {
-      throw new Error(`no request of the model waits at the point "${point}"`);
+      throw new Error(`no thread waits at the point "${point}"`);
     }
     this.waiting = null;
     waiting.release();
