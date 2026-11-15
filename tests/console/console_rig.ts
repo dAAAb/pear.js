@@ -211,8 +211,8 @@ export class ScriptedClock {
 /** The console's root in memory, under the names of PEAR's files: the records beside the tasks' folders and each
  * task's events.jsonl. */
 export class CoreRecords implements ConsoleRecords {
-  private readonly json = new Map<string, unknown>();
-  private readonly lines = new Map<string, unknown[]>();
+  protected readonly json = new Map<string, unknown>();
+  protected readonly lines = new Map<string, unknown[]>();
 
   writeJson(taskId: string, name: string, value: EventData): void {
     this.json.set(`${taskId}/${name}`, plain(value));
@@ -390,7 +390,7 @@ const WAIT_MS = 2000;
  * in around it. */
 export class ConsoleStage {
   readonly clock: ScriptedClock;
-  readonly records = new CoreRecords();
+  readonly records: CoreRecords = this.newRecords();
   readonly console: Console<ModelState, SingleArmDelta>;
   readonly taskRun: StandInTaskRun;
 
@@ -407,8 +407,8 @@ export class ConsoleStage {
   /** What the port logged (logger.exception); the record does not hold PEAR's. */
   readonly logged: unknown[][] = [];
 
-  private readonly threads = new AsyncLocalStorage<Thread>();
-  private readonly robot: StandIn;
+  protected readonly threads = new AsyncLocalStorage<Thread>();
+  protected readonly robot: StandIn;
   private readonly robotSession: { id: string | null };
   private readonly healthChecks: StandIn;
   private made: Console<ModelState, SingleArmDelta> | null = null;
@@ -506,11 +506,7 @@ export class ConsoleStage {
 
         return uuids[this.drawn++]!;
       },
-      sleep: (seconds) => {
-        this.sleeps.push(seconds);
-
-        return Promise.resolve();
-      },
+      sleep: (seconds) => this.wait(seconds),
       log: (...line: unknown[]) => {
         this.logged.push(line);
       },
@@ -537,6 +533,19 @@ export class ConsoleStage {
       setPhase(phase);
     };
     this.console = this.made = console;
+  }
+
+  /** The console's wait on a time limit: recorded, and over at once (a stage of a larger rig lets the worker end
+   * first: commands_rig.ts). */
+  protected wait(seconds: number): Promise<void> {
+    this.sleeps.push(seconds);
+
+    return Promise.resolve();
+  }
+
+  /** Makes the records in memory (a stage of a larger rig gives its own: commands_rig.ts). */
+  protected newRecords(): CoreRecords {
+    return new CoreRecords();
   }
 
   /** A scripted status of the robot: the keys the console reads. */
@@ -679,7 +688,7 @@ export class ConsoleStage {
   }
 
   /** Returns the call of the port that the step ``spec`` scripts, or null after a step of the script's own. */
-  private async callOf(spec: StepScript): Promise<(() => unknown) | null> {
+  protected async callOf(spec: StepScript): Promise<(() => unknown) | null> {
     const console = this.console;
     const review = console.homeReview;
     const has = (key: string): boolean => Object.hasOwn(spec, key);

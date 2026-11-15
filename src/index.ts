@@ -3,7 +3,7 @@
  *
  *   protocol   the texts a PEAR model reads and the action it writes
  *   agent      the model client (an OpenAI-compatible service, streamed) and the turn loop
-*   console    PEAR's operator console: the console itself, its Home review and lease, and the task run
+ *   console    PEAR's operator console: the console, its commands and watchdog, the Home review, the lease, the task run
  *   station    the station's joint layer: configuration, limits, safety monitors
  *   so101      the SO-101 arm: joint layout and default settings, kinematics, servo layer, feedforward
  *   feetech    the Feetech STS3215 serial protocol and bus, over an abstract transport

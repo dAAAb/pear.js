@@ -1,17 +1,25 @@
 # Progress: `src/console`
 
-Four files of PEAR's operator console (`pear/deploy/station/gui/console`), with the two small files they need.
+Seven files of PEAR's operator console (`pear/deploy/station/gui/console`), with the two small files they need.
 `task_run.py` is the loop around the turn loop's `step` that runs a task's turns one after another: it asks again
 after an action out of reach (up to five times), ends the run after an action that did not complete and settle,
 records an operator's pause of a turn as that turn's failed result, and reconciles a robot fault. `console.py` is
 the console itself: the state the page shows, the events, the operator's stop, and the one operation that runs at
 a time on its worker; `home_review.py` is a Home plan waiting for the operator's answer, and `lease.py` the one
-browser tab that may command the robot. Written from PEAR's source at
-`f32aa1f7c2ec9c3f45630cc9f8541b3201e8e087`, and held to records of PEAR's own classes: a test replays fifteen
-scripted scenarios of PEAR's `TaskRun` on the port, and every place of the records is the same but the last
-digits of some joints in two of them (see "How the task run was verified"); another replays twenty scripted
-scenarios of PEAR's `Console`, `HomeReview` and `ControlLease`, and every place is the same (see "The console
-itself"). The operator's commands and the watchdog are not here yet (see "Left").
+browser tab that may command the robot. `commands.py` holds the operator's commands (start, pause, resume, clear,
+STOP MOTION and its reset, enable, disable, Home and its confirmation, the recovery of control, the cameras'
+reconnection, the model, the recording); `watchdog.py` is the background check that pauses the robot when the
+browser that holds control, the recording, the cameras or the control fail, and `periodic_thread.py` the loop it
+checks on.
+
+Written from PEAR's source at `f32aa1f7c2ec9c3f45630cc9f8541b3201e8e087`, and held to records of PEAR's own
+classes by three replays, each comparing every part of every step: fifteen scripted scenarios of PEAR's `TaskRun`
+(every place of the records the same but the last digits of some joints in two of them: see "How the task run
+was verified"); twenty of PEAR's `Console`, `HomeReview` and `ControlLease` (see "The console itself"); thirty of
+PEAR's `Commands` and `Watchdog` (see "The operator's commands"). The last two stand on scripted stand-ins for
+the robot and the task run: no record yet has the commands run a task on the real robot. What the records do not
+reach is either held by tests written by hand, which compare with nothing of PEAR's, or named as not verified.
+The camera preview and the page's service are not here (see "Left"), and no page uses the console yet.
 
 ## Done
 
@@ -23,6 +31,9 @@ itself"). The operator's commands and the watchdog are not here yet (see "Left")
 | `src/console/console.ts` | `gui/console/console.py`, all 309 lines: the constants of `Console` (42 to 49), its fields (51 to 87), `phase` (89 to 92), `is_busy` (94 to 97), `action_format` (99 to 102), `set_phase` (104 to 107), `stop` (109 to 130), `snapshot` (132 to 170), `check_model` (172 to 175), `supports_reference_images` (177 to 181), `emit` (183 to 209), `launch` (211 to 232), `_operate` (234 to 260), `close` (262 to 277), `new_client` (279 to 283), `record_error` (285 to 289), `save_control_diagnostic` (291 to 305), `robot_status` (307 to 309). (The first line of each is PEAR's; each end is taken as two lines before the next begins.) |
 | `src/console/home_review.ts` | `gui/console/home_review.py`, all 62 lines: `HomeStatus` (10 to 15), `HomeReview` and its fields (18 to 25), `prepare` (27 to 34), `wait_for_decision` (36 to 53), `confirm` (55 to 62) |
 | `src/console/lease.ts` | `gui/console/lease.py`, all 52 lines: `LEASE_S` (9), the fields (11 to 15), `claim` (17 to 23), `heartbeat` (25 to 31), `require` (33 to 36), `lost_owner` (38 to 42), `release` (44 to 48), `is_expired` (50 to 52) |
+| `src/console/commands.ts` | `gui/console/commands.py`, all 438 lines: `Command` (28 to 37), the constants of `Commands` (44 to 51), the table (53 to 72), `run` (74 to 97), `_stop_before` (99 to 109), `_pause` (111), `_stop` (115), `_confirm_home` (119), `_reset_stop` (125 to 139), `_reconnect_cameras` (141), `_replace_cameras` (150), `_enable` (160), `_open_robot` (172), `_recover_control` (181), `_recover` (196 to 217), `_start` (219 to 277), `_resume` (279), `_clear` (292), `_clear_task` (296), `_disable` (307), `_close_robot` (315 to 334), `_home` (336), `_return_home` (357 to 386), `_report_home_progress` (388), `_review_home` (398), `_select_model` (407), `_set_recording` (417), `_start_recorded_loop` (424 to 438). Of `records/task_files.py`: `TASK_NAME` (17) |
+| `src/console/periodic_thread.ts` | `gui/console/periodic_thread.py`, all 58 lines: `PeriodicThread` with `MIN_WAIT_S`, `JOIN_S`, `close` (37), `_run` (42 to 58) |
+| `src/console/watchdog.ts` | `gui/console/watchdog.py`, all 93 lines: `Watchdog` with `PERIOD_S`, `THREAD_NAME`, `PHASES_WITHOUT_CAMERAS`, `close` (26), `_check` (30 to 66), `_release_lost_browser` (68), `_stop_for_fault` (77 to 93). Of `records/recording/encode_worker.py`: `SegmentStatus.FAILED` (29) as `SEGMENT_FAILED` |
 | `src/console/index.ts` | the module's exports; `src/index.ts` gives them as `console` |
 
 The private methods of PEAR (`_start_turn` ...) are private methods here under the same names in camelCase, as
@@ -394,21 +405,223 @@ id, so only a stand-in's turn shows the difference and no record does: a test wr
   reading: a call of another shape shows as a difference, but a wrong rule that matched a wrong port would not.
 - What PEAR logs (`logger.exception`) is not in the record; the port's log lines are not compared.
 
+## The operator's commands: `commands.ts`, `watchdog.ts`, `periodic_thread.ts`
+
+In the table above, the line of a method is its first; a range is given where the end was read off the source.
+PEAR's private methods are private methods here under the same names in camelCase (`_stop_before` is
+`stopBefore`).
+
+### What `Commands` and `Watchdog` are made with
+
+PEAR makes both with the console alone. Here:
+
+- `new Commands(console, options)`: `console` is a `CommandsConsole`, the `Console` whose parts have what
+  `commands.py` uses of them; `options` are `robotClass` (required: `ACTION_FORMATS`, `HOME_ARM_CHOICES`,
+  `HOME_CAN_KEEP_GRIPPERS`, which PEAR reads through the robot object and the port's robot has as static
+  members; the robot's class itself fits) and `wallClock`, `timeNs`, `uuid`, `log`.
+- `new Watchdog(console, options)`: `console` is a `WatchdogConsole`; `options` are `clock`, `sleep`, `log`, handed
+  to its `PeriodicThread`.
+- `console.ts` is unchanged. Its interfaces of the parts hold what `console.py` uses; what `commands.py` and
+  `watchdog.py` use beyond that is in interfaces that extend them: `CommandsRobot` (`open`, `waitStationary`,
+  `recover({cancellation})`, `home(options)`), `CommandsPreview` (`isEncoding`, `errorText`,
+  `reconnect(cancellation)`), `CommandsUploads` (`attach(uploadIds, owner, taskId)`, `delete(uploadId, owner)`),
+  `CommandsAnnotations` (`cleanTags(rawTags)`, `update(taskId, {tags})`), `CommandsRecordings` (`isEnabled`,
+  `start(task, cameraFeed, robotStatusReader)`), `CommandsRecords` (`createTask(taskId)`, `removeTask(taskId)`),
+  `WatchdogRecordings` (`activeSegment`, whose `snapshot()` gives `status` and `error`), `WatchdogPreview`
+  (`isEncoding`, `errorText`). A page that makes a console casts once in each factory:
+  `commands: (console) => new Commands(console as CommandsConsole, {...})`.
+
+### How the commands' Python is carried over
+
+1. `run` is an async function; what PEAR raises is its promise's rejection. Nothing is awaited before a handler
+   is called unless the command stops the running operation first. When `run` returns its promise: for `pause`
+   and `stop`, `Console.stop` has been called (the cancellation aborted, the robot's stop called); for
+   `home_confirm`, `reset_stop`, `model`, `recording`, `recover_control`, `start`, `resume` and
+   `reconnect_cameras`, all of the handler has run (an operation it launches begins on a later microtask); for
+   `enable`, its two checks and the call of the cameras' read; for `clear`, `disable` and `home`, all of the
+   handler while no operation runs, and `Console.stop` while one does.
+2. `None` is answered as `{accepted: true}`: a handler that returns `undefined` or `null`.
+3. `data or {}` is `data ?? {}`; `data.get(key, default)` reads an own key, and a key that is not there or holds
+   `undefined` gives the default. `data.get("confirm") is True` is `=== true`; `type(...) is bool` and
+   `isinstance(..., bool)` are `typeof ... === "boolean"`.
+4. `str(data.get("instruction", "")).strip()` is `pythonStrip(pythonStr(pythonValueOf(...)))`: what is no text is
+   taken as Python writes it (a JSON `null` is the instruction `None`). `len(instruction)` counts code points.
+   The text of the limit has PEAR's en dash (U+2013).
+5. `uuid4().hex` is the option `uuid` without its dashes; `time.time()` is `wallClock`; `time.time_ns()` is
+   `timeNs` (a `bigint`), in the names `home-<ns>.json` and `home-plan-<ns>.json`.
+6. The keys of a task's record in PEAR's order: `id`, `instruction`, `created`, `model`, `model_label`, then
+   `action_format` only for a robot with more than one action format, `reasoning_effort` only for a client whose
+   class names one, then `images` (always, an empty list without images).
+7. `TaskFiles(root / id).directory.mkdir()` is `records.createTask(id)`, `shutil.rmtree` of it
+   `records.removeTask(id)`, `TaskFiles.write_json(files.task_path, task)` `records.writeJson(id, "task.json",
+   task)`, and the Home's report and plan go through `records.writeRootJson`.
+8. `with console.lock` is nothing where nothing is awaited inside it (`_reset_stop`, `_reconnect_cameras`,
+   `_recover_control`, the end of `_recover`, the last step of the watchdog's check). `_stop_for_fault` holds the
+   lock around the robot's stop, which the port awaits: see the differences.
+9. `threading.Thread` of the periodic thread is a `ConsoleWorker`; `exit_event` is an `AbortController`, and
+   `exit_event.wait(seconds)` the option `sleep` woken by its signal.
+10. Where Python raises for a missing key or a value of the wrong kind (`progress["stage"]`,
+    `HOME_STAGE_PHASES[stage]`, `models[model]`, `snapshot()["error"]`, `require` of a model that is no text,
+    `previous_worker.join` without a worker), the port throws the class of that name with Python's text.
+11. `logger.warning` and `logger.exception` go to the option `log` under the loggers `commands` and
+    `periodic_thread`.
+
+### Deliberate differences of the commands
+
+1. **Async.** `run`, `stopBefore`, `pause`, `stop`, `enable` and every operation are async; the calls of the
+   uploads, the annotations, the recordings' `start` and the records are synchronous, so `start` and `resume`
+   await nothing.
+2. **`enable` awaits the cameras' read** between its checks and its launch. PEAR blocks its caller there, and
+   PEAR's page service gives the commands that are not immediate one at a time
+   (`gui/server/command_cache.py`, `async with self.lock`). `run` does not queue them: a page's service must, or
+   a second command can be admitted during the read (its launch, or the first one's, then throws
+   `Wait for the current operation to finish stopping.`).
+3. **`_stop_for_fault` without its lock.** A command admitted while the watchdog awaits the robot's stop is not
+   held back. The one a faulted robot admits is `recover_control`: the page can then show `Stopping` and `Fault`
+   while the recovery already runs, where PEAR shows `Fault` first. The recovery is not cancelled by it and ends
+   in the idle phase with the failure cleared.
+4. **A long step of a periodic thread.** In PEAR and here the next step never begins before this one has ended
+   (the watchdog: a whole period after its end). PEAR's long step holds its own thread only; here a step that
+   awaits lets the page's other work run, and a step that computes without awaiting holds the page's one thread.
+   A page's timer is not exact to a millisecond, so `MIN_WAIT_S` may last several.
+5. **The robot's class is given apart** (`CommandsOptions.robotClass`), and the Home's own options are `side` and
+   `opensGrippers` in the options object of `robot.home` where PEAR passes keywords (`side`, `opens_grippers`).
+6. **`Annotations.clean_tags`**, a classmethod PEAR calls on the class, is `console.annotations.cleanTags`.
+7. **A task's image URL** is made by `console.recordUrl` if the console has one, else PEAR's, as the task run
+   makes a frame's.
+8. **A number as an instruction**: JavaScript does not know `5.0` from `5`, so a whole float is written as an
+   int.
+9. **`catch`** takes whatever is thrown; PEAR's `except Exception` leaves a `KeyboardInterrupt` alone.
+
+### How the commands were verified
+
+`tests/console/commands.test.ts` replays the thirty scenarios of `tests/fixtures/console/commands.json.gz` (258
+steps; 119 commands given through `Commands.run`, 60 of them refused; 46 events, 255 calls of the stand-ins, 15
+operations), records of PEAR's own `Commands` and `Watchdog` on PEAR's own `Console`, run by PEAR's Python
+(`tools/fixtures/console_commands_fixtures.py`), on the port's `Commands`, `Watchdog` and `PeriodicThread` around
+the port's `Console`. The rig is `tests/console/commands_rig.ts`: `CommandsStage` extends the stage of the
+console's own fixtures (`console_rig.ts`) with what the script's `Stage` adds to PEAR's: the port's
+`Commands(console)` on the scenario's scripted clock and UUIDs, the watchdog made without its constructor (the
+step `watchdog_check` calls its check on the main thread), the steps `command`, `launch_until_stopped` and
+`periodic`, the further keys of `set`, and the parts `commands.py` and `watchdog.py` use of the robot, the
+cameras, the recordings, the uploads, the annotations and the task run, each call recorded under PEAR's name with
+PEAR's arguments and keywords. The port, the fixtures and the rig were written without sight of each other; the
+first replay agreed in every part of every step, and no line of the port was changed.
+
+Compared for every scenario and every step, exactly (a number is the same double, a dictionary has PEAR's keys in
+PEAR's order, a list has as many items): the fields before the first step; what the step returned (a command's
+answer) or raised (class name and message); every event (id, type, data, time, monotonic_s, task_id), its thread
+and whether the task's events hold it; the phases set, by thread; every call of the robot and of each stand-in, by
+thread (name, arguments, keywords, the last event's id when it began, what it returned or raised); the operations
+that ended in the step; the console's fields after the step, with the task run's (`task`, `total_steps`,
+`turn_number`, `active_attempt_id`, `active_turn`, `resume_pending`, a key no command has written yet being
+absent, and whether it has a session), the model and whether tasks are recorded; every file under the console's
+root; how often each clock was read. Also: that every UUID of a scenario was drawn; that the port waited on a
+worker's time limit at most once in a step, for the limit in force, and exactly once where PEAR found the old
+operation still stopping; `meta.constants` (the commands' table with its six flags for all fourteen commands in
+PEAR's order, `MAX_INSTRUCTION_CHARS`, `HOME_STAGE_PHASES`, `RECORD_URL`, the watchdog's `PERIOD_S`, `THREAD_NAME`
+and `PHASES_WITHOUT_CAMERAS`, the periodic thread's `MIN_WAIT_S` and `JOIN_S`, the stopped statuses, the failed
+member of `SegmentStatus`, the console's constants); and the fixture's own counts against what the replays made.
+
+That the replay can fail: changes were made to the port on purpose, one at a time, in a scratch copy. Of 26 made
+by the test's author 22 made the replay fail, each in the scenarios that hold the behaviour: the order of `run`'s
+refusals (busy before latched); a command that does not clear the error; a flag of the table; a refusal's text;
+`clear` while STOP MOTION is latched (PEAR shows Holding and leaves the latch set); `reset_stop` with the robot
+not stopped; the watchdog's step from Stopping to the idle phase; a periodic thread a failed step does not end;
+the turn number `start` resets; settling before a command when the robot is OFF; the phases without cameras; the
+answer `{accepted: true}`; STOP that does not latch; a lost browser that stops camera maintenance; the text of a
+failed recording; the reason of the stop before a command; a fault while control is recovered; the gripper
+refusal of `home`; `resume` with the robot not ready; `model` with a session and no task; `enable` with a camera
+error; `disable` that keeps the session. Of 16 more, made by a second reader, 12 made it fail: the order of a
+task record's keys; a task's image without its URL; the text of a blocked session's refusal; a failed cleanup at
+`disable` that is not shown; a recording that did not start and is not stopped; a command that does not clear
+the performance; `enable` without the cameras' read; the text of a failed recovery; a lost browser that keeps
+control; a fault's text; a fault the watchdog does not save; the idle phase without the latch.
+
+The eight that passed the replay name what the records do not show: the handler of `home_confirm`; the file of a
+Home report; a periodic thread that waits before its first step when it should not; the pacing from a step's
+start; the folder of a task whose images cannot be attached (the record lists files, and the folder is empty); a
+draft image that cannot be removed (no record has one); the count of steps `clear` forgets (it is 0 in every
+record, where no turn runs); the failure a recovery clears (the command has cleared the earlier one). Each of
+them now fails a test written by hand, as do 15 more changes in the same parts.
+
+Those tests are `tests/console/commands_by_hand.test.ts` (12 tests) and
+`tests/console/periodic_thread_by_hand.test.ts` (6 tests). They compare with nothing of PEAR's: their
+expectations were typed from a reading of `commands.py` and `periodic_thread.py`, and their robot, records and
+clock are stand-ins of their own. They hold the table's names in order, three refusals of `run`, and that STOP
+has stopped the robot when `run` returns its promise; a Home that is admitted, from the task's end through the
+stages' phases, the plan's review and its file to the report's file, the Home status and the notice; the answer
+`home_confirm` passes on (true for `confirm: true` alone) and its refusal for another plan; the arm and the
+grippers' choice of a robot whose class has them; the four single lines of the paragraph above; and when a
+periodic thread waits (at once or after one period, a whole period after a step's end or a period after its
+start, never less than `MIN_WAIT_S`, and `close` with `JOIN_S`).
+
+### Fixes of the commands' port
+
+None: no scenario disagreed, and the second reading of `commands.py`, `watchdog.py` and `periodic_thread.py`
+against the port found no difference beyond the deliberate ones above.
+
+### Not verified of the commands
+
+- **The commands on PEAR's robot and PEAR's `TaskRun`.** Every scenario stands on scripted stand-ins: no turn
+  runs (`task_run.run` and `close_session` are recorded calls that return at once), and the robot answers what
+  the scenario scripts. A task from `start` to `clear` on the real robot and the real task run has no record
+  yet; neither has the robot's own Home under the console's review.
+- **Held by tests written by hand alone, by no record of PEAR's**: a Home that is admitted and `home_confirm`; a
+  robot class with a choice of Home arms or with a Home that can keep the grippers; the folder of a task whose
+  images cannot be attached; a draft image that cannot be removed; the count of steps at `clear`; the failure a
+  recovery clears; when a periodic thread waits. For these the expectation is one reader's reading of PEAR's
+  source.
+- **In no record and in no test**: a robot class with more than one action format (the key `action_format` of a
+  task's record) and a client class that names a reasoning effort (`reasoning_effort`); a draft image whose
+  removal fails with another error than a ValueError; `home` for a plan that is not approved by a real robot.
+- **`is_daemon` of a periodic thread**: the port's loop is no thread and holds no such flag; the test checks only
+  that PEAR's record says true.
+- **The watchdog on its own thread.** The record calls PEAR's `_check` on the main thread, and so does the
+  replay. What the port does when a command comes between the awaits of one check (`watchdog.ts` describes the
+  one such case, a fault while `recover_control` is admitted) has no record.
+- **The order between the main thread and the worker within one step**, beyond what the events' ids, each call's
+  `after_event` and the fields show (as for `console.ts`). The time limit of a worker's join is, in the rig, one
+  turn of the event loop: a worker that ends because of the stop has ended by then, one the scenario holds has
+  not; no seconds pass.
+- **`Annotations.clean_tags`**: PEAR's ran for the record; the port takes it as an interface
+  (`CommandsAnnotations.cleanTags`) and has no port of it. The rig gives its own copy, with JavaScript's white
+  space and lower-casing in the place of Python's `split()` and `casefold()`. Whoever makes a console must give
+  one.
+- **One command at a time.** PEAR's page service gives the commands that are not immediate one at a time
+  (`gui/server/command_cache.py`); `run` does not queue them, and nothing here tests two given at once.
+- What PEAR logs (`logger.warning`, `logger.exception`) is not in the record; of the port's log lines only the
+  warning for a draft image is compared, by hand.
+
 ## Left
 
 Of `TaskRun`: nothing of its code; the JSON text of a record (above).
 
-Of `Console`, `HomeReview` and `ControlLease`: nothing of their code; a record of the console on PEAR's robot
-with PEAR's `TaskRun` (the two fixtures hold the task run and the console apart), and the two things of `emit`
-that only a test written by hand holds.
+Of `Console`, `HomeReview` and `ControlLease`: nothing of their code; the two things of `emit` that only a test
+written by hand holds.
 
-Of the console, not in the repository:
+Of `Commands`, `Watchdog` and `PeriodicThread`: nothing of their code. Records for what tests written by hand
+hold now: a scenario that gives `home_confirm` (the right and a wrong plan id; confirm true, not true, absent);
+`home` on the stand-ins through to its end and to a failed Home; the times a periodic thread waits with; a robot
+class with two action formats, with a choice of Home arms and with a Home that can keep the grippers; a task
+whose images cannot be attached, with the folders under the root; a draft image that cannot be removed; `clear`
+after turns; a failure shown while a recovery runs.
 
-- `commands.py` (438 lines), `Command` and `Commands`: the operator's commands, each admitted on the caller's
-  thread; a long one then runs on the console's worker. `watchdog.py` (93 lines), `Watchdog`: a background check
-  that pauses the robot when the browser that holds control, the recording or the cameras fail.
-  `periodic_thread.py` (58 lines), `PeriodicThread`: a background thread that does a step every period until it
-  is closed. These three are written and are being compared with records of PEAR's own; they come into the
-  repository when a test holds them.
+Of all three: a record of the commands running a task on PEAR's robot with PEAR's `TaskRun` (the fixtures hold
+the task run on the real robot, and the console and the commands on stand-ins, apart).
+
+Of the console, not ported:
+
 - `preview.py` (154 lines), `PreviewFrame` and `Preview`: the cameras as the page shows them: the latest frame of
-  each camera as JPEG, and the cameras' errors. Not ported.
+  each camera as JPEG, and the cameras' errors. `Commands` and `Watchdog` reach it through `CommandsPreview` and
+  `WatchdogPreview`.
+- The page's service under `gui/server`: among it `command_cache.py`, which admits a command (the lease for a
+  command that needs control, the lock that gives the commands that are not immediate one at a time, the cache
+  of a request's answer). A page that uses `Commands` must do these itself.
+- The records' parts that `Commands` reaches through interfaces: `ImageUploads`, `Annotations` (with
+  `clean_tags`), `RenderedRecordings`, `TaskFiles`.
+
+And one thing of the port's own: the interfaces of `console.ts` hold what `console.py` uses of the console's
+parts, and what `commands.py` and `watchdog.py` use beyond that is in interfaces that extend them
+(`CommandsConsole`, `WatchdogConsole`), so a page casts once where it makes each. Widening `console.ts` itself
+would remove the cast.
