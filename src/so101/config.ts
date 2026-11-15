@@ -7,6 +7,16 @@
 // order of MOTORS in layout.ts (a vector of five values: of JOINTS).
 //
 // The defaults describe a generic SO-101. What a real station must measure or choose itself is marked "station".
+//
+// The interfaces are the settings as a station's file holds them. The classes at the end of this file are PEAR's
+// dataclasses: they take those settings and refuse them as `__post_init__` refuses them, and `SO101RobotConfig` is
+// what the joint layer (src/station/joint) is given as the robot's settings.
+
+import { ConfigSection, HomeConfig, Limits, RobotConfig } from "../station/joint/config";
+import { ValueError } from "../station/joint/errors";
+import { brakingCapsOf } from "../station/joint/limits";
+import { pythonStrRepr } from "../station/joint/numeric";
+import { ARM, LAYOUT, VECTOR_LENGTH, type JointLayout } from "./layout";
 
 /** What PEAR's defaults leave for the station's own file to give (OmegaConf's marker of a missing value). */
 export const MISSING = "???";
@@ -187,3 +197,348 @@ export const SO101_DEFAULT_CONFIG: SO101Config = frozen({
   feedback_position_tolerance: 0.06,
   velocity_tolerance: 0.06,
 });
+
+// The dataclasses of pear/deploy/station/control/robots/so101/config.py: each takes its section of the settings and
+// throws PEAR's ValueError, with PEAR's message, where `__post_init__` raises. The names PEAR's classes have are the
+// interfaces' above, so the classes are called sections; a refusal still begins with PEAR's class name.
+
+/** The number of values of a vector of settings with one value for each arm joint. */
+export const ARM_JOINT_LENGTH = LAYOUT.jointCount;
+
+/** The one camera's role, by which the format reads its frames. */
+export const WRIST_ROLE = "wrist";
+
+/** The arm's limits, with the acceleration and jerk caps a controlled STOP brakes with (PEAR's SO101Limits). */
+export class SO101LimitsSection extends Limits implements SO101Limits {
+  declare stop_acceleration: number[] | null;
+  declare stop_jerk: number[] | null;
+
+  constructor(settings: SO101Limits) {
+    super(settings);
+  }
+
+  protected override get className(): string {
+    return "SO101Limits";
+  }
+
+  protected override get fieldNames(): readonly string[] {
+    return [...super.fieldNames, "stop_acceleration", "stop_jerk"];
+  }
+
+  protected override get optionalFieldNames(): readonly string[] {
+    return ["stop_acceleration", "stop_jerk"];
+  }
+
+  protected override postInit(): void {
+    super.postInit();
+
+    const stopAndMoveCaps: [number[] | null, number[]][] = [
+      [this.stop_acceleration, this.acceleration],
+      [this.stop_jerk, this.jerk],
+    ];
+    const brakesMoreGently = stopAndMoveCaps.some(
+      ([stopCaps, moveCaps]) =>
+        stopCaps !== null &&
+        stopCaps.slice(0, moveCaps.length).some((stopCap, index) => !(stopCap >= moveCaps[index]!)),
+    );
+    if (brakesMoreGently) {
+      throw new ValueError("A STOP must not brake more gently than a move");
+    }
+  }
+
+  /** Returns the acceleration and jerk caps a controlled STOP brakes with: the STOP caps, a move's where unset. */
+  override brakingCaps(): [readonly number[], readonly number[]] {
+    return brakingCapsOf(this);
+  }
+}
+
+/** The arm's Feetech bus: its device, its lerobot calibration and the servos' settings (PEAR's HardwareConfig). */
+export class HardwareSection extends ConfigSection implements HardwareConfig {
+  declare port: string;
+  declare calibration_id: string;
+  declare calibration_dir: string;
+  declare joint_offsets: number[];
+  declare status_poll_ticks: number;
+  declare position_p_coefficient: number;
+
+  constructor(settings: HardwareConfig) {
+    super(settings);
+  }
+
+  protected get className(): string {
+    return "HardwareConfig";
+  }
+
+  protected get fieldNames(): readonly string[] {
+    return [
+      "port",
+      "calibration_id",
+      "calibration_dir",
+      "joint_offsets",
+      "status_poll_ticks",
+      "position_p_coefficient",
+    ];
+  }
+
+  protected override postInit(): void {
+    super.postInit();
+
+    this.checkLength("joint_offsets", ARM_JOINT_LENGTH);
+    this.checkRange("joint_offsets", { atLeast: -0.2, atMost: 0.2 });
+    this.checkRange("status_poll_ticks", { atLeast: 2, atMost: 100 });
+    this.checkRange("position_p_coefficient", { atLeast: 8, atMost: 64 });
+  }
+}
+
+/** The wrist camera's device and the frames it is asked for (PEAR's CameraConfig). */
+export class CameraSection extends ConfigSection implements CameraConfig {
+  declare path: string;
+  declare role: string;
+  declare width: number;
+  declare height: number;
+  declare fps: number;
+  declare fourcc: string | null;
+
+  constructor(settings: CameraConfig) {
+    super(settings);
+  }
+
+  protected get className(): string {
+    return "CameraConfig";
+  }
+
+  protected get fieldNames(): readonly string[] {
+    return ["path", "role", "width", "height", "fps", "fourcc"];
+  }
+
+  protected override postInit(): void {
+    super.postInit();
+
+    if (this.role !== WRIST_ROLE) {
+      throw new ValueError(`CameraConfig.role must be ${pythonStrRepr(WRIST_ROLE)}`);
+    }
+    this.checkRange("width", { above: 0 });
+    this.checkRange("height", { above: 0 });
+    this.checkRange("fps", { above: 0 });
+  }
+}
+
+/**
+ * What the inverse kinematics solve on and how far they go (PEAR's KinematicsConfig, without its `urdf`: pear.js
+ * reads no description at run time).
+ */
+export class KinematicsSection extends ConfigSection implements KinematicsConfig {
+  declare max_rotation_rad: number;
+  declare position_residual_m: number;
+  declare rotation_residual_rad: number;
+  declare ik_iterations: number;
+  declare gripper_width_cm: number[];
+
+  constructor(settings: KinematicsConfig) {
+    super(settings);
+  }
+
+  protected get className(): string {
+    return "KinematicsConfig";
+  }
+
+  protected get fieldNames(): readonly string[] {
+    return ["max_rotation_rad", "position_residual_m", "rotation_residual_rad", "ik_iterations", "gripper_width_cm"];
+  }
+
+  protected override postInit(): void {
+    super.postInit();
+
+    this.checkRange("max_rotation_rad", { above: 0, atMost: Math.PI });
+    this.checkRange("position_residual_m", { above: 0, atMost: 0.01 });
+    this.checkRange("rotation_residual_rad", { above: 0, atMost: 0.1 });
+    this.checkRange("ik_iterations", { atLeast: 10, atMost: 2000 });
+    this.checkLength("gripper_width_cm", 2);
+    const [closedWidth, openWidth] = this.gripper_width_cm as [number, number];
+    if (!(0 <= closedWidth && closedWidth < openWidth)) {
+      throw new ValueError("gripper_width_cm must be [closed, open] with closed < open");
+    }
+  }
+}
+
+/** The arm's Home: its pose and how close each joint must come to it (PEAR's SO101HomeConfig). */
+export class SO101HomeSection extends HomeConfig implements SO101HomeConfig {
+  declare position: number[];
+  declare joint_tolerance: number[];
+
+  constructor(settings: SO101HomeConfig) {
+    super(settings);
+  }
+
+  protected override get className(): string {
+    return "SO101HomeConfig";
+  }
+
+  protected override get fieldNames(): readonly string[] {
+    return [...super.fieldNames, "position", "joint_tolerance"];
+  }
+
+  protected override postInit(): void {
+    super.postInit();
+
+    this.checkLength("position", VECTOR_LENGTH);
+    this.checkLength("joint_tolerance", ARM_JOINT_LENGTH);
+    this.checkRange("joint_tolerance", { above: 0, atMost: 0.1 });
+  }
+}
+
+/** The goal offsets of the five arm joints that the feedforward adds to a target (PEAR's FeedforwardConfig). */
+export class FeedforwardSection extends ConfigSection implements FeedforwardConfig {
+  declare gravity_compliance: number[];
+  declare friction_offset_rad: number[];
+  declare friction_load_ratio: number[];
+
+  constructor(settings: FeedforwardConfig) {
+    super(settings);
+  }
+
+  protected get className(): string {
+    return "FeedforwardConfig";
+  }
+
+  protected get fieldNames(): readonly string[] {
+    return ["gravity_compliance", "friction_offset_rad", "friction_load_ratio"];
+  }
+
+  protected override postInit(): void {
+    super.postInit();
+
+    for (const name of this.fieldNames) {
+      this.checkLength(name, ARM_JOINT_LENGTH);
+    }
+    this.checkRange("gravity_compliance", { atLeast: 0, atMost: 0.3 });
+    this.checkRange("friction_offset_rad", { atLeast: 0, atMost: 0.05 });
+    this.checkRange("friction_load_ratio", { atLeast: 0, atMost: 0.1 });
+  }
+}
+
+/** What `SO101RobotConfig` is told besides the settings. */
+export interface SO101ConfigOptions {
+  /**
+   * Whether the calibration `calibrationId` exists in `calibrationDir`. PEAR looks for the file
+   * `<calibration_dir>/<calibration_id>.json`; a page has no file system, so whatever keeps its calibrations answers
+   * here. Without it no calibration is known, and the arm must not move.
+   */
+  calibrationExists?: (calibrationDir: string, calibrationId: string) => boolean;
+}
+
+/**
+ * The SO-101's settings, checked: its arm's bus, its wrist camera, its kinematics, its limits, its Home and the
+ * feedforward of its servos (PEAR's SO101Config). A value the settings leave ??? reads as the placeholder of its key,
+ * which the motion blockers name.
+ */
+export class SO101RobotConfig extends RobotConfig implements SO101Config {
+  declare hardware: HardwareSection | null;
+  declare camera: CameraSection | null;
+  declare geometry: KinematicsSection | null;
+  declare limits: SO101LimitsSection;
+  declare home: SO101HomeSection | null;
+  declare feedforward: FeedforwardSection | null;
+
+  private readonly calibrationExists: (calibrationDir: string, calibrationId: string) => boolean;
+
+  constructor(settings: SO101Config = SO101_DEFAULT_CONFIG, options: SO101ConfigOptions = {}) {
+    super(RobotConfig.withPlaceholders(settings));
+
+    this.calibrationExists = options.calibrationExists ?? (() => false);
+  }
+
+  /** The arm's joint vector. */
+  get LAYOUT(): JointLayout {
+    return LAYOUT;
+  }
+
+  protected get className(): string {
+    return "SO101Config";
+  }
+
+  protected get fieldNames(): readonly string[] {
+    return [
+      "position_tolerance",
+      "gripper_tolerance",
+      "feedback_position_tolerance",
+      "velocity_tolerance",
+      "home",
+      "hardware",
+      "camera",
+      "geometry",
+      "limits",
+      "feedforward",
+    ];
+  }
+
+  protected override get optionalFieldNames(): readonly string[] {
+    return ["home", "hardware", "camera", "geometry", "feedforward"];
+  }
+
+  protected override fieldValue(name: string, value: unknown): unknown {
+    if (value === null || value instanceof ConfigSection) {
+      return value;
+    }
+
+    switch (name) {
+      case "home":
+        return new SO101HomeSection(value as SO101HomeConfig);
+      case "hardware":
+        return new HardwareSection(value as HardwareConfig);
+      case "camera":
+        return new CameraSection(value as CameraConfig);
+      case "geometry":
+        return new KinematicsSection(value as KinematicsConfig);
+      case "limits":
+        return new SO101LimitsSection(value as SO101Limits);
+      case "feedforward":
+        return new FeedforwardSection(value as FeedforwardConfig);
+      default:
+        return value;
+    }
+  }
+
+  protected override postInit(): void {
+    super.postInit();
+
+    this.checkRange("feedback_position_tolerance", { atMost: 0.2 });
+    const { lower_bounds: lowerBounds, upper_bounds: upperBounds } = this.limits;
+    if (
+      this.home !== null &&
+      this.home.position
+        .slice(0, Math.min(lowerBounds.length, upperBounds.length))
+        .some((coordinate, index) => !(lowerBounds[index]! <= coordinate && coordinate <= upperBounds[index]!))
+    ) {
+      throw new ValueError("Home must lie inside the position limits");
+    }
+    if (this.feedforward !== null && this.geometry === null) {
+      throw new ValueError("feedforward needs geometry.urdf for the gravity model");
+    }
+  }
+
+  /** Returns the limits of the one arm. */
+  armLimits(): Record<string, SO101LimitsSection> {
+    return { [ARM]: this.limits };
+  }
+
+  /**
+   * Returns the reasons the real arm must not move under these settings: a template's placeholder first, then no
+   * bus, or no calibration.
+   */
+  motionBlockers(): string[] {
+    const hardware = this.hardware;
+    const blockers: string[] = [];
+    const placeholderKey = this.firstPlaceholder();
+    if (placeholderKey) {
+      blockers.push(`${placeholderKey} is a placeholder; see the so101 setup in README.md`);
+    }
+    if (hardware === null) {
+      blockers.push("missing hardware section");
+    } else if (!this.calibrationExists(hardware.calibration_dir, hardware.calibration_id)) {
+      blockers.push(`missing calibration file for id ${pythonStrRepr(hardware.calibration_id)}`);
+    }
+
+    return blockers;
+  }
+}

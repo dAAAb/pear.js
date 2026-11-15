@@ -1,6 +1,9 @@
 // Ports pear/deploy/station/control/robots/so101/layout.py, with the parts of
 // pear/deploy/station/control/joint/layout.py and pear/deploy/station/control/joint/texts.py that the SO-101's joint
 // vector, its limits and its kinematics read.
+// The joint layer added the rest of joint/layout.py to JointLayout here (split, join, the labels of a coordinate, the
+// gripper's value), and gives the class and the texts under PEAR's file names in src/station/joint/layout.ts and
+// texts.ts.
 
 import { ValueError } from "./kinematics/errors";
 
@@ -40,6 +43,10 @@ export interface ControlTexts {
 
 /** A robot's streamed joint vector: its arms in order, each with the same coordinates, the gripper last. */
 export class JointLayout {
+  /** The key of the arm in the labels of a coordinate, as metrics and records spell it. */
+  static readonly ARM_LABEL = "side";
+  /** The key of the coordinate's name in those labels. */
+  static readonly COORDINATE_LABEL = "joint";
   /** The unit of an arm joint. */
   static readonly JOINT_UNIT = "rad";
   /** The unit of a gripper: 0 closed, 1 open. */
@@ -72,9 +79,57 @@ export class JointLayout {
     return this.arms.map((_, armIndex) => (armIndex + 1) * this.coordinateCount - 1);
   }
 
+  /** Returns the joint vector as one list of coordinates for each arm, in the arms' order. */
+  split(vector: ArrayLike<number>): Record<string, number[]> {
+    const coordinateCount = this.coordinateCount;
+    const values = Array.from(vector);
+
+    return Object.fromEntries(
+      this.arms.map((arm, armIndex) => [
+        arm,
+        values.slice(armIndex * coordinateCount, (armIndex + 1) * coordinateCount),
+      ]),
+    );
+  }
+
+  /** Returns one sequence of values for each arm as the joint vector. */
+  join(armValues: Readonly<Record<string, ArrayLike<number>>>): number[] {
+    return this.arms.flatMap((arm) => Array.from(armValues[arm] as ArrayLike<number>));
+  }
+
+  /** Returns how metrics name one coordinate of `arm`: the arm when there are several, and the coordinate. */
+  armAxisLabels(arm: string, coordinateIndex: number): Record<string, string> {
+    const jointLabel = { [JointLayout.COORDINATE_LABEL]: this.coordinates[coordinateIndex] as string };
+
+    return this.arms.length > 1 ? { [JointLayout.ARM_LABEL]: arm, ...jointLabel } : jointLabel;
+  }
+
   /** Returns the unit of the coordinate at `index` of the joint vector or of one arm's coordinates. */
   axisUnit(index: number): string {
     return index % this.coordinateCount === this.jointCount ? JointLayout.GRIPPER_UNIT : JointLayout.JOINT_UNIT;
+  }
+
+  /** Returns the name a message gives the coordinate that `labels` label: its arm, if labelled, and itself. */
+  static axisName(labels: Readonly<Record<string, unknown>>): string {
+    return [JointLayout.ARM_LABEL, JointLayout.COORDINATE_LABEL]
+      .filter((key) => key in labels)
+      .map((key) => labels[key] as string)
+      .join(" ");
+  }
+
+  /** Returns the joints' values of one arm's coordinates, without its gripper's. */
+  static jointValues(armValues: ArrayLike<number>): number[] {
+    return Array.from(armValues).slice(0, -1);
+  }
+
+  /** Returns the gripper's value of one arm's coordinates. */
+  static gripperValue(armValues: ArrayLike<number>): number {
+    return armValues[armValues.length - 1] as number;
+  }
+
+  /** Returns one arm's coordinates with `gripperValue` in the gripper's place. */
+  static withGripper(armValues: ArrayLike<number>, gripperValue: number): number[] {
+    return [...JointLayout.jointValues(armValues), gripperValue];
   }
 
   /** Returns `values` as a finite joint vector, and throws if they are not one. */

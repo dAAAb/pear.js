@@ -1,0 +1,225 @@
+{
+ "versions": {
+  "ruckig": "0.15.3",
+  "python": "3.12.15",
+  "machine": "x86_64"
+ },
+ "scale": 1.0,
+ "pear": {
+  "lower_bounds": [
+   -1.7623,
+   -1.7569,
+   -1.6503,
+   -1.7201,
+   -2.618,
+   0.0
+  ],
+  "upper_bounds": [
+   1.7623,
+   1.7569,
+   1.6503,
+   1.7201,
+   2.618,
+   1.0
+  ],
+  "velocity": [
+   1.0,
+   1.0,
+   1.0,
+   1.0,
+   1.0,
+   0.5
+  ],
+  "acceleration": [
+   2.0,
+   2.0,
+   2.0,
+   2.0,
+   2.0,
+   2.0
+  ],
+  "jerk": [
+   10.0,
+   10.0,
+   10.0,
+   10.0,
+   10.0,
+   10.0
+  ],
+  "stop_acceleration": [
+   6.0,
+   6.0,
+   6.0,
+   6.0,
+   6.0,
+   6.0
+  ],
+  "stop_jerk": [
+   60.0,
+   60.0,
+   60.0,
+   60.0,
+   60.0,
+   60.0
+  ],
+  "home_speed_scale": 0.3333333333333333,
+  "home_position": [
+   0.0,
+   -0.814,
+   0.077,
+   1.423,
+   -1.613,
+   1.0
+  ],
+  "rate_hz": 50.0,
+  "control_period_s": 0.02,
+  "release_caps": [
+   0.1,
+   0.2,
+   1.0
+  ]
+ },
+ "sets": {
+  "a_pear": {
+   "cases": 460,
+   "bytes": 618607,
+   "kinds": {
+    "after_stop": 53,
+    "moving": 129,
+    "outside": 99,
+    "rest": 113,
+    "scaled": 66
+   }
+  },
+  "b_general": {
+   "cases": 536,
+   "bytes": 771210,
+   "kinds": {
+    "aimed": 6,
+    "asymmetric": 93,
+    "discrete": 32,
+    "general": 178,
+    "infinite_velocity": 9,
+    "minimum_duration": 88,
+    "rounded": 67,
+    "tiny": 37,
+    "zero_limit": 26
+   }
+  },
+  "c_velocity": {
+   "cases": 296,
+   "bytes": 401143,
+   "kinds": {
+    "aimed": 6,
+    "discrete": 11,
+    "general": 89,
+    "minimum_duration": 47,
+    "stop": 100,
+    "stop_any": 31,
+    "zero_limit": 12
+   }
+  },
+  "d_multi": {
+   "cases": 110,
+   "bytes": 531657,
+   "kinds": {
+    "enabled": 3,
+    "minimum_duration": 2,
+    "none": 2,
+    "pear_move": 16,
+    "pear_retarget": 11,
+    "pear_stop": 8,
+    "pear_two_arms": 1,
+    "per_dof_control_interface": 4,
+    "per_dof_synchronization": 4,
+    "phase_collinear": 17,
+    "phase_other": 5,
+    "phase_rest": 6,
+    "ties": 3,
+    "time": 22,
+    "time_if_necessary": 6
+   }
+  },
+  "e_sessions": {
+   "cases": 24,
+   "bytes": 334680,
+   "kinds": {
+    "generic": 7,
+    "pear_arm": 3,
+    "pear_gripper": 7,
+    "pear_move": 3,
+    "pear_recovery": 2,
+    "pear_sequence": 2
+   }
+  },
+  "f_refused": {
+   "cases": 131,
+   "bytes": 36098,
+   "kinds": {
+    "accepted": 9,
+    "calculation": 15,
+    "current_acceleration": 1,
+    "current_acceleration_above": 2,
+    "current_acceleration_below": 2,
+    "current_acceleration_below_min": 2,
+    "current_acceleration_unchecked": 2,
+    "current_inevitable_above": 1,
+    "current_inevitable_below": 1,
+    "current_position": 1,
+    "current_velocity": 1,
+    "current_velocity_above": 1,
+    "current_velocity_below": 1,
+    "current_velocity_below_min": 1,
+    "current_velocity_unchecked": 1,
+    "degrees_of_freedom": 3,
+    "delta_time": 5,
+    "duration": 8,
+    "intermediate": 8,
+    "longer_vector": 4,
+    "max_acceleration": 2,
+    "max_jerk": 3,
+    "max_velocity": 2,
+    "message_decimals": 8,
+    "min_acceleration": 3,
+    "min_velocity": 2,
+    "second_coordinate": 4,
+    "target_acceleration": 1,
+    "target_acceleration_above": 1,
+    "target_acceleration_below": 1,
+    "target_acceleration_below_min": 1,
+    "target_acceleration_unchecked": 1,
+    "target_inevitable_above": 1,
+    "target_inevitable_below": 1,
+    "target_inevitable_zero_jerk": 1,
+    "target_position": 1,
+    "target_velocity": 1,
+    "target_velocity_above": 1,
+    "target_velocity_below": 1,
+    "target_velocity_below_min": 1,
+    "target_velocity_unchecked": 1,
+    "text": 19,
+    "velocity_interface": 5
+   }
+  },
+  "g_lower": {
+   "cases": 52,
+   "bytes": 86665,
+   "kinds": {
+    "aimed": 12,
+    "first_order": 15,
+    "mixed_order": 1,
+    "second_order": 18,
+    "second_order_velocity": 6
+   }
+  },
+  "h_sort": {
+   "cases": 159,
+   "bytes": 25719,
+   "kinds": {
+    "insertion": 16,
+    "minmax": 49,
+    "partitioned": 94
+   }
+  }
+ }
+}

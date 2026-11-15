@@ -1,7 +1,7 @@
 // The modules were ported separately; these tests hold them to one definition of what they share.
 import { describe, expect, test } from "vitest";
 
-import { PEAR_COMMIT, feetech, protocol, so101 } from "../src/index";
+import { PEAR_COMMIT, agent, feetech, protocol, ruckig, so101, station } from "../src/index";
 
 const { SO101Kinematics, UnreachablePoseError } = so101.kinematics;
 
@@ -9,12 +9,22 @@ const { SO101Kinematics, UnreachablePoseError } = so101.kinematics;
 const JOINTS = [0.0, -0.8, 0.1, 1.4, -1.6, 1.0];
 
 describe("the modules agree on what they share", () => {
-  test("the package's entry gives the three modules and the pinned commit", () => {
+  test("the package's entry gives the modules and the pinned commit", () => {
     expect(PEAR_COMMIT).toMatch(/^[0-9a-f]{40}$/);
     expect(typeof protocol.turnText).toBe("function");
     expect(typeof feetech.FeetechMotorsBus).toBe("function");
     expect(typeof so101.kinematics.SO101Kinematics).toBe("function");
     expect(typeof so101.hardware.SO101Hardware).toBe("function");
+    expect(typeof so101.joint.SO101FrictionFeedforward).toBe("function");
+    expect(typeof ruckig.Ruckig).toBe("function");
+    expect(typeof station.joint.StabilityWindow).toBe("function");
+    expect(typeof station.schemas).toBe("object");
+    expect(typeof agent.StationAgentLoop).toBe("function");
+    expect(typeof agent.VLLMClient).toBe("function");
+  });
+
+  test("the kinematics' joint limits are the joint layer's", () => {
+    expect(so101.kinematics.JointLimits).toBe(station.joint.JointLimits);
   });
 
   test("the servo layer's joints are the layout's own", () => {

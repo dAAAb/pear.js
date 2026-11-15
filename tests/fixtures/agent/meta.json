@@ -1,0 +1,34 @@
+{
+ "pear_commit": "f32aa1f7c2ec9c3f45630cc9f8541b3201e8e087",
+ "python": "3.12.15",
+ "openai": "3.35.1",
+ "pydantic": "2.13.5",
+ "model": "qwen3_8_27b",
+ "request_header_names": [
+  "accept",
+  "accept-encoding",
+  "authorization",
+  "connection",
+  "content-length",
+  "content-type",
+  "host",
+  "user-agent",
+  "x-stainless-arch",
+  "x-stainless-async",
+  "x-stainless-lang",
+  "x-stainless-os",
+  "x-stainless-package-version",
+  "x-stainless-read-timeout",
+  "x-stainless-retry-count",
+  "x-stainless-runtime",
+  "x-stainless-runtime-version"
+ ],
+ "printable": {
+  "runs": 712,
+  "not_printable": 965114,
+  "sha256": "e204275e0a99b1a2c5fef3aace5f1bf5579eab5c9367ad19ad82a8b6bb41fc81"
+ },
+ "label": "vLLM",
+ "cancel_poll_s": 0.02,
+ "cleanup_timeout_s": 10.0
+}

@@ -26,5 +26,20 @@ The inverse kinematics step in src/so101/kinematics reproduces, in new code, the
 placo's kinematics solver (https://github.com/rhoban/placo, version 0.9.15) solves when PEAR calls it; no code of
 placo is included. placo is Copyright (c) Rhoban Team and licensed under the MIT License.
 
+src/ruckig is a TypeScript port of Ruckig, community edition, version 0.15.3 (https://github.com/pantor/ruckig),
+Copyright (c) 2021 Lars Berscheid, licensed under the MIT License: see src/ruckig/LICENSE. PEAR's station generates
+its trajectories with it. The order in which the C++ standard library's sort leaves equal elements is reproduced in
+new code, written from the algorithm's description; no code of libstdc++ or of a C library is included.
+
+src/agent/clients/openai.ts ports the parts of the OpenAI Python SDK, version 3.35.1
+(https://github.com/openai/openai-python), that PEAR's model client runs: its error classes and their messages and
+its decoder of a server-sent event stream. The SDK is Copyright OpenAI and licensed under the Apache License,
+Version 2.0.
+
+Where a text the model reads depends on how CPython 3.12 writes a value (the rounding and the text of a number,
+JSON, the repr of a string), pear.js reproduces that behaviour in new code; no code of CPython is included.
+src/agent/clients/python_printable.ts holds a table derived from the Unicode Character Database, version 15.0.0,
+Copyright (c) 1991-2022 Unicode, Inc., used under the Unicode License (https://www.unicode.org/license.txt).
+
 pear.js is not affiliated with or endorsed by the PEAR project or its authors, Hugging Face, TheRobotStudio,
-Feetech, or the Rhoban team.
+Feetech, the Rhoban team, the author of Ruckig, or OpenAI.

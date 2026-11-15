@@ -2,12 +2,18 @@
  * pear.js: PEAR's robot station in TypeScript.
  *
  *   protocol   the texts a PEAR model reads and the action it writes
- *   so101      the SO-101 arm: joint layout and default settings, kinematics, servo layer
+ *   agent      the model client (an OpenAI-compatible service, streamed) and the turn loop
+ *   station    the station's joint layer: configuration, limits, safety monitors
+ *   so101      the SO-101 arm: joint layout and default settings, kinematics, servo layer, feedforward
  *   feetech    the Feetech STS3215 serial protocol and bus, over an abstract transport
+ *   ruckig     the trajectory generator PEAR's station uses (a port of Ruckig, community edition)
  */
+export * as agent from "./agent/index";
 export * as feetech from "./feetech/index";
 export * as protocol from "./protocol/index";
+export * as ruckig from "./ruckig/index";
 export * as so101 from "./so101/index";
+export * as station from "./station/index";
 
 /**
  * The commit of PEAR (https://github.com/mit-han-lab/pear) that every module here ports and is tested against.

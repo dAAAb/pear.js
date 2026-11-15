@@ -38,11 +38,16 @@ model something it has never seen. So:
 | `src/protocol` | The texts the model reads and the action it writes: system prompt, turn text, answer parsing, execution feedback | Ported. Every text equals PEAR's on the fixtures (1,491 tests), PEAR's own stored texts among them |
 | `src/so101/kinematics` | The SO-101's forward and inverse kinematics in PEAR's pose convention, joint limits | Ported. Poses equal PEAR's on 2,010 joint vectors. Inverse kinematics gives PEAR's answer wherever PEAR's solver converged (1,250 of 2,255 fixture cases) and on 92% of the cases where it ran out of steps, where PEAR's own answer changes with the ninth decimal of its input |
 | `src/feetech`, `src/so101/hardware` | The Feetech STS3215 serial protocol, lerobot's bus on it and PEAR's SO-101 servo layer, over an abstract transport; a simulated servo chain | Ported. Packets, bus exchanges and unit conversions equal the reference Python's on the fixtures. Never run on a real servo or a real serial port |
-| station | Motion execution (settling, tracking protection, gripper outcomes, Home), the agent loop, the model client | next |
+| `src/ruckig` | The trajectory generator PEAR's station calls every control period: a port of [Ruckig](https://github.com/pantor/ruckig) 0.15.3, community edition | Ported. Given the reference's C library values, every number equals the reference module's to the last bit: 1,454 calculations and 24 sessions of updates in the fixtures, 109,050 and 1,800 in a larger run. With the JavaScript engine's own `cbrt` and trigonometry, durations agree within 5e-11 relative |
+| `src/station/joint`, `src/so101/joint` | The joint layer without its control loop: configuration, limits, stability and tracking monitors, action guard, snapshot checks, friction feedforward | Ported. Equal to PEAR's own classes on the fixtures (246 tests); gravity torques within 2e-15 N·m of PEAR's |
+| `src/agent` | The model client (an OpenAI-compatible Chat Completions service, streamed) and the turn loop | Ported. Requests, events, results and error texts equal PEAR's on 26 client scenarios and 19 tasks run with PEAR's own stand-ins (570 tests). No real model server has been contacted |
+| `tests/sim-bridge` | pear.js's servo layer on a simulated SO-101 servo chain over TCP, beside PEAR's Python on the same chain (the chain is not part of this repository) | Of 1,888 instruction packets PEAR's Python sends in ten scripted sessions, pear.js sends the same 1,888 in the same order; the 331 readings are equal to the last bit |
+| station: control loop, motion, robot | The 50 Hz control loop on the trajectory generator, recovery, gripper outcomes, Home, the robot the turn loop drives | next |
 | web | Web Serial on a real adapter, camera capture, a demo page | planned |
 | a real SO-101 | by a person at the arm | not yet |
 
 What each ported part covers, how it was compared with PEAR and what it leaves out is in `docs/progress/`.
+The parts are not joined yet: nothing here can execute a model's action from end to end.
 Nothing has been run in a browser yet: the tests run in Node.
 
 ## Develop
