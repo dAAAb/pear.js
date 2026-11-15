@@ -1,5 +1,6 @@
 // Ports pear/deploy/station/control/robots/so101/joint/grippers.py.
 
+import { AttributeError } from "../../python/errors";
 import type { ArmState } from "../../station/joint/arm_state";
 import type { ControlConfig } from "../../station/joint/config";
 import { maximum, minimum, clip } from "../../station/joint/numeric";
@@ -100,7 +101,7 @@ export class SO101GripperOperation extends GripperOperation {
   report(): Record<string, unknown> & SO101GripperReport {
     if (this.outcome === null) {
       // Python reads the word of an outcome that is None
-      throw new TypeError("'NoneType' object has no attribute 'value'");
+      throw new AttributeError("'NoneType' object has no attribute 'value'");
     }
 
     return { gripper: this.openingReport, outcome: this.outcome, updates_sent: this.sampleCount };

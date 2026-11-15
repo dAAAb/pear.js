@@ -51,6 +51,7 @@ import numpy as np
 import pytest
 
 import pear
+import pear.deploy.station.control.joint.control_loop as control_loop_module
 from pear.deploy.station.control.joint.action_guard import ActionGuard
 from pear.deploy.station.control.joint.arm_state import ArmState
 from pear.deploy.station.control.joint.config import ControlConfig, MotionLimits, RobotConfig
@@ -67,7 +68,7 @@ from pear.deploy.station.control.robots.so101.config import SO101Config
 from pear.deploy.station.control.robots.so101.hardware.arm_state import ServoFault
 from pear.deploy.station.control.robots.so101.joint.grippers import SO101GripperOperation
 from pear.deploy.station.control.robots.so101.layout import ARM, GRIPPER_INDEX
-from pear.deploy.station.control.schemas import MOVING_CONTROL_STATES
+from pear.deploy.station.control.schemas import MOVING_CONTROL_STATES, RecoveryPhase
 
 REPOSITORY = Path(__file__).resolve().parents[2]
 FIXTURES = REPOSITORY / "tests" / "fixtures" / "station-loop"
@@ -104,11 +105,49 @@ ENABLE_OVERRIDES = (
     "robot.gripper_contact_confirm_s=0.1",
     "robot.velocity_tolerance=0.03",
 )
+# What makes an arm of the two take position-only commands: no planned velocity, so no friction fed along it either
+UNFED_OVERRIDES = {
+    arm: (
+        f"robot.arms.{arm}.uses_velocity_feedforward=false",
+        f"robot.arms.{arm}.friction_feedforward_nm=[0, 0, 0, 0, 0, 0]",
+        f"robot.arms.{arm}.friction_load_ratio=[0, 0, 0, 0, 0, 0]",
+    )
+    for arm in ("left", "right")
+}
 ERRORS = {
     error_class.__name__: error_class
     for error_class in (RuntimeError, ValueError, TimeoutError, OSError, KeyboardInterrupt, ServoFault)
 }
 MOST_TICKS = 2000  # the most control periods an operation may take, as in PEAR's tests
+
+
+class LogCapture(logging.Handler):
+    """Keeps what PEAR's control loop logs (a request, an end of motion, a fault): the level, in lower case, and the
+    message of each record since the last one taken. pear.js's loop tells its ``log`` the same."""
+
+    def __init__(self) -> None:
+        super().__init__(level=logging.DEBUG)
+        self.lines: list[list[str]] = []
+
+    def emit(self, record: logging.LogRecord) -> None:
+        self.lines.append([record.levelname.lower(), record.getMessage()])
+
+    def take(self) -> list[list[str]]:
+        """Returns the lines since the last time, and forgets them."""
+        lines, self.lines = self.lines, []
+        return lines
+
+    def install(self) -> None:
+        """Has no logger of PEAR write to the terminal, and the control loop's write here."""
+        logging.getLogger().addHandler(logging.NullHandler())
+        for name, logger in logging.root.manager.loggerDict.items():
+            if name.startswith("pear") and isinstance(logger, logging.Logger):
+                logger.handlers = [logging.NullHandler()]
+        control_loop_module.logger.handlers = [self]
+        control_loop_module.logger.setLevel(logging.INFO)
+
+
+LOGS = LogCapture()
 
 
 def plain(value: Any) -> Any:
@@ -261,6 +300,10 @@ class Stations:
         self.add("two_arm", "yam", *ConfigFiles.WIDE_LIMITS["yam"])
         self.add("two_arm_station", "yam")
         self.add("two_arm_enable", "yam", *ConfigFiles.WIDE_LIMITS["yam"], *ENABLE_OVERRIDES)
+        # with the wide limits and the left arm, or both arms, not fed the planned velocity
+        self.add("two_arm_left_unfed", "yam", *ConfigFiles.WIDE_LIMITS["yam"], *UNFED_OVERRIDES["left"])
+        unfed = (*UNFED_OVERRIDES["left"], *UNFED_OVERRIDES["right"])
+        self.add("two_arm_unfed", "yam", *ConfigFiles.WIDE_LIMITS["yam"], *unfed)
 
     def add(self, key: str, robot_name: str, *overrides: str) -> str:
         """Makes the station ``key`` of the tests' station of ``robot_name`` with ``overrides``, once."""
@@ -516,12 +559,14 @@ class Scenario:
     get the same record.
 
     After every control period and every other operation the record holds the driver's calls since the last record
-    (``io``, see Probe) and the loop's state (``s``): its whole snapshot and what else the loop keeps of its
-    operation, as what changed since the record before (see ``delta``)."""
+    (``io``, see Probe), what the loop logged since then, if anything (``log``, see LogCapture), and the loop's state
+    (``s``): its whole snapshot and what else the loop keeps of its operation, as what changed since the record
+    before (see ``delta``)."""
 
     def __init__(self, name: str, source: str, stations: Stations, monkeypatch: pytest.MonkeyPatch) -> None:
         self.name, self.source, self.stations, self.monkeypatch = name, source, stations, monkeypatch
         self.clock = StandInClock().install(monkeypatch)
+        LOGS.take()  # (what the scenario before logged after its last record)
         self.loop: JointControlLoop | None = None
         self.driver: Any = None
         self.probe: Probe | None = None
@@ -602,7 +647,7 @@ class Scenario:
                 patch.setattr(time, "sleep", lambda _: None)
             made = outcome(lambda: loop_class(driver, control_config, robot_config), shown=lambda loop: loop)
         if "error" in made:
-            self.init = {"out": made, "rec": {"io": self.probe.take()}}
+            self.init = {"out": made, "rec": self.record()}
             return False
 
         self.loop = made["ok"]
@@ -629,6 +674,8 @@ class Scenario:
             "hold_error": loop._fault_hold_error,
             "blocked": loop._blocked_gripper_openings,
             "cancellation": loop.operation_cancellation is not None,
+            # until when the recovery that is under way may take, which a release moves: null without one
+            "recovery_deadline": None if loop._recovery_request is None else loop._recovery_request.deadline,
             "progress": None,
         }
         if isinstance(operation, JointMoveOperation):
@@ -652,8 +699,12 @@ class Scenario:
         }
 
     def record(self) -> dict[str, Any]:
-        """Returns the driver's calls since the last record and what changed of the loop's state."""
+        """Returns the driver's calls since the last record, what the loop logged since then, if anything (``log``:
+        each line's level and message), and what changed of the loop's state."""
         entry: dict[str, Any] = {"io": self.probe.take()}
+        log = LOGS.take()
+        if log:
+            entry["log"] = log
         if self.loop is not None:
             state = self.state()
             entry["s"] = delta(self.previous_state, state)
@@ -818,6 +869,8 @@ class Scenario:
             for arm in targets if operation["arm"] is None else [operation["arm"]]:
                 for index in range(len(targets[arm])) if operation["index"] is None else [operation["index"]]:
                     targets[arm][index] += number(operation["delta"])
+            # (tuples, as PEAR's own commands give a move its targets: the loop logs them as they are given)
+            targets = {arm: tuple(target) for arm, target in targets.items()}
             options = {"speed_scale": operation["speed_scale"]} if "speed_scale" in operation else {}
             guard = self.guards.get(operation.get("guard"))
             if guard is not None:
@@ -837,7 +890,9 @@ class Scenario:
                 operation["out"] = outcome(lambda: guard.submit(self.loop.stop))
             operation["dispatched"] = guard.has_dispatched
         elif op == "clock":
-            if "set" in operation:
+            if "to" in operation:  # onto the deadline of the recovery that is under way
+                self.clock.now = {"recovery_deadline": self.loop._recovery_request.deadline}[operation["to"]]
+            elif "set" in operation:
                 self.clock.now = operation["set"]
             else:
                 self.clock.now += operation["add"]
@@ -893,14 +948,24 @@ class Scenario:
             position[operation["index"]] = number(operation["value"])
             changed = dataclasses.replace(state, position=tuple(position))
             self.loop.states = {**self.loop.states, operation["arm"]: changed}
-        elif op == "policy_step":
+        elif op == "policy_step":  # one step of the recovery policy on a request of its own, past the loop's checks
             window = SimpleNamespace(reset=lambda: None)
             request = RecoveryRequest(window, self.clock.now + operation["timeout_s"])
+            if operation.get("cancelled"):  # the operator paused it before the step
+                request.cancellation = threading.Event()
+                request.cancellation.set()
+            if "from_phase" in operation:  # the request is that far already
+                request.phase = RecoveryPhase(operation["from_phase"])
             step = self.loop.recovery_policy.step
             operation["out"] = outcome(lambda: step(self.loop, request, self.loop.snapshot(), operation["is_stable"]))
             operation["phase"] = request.phase.value
+            operation["deadline"] = request.deadline
         elif op == "raise":
             raise make_error(operation)
+        elif op == "set_exit":  # the control thread's exit event, set while the loop is open: its thread is gone
+            self.loop._exit_event.set()
+        elif op == "set_input":  # the planned state, changed behind the loop's back
+            setattr(self.loop.trajectory.input, operation["name"], numbers(operation["values"]))
         elif op == "call":
             operation["out"] = self.execute_call(operation["method"], operation["args"])
         else:
@@ -1102,6 +1167,9 @@ class TrajectoryCases:
             move = JointMove.build(numbers(start), numbers(goal), limits, layout, **options)
             return self.move_record(move, control_config.control_period_s, rng)
 
+        # what build itself gave, apart from what the move gives afterwards: a refusal is build's own
+        built = outcome(lambda: JointMove.build(numbers(start), numbers(goal), limits, layout, **options), shown=lambda move: None)
+        case["built"] = built
         case["out"] = outcome(build, shown=lambda record: record)
         return case
 
@@ -1262,6 +1330,21 @@ class TrajectoryCases:
         cases.append(self.direct_case("slower", [0.0, 0.0], [1.0, 0.2], [[0.0001, 0.0001], [2.0, 2.0], [10.0, 10.0]]))
         cases.append(self.direct_case("one_coordinate_slower", [0.0], [1.0], [[0.0001], [2.0], [10.0]]))
 
+        # a start past a limit by more than the feedback tolerance, where no held command rests: toward the bounds,
+        # and along them
+        more = self.generator("moves-of-starts")
+        for station in ("so101_station", "two_arm"):
+            _, robot_config = self.stations.configs(station)
+            limits = robot_config.joint_limits()
+            rest = np.array(Robots.rest(robot_config))
+            for joint, bounds, sign in ((1, limits.lower_bounds, -1), (0, limits.upper_bounds, 1)):
+                beyond = rest.copy()
+                beyond[joint] = bounds[joint] + sign * 2 * limits.feedback_tolerance
+                along = beyond.copy()
+                along[-1] = rest[-1] + (0.1 if rest[-1] < 0.5 else -0.1)
+                cases.append(self.move_case("start_beyond_the_tolerance", station, beyond, rest, more))
+                cases.append(self.move_case("start_beyond_the_tolerance", station, beyond, along, more))
+
         return cases
 
     # -- JointTrajectory
@@ -1381,6 +1464,38 @@ class TrajectoryCases:
                 ]
                 sessions.append(self.trajectory_session("generated", station, script))
 
+        # what a hold, a new heading and a stop leave of a motion that the input still holds: the planned velocity
+        # and acceleration, and the velocity and acceleration a target was to be reached with
+        for station in ("so101_station", "two_arm"):
+            _, robot_config = self.stations.configs(station)
+            limits = robot_config.joint_limits()
+            rest = list(Robots.rest(robot_config))
+            width = len(rest)
+            moving = [0.5 * velocity for velocity in limits.velocity]
+            pushing = [0.25 * acceleration for acceleration in limits.acceleration]
+            arriving = [0.1 * velocity * (-1) ** index for index, velocity in enumerate(limits.velocity)]
+            easing = [0.05 * acceleration for acceleration in limits.acceleration]
+            aside = [value + (0.05 if index == 0 else 0.0) for index, value in enumerate(rest)]
+            moved = [["set_input", "current_velocity", moving], ["set_input", "current_acceleration", pushing]]
+            aimed = [["set_input", "target_velocity", arriving], ["set_input", "target_acceleration", easing]]
+            sessions.append(self.trajectory_session("hold_from_motion", station, [["hold", rest], *moved, *aimed, ["hold", aside]]))
+            script = [["hold", rest], *aimed, ["head_for", aside, None], ["compute"], ["finish", 2]]
+            sessions.append(self.trajectory_session("heading_from_a_moving_target", station, script))
+            script = [["hold", rest], ["set_input", "current_velocity", moving], *aimed, ["stop", False, None], ["finish", 2]]
+            sessions.append(self.trajectory_session("stop_from_a_moving_target", station, script))
+            script = [["hold", rest], *moved, ["stop", True, None], ["finish", 2]]
+            sessions.append(self.trajectory_session("stop_from_standstill", station, script))
+            # a target that is refused while a stop is under way: the stop's input comes back, in velocity mode
+            script = [
+                ["hold", rest],
+                ["set_input", "current_velocity", moving],
+                ["stop", False, None],
+                ["advance", 2],
+                ["set_input", "current_position", [math.nan] * width],
+                ["set_target", aside],
+            ]
+            sessions.append(self.trajectory_session("target_refused_while_stopping", station, script))
+
         return sessions
 
     # -- GripperProfile
@@ -1440,6 +1555,9 @@ class TrajectoryCases:
             sessions.append(self.gripper_session("generated", caps, rng.random(), rng.random() < 0.5, period_s, start_velocity, 4))
         sessions.append(self.gripper_session("refused", [0.0, 1.0, 1.0], 0.5, True, 0.02, None, 0))
         sessions.append(self.gripper_session("refused", [1.0, 1.0, 1.0], math.nan, True, 0.02, None, 0))
+        # a jaw without acceleration, and one without jerk
+        sessions.append(self.gripper_session("refused", [1.0, 0.0, 1.0], 0.5, True, 0.02, None, 0))
+        sessions.append(self.gripper_session("refused", [1.0, 1.0, 0.0], 0.5, False, 0.02, None, 0))
 
         return sessions
 
@@ -1525,7 +1643,49 @@ class TrajectoryCases:
                     nows.append(now)
                 cases.append(self.sequence_case("generated", station, wander.tolist(), rate_hz, nows))
 
+        # the slack of a row's phase, and how late a row may be handed over: at the edge and at the next instant
+        for station in ("so101_station", "two_arm"):
+            control_config, robot_config = self.stations.configs(station)
+            rest = list(Robots.rest(robot_config))
+            period_s = control_config.control_period_s
+            rows = [list(rest) for _ in range(4)]
+            # at this rate a row's time is one part in twenty million short of a control period: after one period
+            # the next row is not due yet, and after two it is
+            nearly = control_config.rate_hz * (1 - 5e-8)
+            cases.append(self.sequence_case("phase_short_of_a_row", station, rows, nearly, [period_s * index for index in range(10)]))
+
+            def is_too_late(now: float, station: str = station, rows: list[list[float]] = rows) -> bool:
+                """Whether PEAR's operation, begun at zero, interrupts itself when its second row is due at ``now``."""
+                control_config, robot_config = self.stations.configs(station)
+                trajectory = JointTrajectory(robot_config.joint_limits(), robot_config.LAYOUT, control_config)
+                trajectory.hold(Robots.rest(robot_config))
+                operation = SequenceOperation(trajectory, rows, control_config.rate_hz)
+                trajectory.accept(operation.advance(0.0, {}, {}))
+                try:
+                    operation.advance(now, {}, {})
+                except Exception:
+                    return True
+                return False
+
+            edge = self.last_before(is_too_late, period_s, 1.0)
+            for name, now in (("row_as_late_as_allowed", edge), ("row_later_than_allowed", math.nextafter(edge, math.inf))):
+                cases.append(self.sequence_case(name, station, rows, control_config.rate_hz, [0.0, now, now + period_s]))
+
         return cases
+
+    @staticmethod
+    def last_before(turns: Callable[[float], bool], low: float, high: float) -> float:
+        """Returns the last double from ``low`` on for which ``turns`` is still false, when it is false at ``low``
+        and true at ``high`` and turns once between them: found by halving, with PEAR's own code as the judge."""
+        if turns(low) or not turns(high):
+            raise AssertionError("Nothing turns between the two")
+        while math.nextafter(low, math.inf) < high:
+            middle = low + (high - low) / 2
+            if turns(middle):
+                high = middle
+            else:
+                low = middle
+        return low
 
     def gripper_operation_case(self, kind: str, station: str, opens: bool, start_opening: float, script: Sequence[dict[str, Any]]) -> dict[str, Any]:
         """Runs the SO-101's gripper operation by hand: made at an opening, then advanced with the readings a script
@@ -1593,11 +1753,52 @@ class TrajectoryCases:
             cases.append(self.gripper_operation_case("never_rests", station, False, 0.4, wobbling))
             repeated = script(260, lambda index, now: 0.3, repeats=True)  # every reading twice: fewer new samples
             cases.append(self.gripper_operation_case("repeated_readings", station, False, 0.6, repeated))
+            # a report asked for before the jaw has an outcome, and once it has one
+            asked = {"now": 0, "stamp": 0, "opening": 0, "report": True}
+            cases.append(self.gripper_operation_case("report_before_outcome", station, False, 1.0, [asked, *blocked[:5], asked, *blocked[5:], asked]))
+            # a jaw that rests a share of the gripper tolerance short of its endpoint: inside it, at it, past it
+            _, robot_config = self.stations.configs(station)
+            for opens in (True, False):
+                for share in (0.25, 0.75, 1.0, 1.25):
+                    short = share * robot_config.gripper_tolerance
+                    resting = GripperProfile.OPEN_ENDPOINT - short if opens else GripperProfile.CLOSED_ENDPOINT + short
+                    near = script(330, lambda index, now, resting=resting: resting)
+                    cases.append(self.gripper_operation_case("rests_near_endpoint", station, opens, 0.5, [*near, asked]))
         for _ in range(3 * self.scale):
             station = rng.choice(["so101_station", "so101_quick_home"])
             stop = rng.uniform(0.05, 0.9)
             noisy = self.following(station, False, 1.0, blocked_at=stop, count=200, noise=lambda: rng.uniform(-0.004, 0.004))
             cases.append(self.gripper_operation_case("generated", station, False, 1.0, noisy))
+
+        # the targets to hold after an opening that timed out, when the jaw reads past either end of its range, at
+        # either end and inside it; and after a closing that timed out, which keeps the command
+        for station in ("so101_station", "so101_quick_home"):
+            late = {"now": 106.0, "stamp": 106.0}
+            beyond = [{**late, "opening": opening, "fault": "GripperEndpointTimeout"} for opening in (1.2, -0.2, 1.0, 0.0, 0.37)]
+            for opens in (True, False):
+                start = script(3, lambda index, now: 0.5)
+                cases.append(self.gripper_operation_case("fault_targets_past_the_range", station, opens, 0.5, [*start, *beyond]))
+            # a jaw that stops on an object while every few readings are stamped before the one before them: its rest
+            # is judged on, where a window that minded the order would start over each time
+            unordered = [dict(step) for step in self.following(station, False, 1.0, blocked_at=0.4, count=220)]
+            for index in range(5, len(unordered) - 1, 7):
+                unordered[index]["stamp"], unordered[index + 1]["stamp"] = unordered[index + 1]["stamp"], unordered[index]["stamp"]
+            cases.append(self.gripper_operation_case("readings_stamped_out_of_order", station, False, 1.0, unordered))
+            # a jaw whose held command lies past an end of its range: its way starts at that end
+            for opens, start in ((False, 1.04), (True, -0.03), (True, 1.04), (False, -0.03)):
+                follows = self.following(station, opens, start, blocked_at=None, count=160)
+                cases.append(self.gripper_operation_case("held_past_the_range", station, opens, start, follows))
+
+        # a closing jaw that wobbles about an object: over a whole window its openings span a share of the gripper
+        # tolerance. Within the tolerance it is at rest on the object; past it, it never rests and the closing times
+        # out (a span between one and two tolerances tells a rest judged against twice the tolerance)
+        for station in ("so101_station", "so101_quick_home"):
+            _, robot_config = self.stations.configs(station)
+            report = {"now": 0, "stamp": 0, "opening": 0, "report": True}
+            for share in (0.5, 1.5):
+                half = share * robot_config.gripper_tolerance / 2
+                wobbling = script(330, lambda index, now, half=half: 0.4 + (half if index % 2 else -half))
+                cases.append(self.gripper_operation_case("wobbles_by_a_share_of_the_tolerance", station, False, 0.4, [*wobbling, report]))
 
         return cases
 
@@ -1672,6 +1873,7 @@ class Catalogue:
         self.of_the_so101()
         self.beyond_pears_tests()
         self.generated()
+        self.since_the_audit()
         return self.scenarios
 
     # -- test_joint_control_in_station.py: the generic loop on the driver in memory, for each robot's layout
@@ -2557,6 +2759,78 @@ class Catalogue:
             s.call("stability", duration_s=0.0)
             self.keep(s)
 
+            s = begin("a_move_needs_a_stationary_planned_state")
+            moving = [0.0] * layout.vector_length
+            moving[0] = JointControlLoop.STATIONARY_EPSILON / 2  # at rest still
+            s.do("set_input", name="current_velocity", values=moving)
+            s.jog(None, 1, tests.STEP_RAD)
+            s.until_hold()
+            moving[-1] = -0.01
+            s.do("set_input", name="current_velocity", values=moving)
+            s.jog(None, 1, tests.STEP_RAD)
+            s.call("dispatch_joint_move", move={"start": s.held(), "goal": s.held()})
+            self.keep(s)
+
+            s = begin("a_sequence_refers_to_an_observation")
+            rows = np.tile(s.held(), (3, 1))
+            rows[:, 0] += np.linspace(0, 0.01, 3)
+            s.tamper("read", "velocity", index=0, value=2.0, times=1)  # one period of motion: the HOLD is unsettled
+            s.tick()
+            s.do("observe", name="held", positions="target")
+            s.call("start_sequence", positions=rows, rate_hz=25.0, observation="held")
+            s.until_settled()
+            s.call("start_sequence", positions=rows, rate_hz=25.0, observation="held")
+            s.tick(2)
+            s.do("observe", name="running", positions="target")
+            s.call("dispatch_joint_move", move={"start": s.held(), "goal": s.held()}, observation="running")
+            s.call("start_sequence", positions=rows, rate_hz=25.0, observation="running")
+            s.until_hold()
+            s.call("start_sequence", positions=rows, rate_hz=25.0, observation="held")
+            s.do("observe", name="short", positions=[0.0])
+            s.call("start_sequence", positions=rows, rate_hz=25.0, observation="short")
+            self.keep(s)
+
+            s = begin("a_recovery_needs_the_control_thread")
+            s.fault_by_stale_feedback()
+            s.do("set_exit")
+            s.call("recover")
+            s.tick(2)
+            self.keep(s)
+
+            s = begin("an_interrupted_sequence_whose_stop_fails")
+            rows = np.tile(s.held(), (tests.SEQUENCE_ROWS, 1))
+            rows[:, 0] += np.linspace(0, tests.SEQUENCE_SPAN_RAD, tests.SEQUENCE_ROWS)
+            s.call("start_sequence", positions=rows, rate_hz=control_config.rate_hz / 2)
+            s.tick(3)
+            s.do("break_stop", message="No valid stop trajectory")
+            s.tick(period_s=tests.STALL_PERIODS * control_config.control_period_s)
+            s.tick(2)
+            self.keep(s)
+
+            s = begin("a_release_is_blocked_by_the_joint_that_drifted_most", recovery="ReleaseRecovery")
+            s.push(tests.DISPLACEMENT_RAD)
+            jumps = [
+                {"op": "shift", "arm": layout.arms[-1], "index": 0, "delta": 0.6 * tests.DRIFT_RAD},
+                {"op": "shift", "arm": layout.arms[-1], "index": 2, "delta": -tests.DRIFT_RAD},
+            ]
+            s.wait("recover", hooks=[{"at": "before", "when": {"phase": "Releasing old target"}, "do": jumps}])
+            self.keep(s)
+
+            s = begin("a_wait_for_a_hold", "unstable_hold")
+            s.until_settled()
+            s.tamper("read", "velocity", arm=first, index=1, value=tests.DRIFT_RAD_S)
+            s.tick(8)
+            s.wait("wait_for_hold", timeout_s=0.1)
+            self.keep(s)
+
+            s = begin("a_snapshot_is_read")
+            s.call("snapshot")
+            s.jog(None, 1, tests.STEP_RAD)
+            s.tick(2)
+            s.call("snapshot")
+            s.call("requested_position")
+            self.keep(s)
+
         # the SO-101's own loop: its jaw, its STOP caps, its servos' status in a snapshot
         quick_home, shipped = "so101_quick_home", "so101_station"
 
@@ -2655,11 +2929,416 @@ class Catalogue:
         s.wait("wait_for_hold", timeout_s=3.0)
         self.keep(s)
 
+        for magnitude in (0.5, 0.05):
+            # a velocity reading that alternates about zero: its mean is at rest, its RMS is not, and the SO-101's
+            # recovery window bounds the mean alone
+            s = so101(f"a_recovery_on_a_velocity_that_alternates[{magnitude}]")
+            s.set("failure", {"type": "ServoFault", "message": "Servo error: elbow_flex: overload"}, "arm")
+            s.tick()
+            s.set("failure", None, "arm")
+            s.tamper("read_for_recovery", "alternate", field="velocity", index=1, magnitude=magnitude, by="count")
+            s.wait("recover", timeout_s=2.0)
+            self.keep(s)
+
+        s = so101("a_report_before_the_outcome")
+        s.call("begin_grippers", request=False)
+        s.tick(2)
+        s.call("report")
+        s.call("stop")
+        s.until_hold()
+        s.call("report")
+        self.keep(s)
+
+        for station in (quick_home, shipped):
+            s = so101(f"a_wait_that_times_out_on_an_unstable_hold[{station}]", station=station)
+            s.until_settled()
+            s.tamper("read", "velocity", index=2, value=0.5)
+            s.tick(8)
+            s.wait("wait_for_hold", timeout_s=0.1)
+            self.keep(s)
+
+        # the two arms when one of them, or neither, is fed the planned velocity
+        for station in ("two_arm_left_unfed", "two_arm_unfed"):
+            s = self.begin(f"planned_velocities_of_fed_arms_alone[{station}]", "beyond PEAR's tests", "two_arm", station)
+            targets = {arm: list(target) for arm, target in s.loop.targets.items()}
+            targets["left"][1], targets["right"][0] = 0.1, -0.1
+            s.call("move", targets=targets)
+            s.until_hold()
+            s.fault_by_stale_feedback()
+            s.wait("recover")
+            self.keep(s)
+
+        s = self.begin("a_wait_that_times_out_on_an_unstable_hold[two_arm]", "beyond PEAR's tests", "two_arm", "two_arm")
+        s.until_settled()
+        s.tamper("read", "velocity", arm="right", index=3, value=0.5)
+        s.tick(8)
+        s.wait("wait_for_hold", timeout_s=0.1)
+        self.keep(s)
+
         # the release recovery of two arms, where PEAR's tests stop short
         s = self.begin("a_release_stopped_by_motion", "beyond PEAR's tests", "two_arm", "two_arm")
         s.displaced_hold(tests.ManualRecovery.DISPLACED_RAD)
         shake = {"op": "tamper", "method": "read_for_recovery", "spec": {"kind": "velocity", "arm": "left", "index": 2, "value": 0.5}}
         s.wait("recover", hooks=[{"at": "before", "when": {"phase": "Releasing old target"}, "do": [shake]}])
+        self.keep(s)
+
+        self.at_the_edges()
+
+    def at_the_edges(self) -> None:
+        """Scenarios at the edges of what the loop and its recovery policies decide: how close a move must start,
+        when a recovery's time is up, which checks of a policy hold when the loop's own have passed."""
+        tests = pear_tests
+        source = "beyond PEAR's tests"
+        for robot, station in ROBOTS:
+            control_config, robot_config = self.stations.configs(station)
+            limits, layout = robot_config.joint_limits(), robot_config.LAYOUT
+            first, last, width = layout.arms[0], layout.arms[-1], layout.coordinate_count
+            gripper = width - 1
+
+            def begin(name: str, variant: str = "", **rig: Any) -> Scenario:
+                return self.begin(f"{name}[{robot}{'-' + variant if variant else ''}]", source, "memory", station, **rig)
+
+            # how close to the held command a checked move must start: the first coordinate rests at zero, so
+            # that the distances are the numbers given
+            start = list(Robots.rest(robot_config))
+            start[0] = 0.0
+            s = begin("a_move_must_start_at_the_held_command", start=start)
+            epsilon = JointControlLoop.START_EPSILON
+            for apart in (2 * epsilon, math.nextafter(epsilon, math.inf), epsilon, -epsilon, epsilon / 2, 0.0):
+                begun, goal = s.held(), s.held()
+                begun[0] += apart
+                goal[1] += tests.STEP_RAD
+                if s.call("dispatch_joint_move", move={"start": begun, "goal": goal}) == {"ok": True}:
+                    s.until_hold()
+            for apart in (2 * epsilon, epsilon / 2, -epsilon / 2):  # and of a coordinate that does not rest at zero
+                begun, goal = s.held(), s.held()
+                begun[1] += apart
+                goal[2] += tests.STEP_RAD
+                if s.call("dispatch_joint_move", move={"start": begun, "goal": goal}) == {"ok": True}:
+                    s.until_hold()
+            self.keep(s)
+
+            # a recovery whose caller gives no timeout takes the policy's, and fails when that has passed
+            for recovery in ("MeasuredHoldRecovery", "ReleaseRecovery"):
+                s = begin("a_recovery_without_a_timeout_ends_at_the_policys", recovery, recovery=recovery)
+                s.fault_by_stale_feedback()
+                s.set("velocity", tests.DRIFT_RAD_S)
+                s.wait("recover")
+                s.set("velocity", 0.0)
+                s.wait("recover")
+                self.keep(s)
+
+            # a recovery's time is up at its deadline, not after it: the clock is put on the deadline itself
+            for recovery in ("MeasuredHoldRecovery", "ReleaseRecovery"):
+                s = begin("a_recovery_ends_at_its_deadline", recovery, recovery=recovery)
+                s.fault_by_stale_feedback()
+                on_time = {"at": "before", "when": {"sleep": 4}, "do": [{"op": "clock", "to": "recovery_deadline"}]}
+                s.wait("recover", timeout_s=1.0, hooks=[on_time])
+                s.tick(2)
+                self.keep(s)
+
+            # a fault while the last reading is too old keeps the targets: the measured pose is not taken from it
+            s = begin("a_fault_on_an_old_reading_keeps_the_targets")
+            s.set("is_following", False)
+            s.do("shift", arm=first, index=0, delta=0.01)
+            s.tick(2)
+            s.do("clock", add=5 * control_config.state_timeout_s)
+            s.tamper("read", "raise", times=1, type="OSError", message="bus down")
+            s.tick(2)
+            self.keep(s)
+
+            # an arm that leaves its new hold while a recovery verifies it: the measured hold's recovery
+            s = begin("a_recovery_whose_arm_leaves_the_hold_it_verifies", "MeasuredHoldRecovery")
+            s.fault_by_stale_feedback()
+            s.set("is_following", False)
+            leaves = {"op": "shift", "arm": first, "index": 0, "delta": 0.6}
+            s.wait("recover", hooks=[{"at": "before", "when": {"phase": "Verifying new hold"}, "do": [leaves]}])
+            self.keep(s)
+
+            # a gripper that slips while a release verifies its hold: neither the drift nor the tracking is the gripper's
+            s = begin("a_release_whose_gripper_slips_while_it_verifies", recovery="ReleaseRecovery")
+            s.push(tests.DISPLACEMENT_RAD)
+            slips = {"op": "shift", "arm": first, "index": gripper, "delta": -0.3}
+            s.wait("recover", hooks=[{"at": "before", "when": {"phase": "Verifying new hold"}, "do": [slips]}])
+            self.keep(s)
+
+            # two joints that drift alike during a release: the first of them is named
+            s = begin("a_release_is_blocked_by_the_first_of_two_joints_that_drifted_alike", recovery="ReleaseRecovery")
+            s.push(tests.DISPLACEMENT_RAD)
+            jumps = [{"op": "shift", "arm": last, "index": index, "delta": tests.DRIFT_RAD} for index in (1, 0)]
+            s.wait("recover", hooks=[{"at": "before", "when": {"phase": "Releasing old target"}, "do": jumps}])
+            self.keep(s)
+
+            # a joint that drifts by the position tolerance itself, and by the next number above it
+            for variant, drift in (("by_the_tolerance", robot_config.position_tolerance), ("past_the_tolerance", math.nextafter(robot_config.position_tolerance, math.inf))):
+                rest = list(Robots.rest(robot_config))
+                rest[width * (len(layout.arms) - 1) + 2] = 0.0  # (the joint that drifts starts at zero)
+                s = begin("a_release_whose_joint_drifts", variant, recovery="ReleaseRecovery", start=rest)
+                s.push(tests.DISPLACEMENT_RAD)
+                jump = {"op": "shift", "arm": last, "index": 2, "delta": drift}
+                s.wait("recover", hooks=[{"at": "before", "when": {"phase": "Releasing old target"}, "do": [jump]}])
+                self.keep(s)
+
+            # targets next to the measured pose: a release for what is further than its epsilon, none for less
+            for variant, apart in (("released", 5e-8), ("not_released", 5e-10)):
+                s = begin("a_release_of_targets_next_to_the_pose", variant, recovery="ReleaseRecovery")
+                s.fault_by_stale_feedback()
+                s.set("is_following", False)
+                s.do("shift", arm=first, index=0, delta=apart)
+                s.wait("recover")
+                self.keep(s)
+
+            # targets put past the feedback bounds by hand: a release does not start from them
+            s = begin("a_release_from_targets_past_the_bounds", recovery="ReleaseRecovery")
+            s.fault_by_stale_feedback()
+            s.set("is_following", False)
+            targets = {arm: list(target) for arm, target in s.loop.targets.items()}
+            targets[first][1] = limits.lower_bounds[1] - 3 * limits.feedback_tolerance
+            s.call("transfer_hold", targets=targets)
+            s.wait("recover")
+            self.keep(s)
+
+            # one step of a policy on a request that the operator has paused, and on one that has not been
+            for recovery in ("MeasuredHoldRecovery", "ReleaseRecovery"):
+                for cancelled in (True, False):
+                    variant = f"{recovery}-{'paused' if cancelled else 'going'}"
+                    s = begin("a_policy_steps_a_request_of_its_own", variant, recovery=recovery)
+                    s.push(tests.DISPLACEMENT_RAD)
+                    s.do("policy_step", timeout_s=tests.RECOVERY_TIMEOUT_S, is_stable=True, cancelled=cancelled)
+                    s.do("policy_step", timeout_s=tests.RECOVERY_TIMEOUT_S, is_stable=False, cancelled=cancelled)
+                    self.keep(s)
+
+            # a pause that is set when the measured hold's recovery is about to complete: the hold is not taken
+            s = begin("a_policy_does_not_complete_a_request_that_is_paused")
+            s.push(tests.DISPLACEMENT_RAD)
+            verifying = RecoveryPhase.VERIFYING_HOLD.value
+            s.do("policy_step", timeout_s=tests.RECOVERY_TIMEOUT_S, is_stable=True, cancelled=True, from_phase=verifying)
+            s.tick(2)
+            self.keep(s)
+
+            # a planned speed at the epsilon of rest, at the next number above it and at twice it
+            s = begin("a_move_needs_a_planned_speed_within_the_epsilon")
+            epsilon = JointControlLoop.STATIONARY_EPSILON
+            for speed in (epsilon, math.nextafter(epsilon, math.inf), 2 * epsilon):
+                moving = [0.0] * layout.vector_length
+                moving[1] = -speed
+                s.do("set_input", name="current_velocity", values=moving)
+                if s.jog(None, 1, tests.STEP_RAD) == {"ok": None}:
+                    s.until_hold()
+            self.keep(s)
+
+            # a recovery asked for with a pause that is set already: in a HOLD, in a FAULT, and with no time
+            s = begin("a_recovery_that_is_paused_before_it_begins")
+            s.do("event", name="pause")
+            s.do("cancel", name="pause")
+            s.call("recover", cancellation="pause")
+            s.call("recover", cancellation="pause", timeout_s=0)
+            s.fault_by_stale_feedback()
+            s.call("recover", cancellation="pause")
+            s.call("recover", cancellation="pause", timeout_s=math.nan)
+            s.tick(2)
+            self.keep(s)
+
+            # readings that name other arms than the layout's: one more, as many under another name, none
+            s = begin("readings_of_other_arms_are_refused")
+            read = {arm: {"position": list(s.loop.targets[arm]), "velocity": [0.0] * width} for arm in layout.arms}
+            s.call("check_states", states=read)
+            s.call("check_states", states={**read, "elbow": read[first]})
+            s.call("check_states", states={**{arm: read[arm] for arm in layout.arms[:-1]}, "elbow": read[last]})
+            s.call("check_states", states={})
+            self.keep(s)
+
+            # the cancellation of an operation that faulted goes with the fault's recovery
+            s = begin("a_recovery_drops_the_cancellation_of_the_operation_that_faulted")
+            s.jog(None, 1, 5 * tests.STEP_RAD)
+            s.do("event", name="pause")
+            s.do("attach", name="pause")
+            s.tick(3)
+            s.fault_by_stale_feedback()
+            s.tick(2)
+            s.wait("recover")
+            s.tick(2)
+            self.keep(s)
+
+            # a fault that has details, recovered: the details go with the fault
+            s = begin("a_recovery_clears_the_details_of_its_fault")
+            s.set("velocity", tests.DRIFT_RAD_S)
+            s.until(["FAULT"])
+            s.set("velocity", 0.0)
+            s.wait("recover")
+            s.call("snapshot")
+            self.keep(s)
+
+            # the time of a recovery that passes while its caller sleeps: the caller's own check ends the recovery
+            s = begin("a_recovery_whose_time_passes_between_two_periods")
+            s.fault_by_stale_feedback()
+            late = {"at": "after", "when": {"sleep": 3}, "do": [{"op": "clock", "add": 5.0}]}
+            s.wait("recover", timeout_s=1.0, hooks=[late])
+            s.tick(2)
+            self.keep(s)
+
+            # a read that fails in FAULT is logged once, and once more after a good read has come between
+            s = begin("a_failed_read_in_fault_is_logged_again_after_a_good_one")
+            s.fault_by_stale_feedback()
+            for _ in range(2):
+                s.tamper("read", "raise", type="OSError", message="bus down")
+                s.tick(3)
+                s.do("untamper", method="read")
+                s.tick(2)
+            self.keep(s)
+
+            # a move at its deadline and at the next instant: its time is up after the deadline, not at it
+            s = begin("a_move_at_its_deadline")
+            s.jog(None, 1, 10 * tests.STEP_RAD)
+            s.tick(5)
+            deadline = s.loop._operation_deadline
+            s.do("tick_at", times=[deadline, math.nextafter(deadline, math.inf)])
+            s.until_hold()
+            self.keep(s)
+
+            # a planned state put past the bounds behind the loop's back: the sample that follows is not sent
+            s = begin("a_sample_past_the_bounds_is_not_sent")
+            rows = np.tile(s.held(), (tests.SEQUENCE_ROWS, 1))
+            rows[:, 0] += np.linspace(0, tests.SEQUENCE_SPAN_RAD, tests.SEQUENCE_ROWS)
+            s.call("start_sequence", positions=rows, rate_hz=control_config.rate_hz / 2)
+            s.tick(3)
+            beyond = s.held()
+            beyond[0] = limits.upper_bounds[0] + 0.05
+            s.do("set_input", name="current_position", values=beyond)
+            s.tick(2)
+            self.keep(s)
+
+        # a release recovery's own timeout is a second at least: the two arms with the short settle timeout
+        s = self.begin("a_release_recovery_takes_a_second_at_least", source, "two_arm", "two_arm_enable")
+        s.fault_by_stale_feedback()
+        s.wait("recover")
+        self.keep(s)
+
+        # the SO-101's own loop: an arm that is moved while its recovery verifies the measured hold
+        s = self.begin("so101_a_recovery_whose_arm_is_moved_while_it_verifies", source, "so101", "so101_quick_home")
+        s.set("failure", {"type": "ServoFault", "message": "Servo error: elbow_flex: overload"}, "arm")
+        s.tick()
+        s.set("failure", None, "arm")
+        moved = {"op": "shift", "arm": ARM, "index": 1, "delta": 0.4}
+        s.wait("recover", hooks=[{"at": "before", "when": {"phase": "Verifying new hold"}, "do": [moved]}])
+        self.keep(s)
+
+        # a jaw that stopped on an object and is opened again: the opening it was judged at goes with the operation
+        s = self.begin("so101_a_blocked_jaw_is_opened_again", source, "so101", "so101_quick_home")
+        s.set("blocked_gripper_opening", 0.4, "arm")
+        s.call("begin_grippers", request=False)
+        s.finish()
+        s.call("report")
+        s.tick(2)
+        s.set("blocked_gripper_opening", None, "arm")
+        s.call("begin_grippers", request=True)
+        s.tick(3)
+        s.finish()
+        s.call("report")
+        self.keep(s)
+
+    # -- what an audit of pear.js found no scenario to hold (kept last, so that every scenario before keeps its place)
+
+    def since_the_audit(self) -> None:
+        """Scenarios for three things no scenario decided: which instant of a control period is its ``now``, how far
+        a reading's stamp may run ahead of the clock, and how long a shutdown waits for its stop."""
+        tests = pear_tests
+        source = "beyond PEAR's tests"
+        slack = ArmState.CLOCK_SLACK_S
+        for robot, station in ROBOTS:
+            control_config, robot_config = self.stations.configs(station)
+            layout = robot_config.LAYOUT
+            width, period_s = layout.coordinate_count, control_config.control_period_s
+
+            def begin(name: str, variant: str = "", **rig: Any) -> Scenario:
+                return self.begin(f"{name}[{robot}{'-' + variant if variant else ''}]", source, "memory", station, **rig)
+
+            # the clock moves while a control period reads its arms: the period's time is the clock before the
+            # reading. A motion's settling starts then, a sequence's first row is handed over then, an operation's
+            # time is up by then; the reading is stamped after it.
+            s = begin("a_period_takes_its_time_before_its_reading", "move")
+            s.tamper("read", "advance_clock", seconds=period_s / 8)
+            s.jog(None, 1, tests.STEP_RAD)
+            s.until_hold()
+            s.tick(3)
+            self.keep(s)
+
+            s = begin("a_period_takes_its_time_before_its_reading", "sequence")
+            s.tamper("read", "advance_clock", seconds=period_s / 16)
+            rows = np.tile(s.held(), (5, 1))
+            rows[:, 0] += np.linspace(0, 0.05, 5)
+            s.call("start_sequence", positions=rows, rate_hz=control_config.rate_hz / 2)
+            s.until_hold()
+            self.keep(s)
+
+            # a move whose period begins on its deadline is not late, though its reading ends past the deadline
+            s = begin("a_period_takes_its_time_before_its_reading", "deadline")
+            s.jog(None, 1, 10 * tests.STEP_RAD)
+            s.tick(5)
+            deadline = s.loop._operation_deadline
+            s.tamper("read", "advance_clock", seconds=period_s / 8)
+            s.do("tick_at", times=[deadline, math.nextafter(deadline, math.inf)])
+            s.do("untamper", method="read")
+            s.until_hold()
+            self.keep(s)
+
+            # a reading stamped ahead of the clock: by less than the slack the loop's check takes it (a snapshot,
+            # which allows none, shows the HOLD unsettled for it), by more it is refused as stale
+            s = begin("a_reading_stamped_ahead_of_the_clock", "checked")
+            for ahead in (slack / 2, 0.9 * slack, 1.1 * slack, 2 * slack, 0.0):
+                states = {
+                    arm: {"position": list(s.loop.targets[arm]), "velocity": [0.0] * width, "age_s": -ahead}
+                    for arm in layout.arms
+                }
+                s.call("check_states", states=states)
+            self.keep(s)
+
+            s = begin("a_reading_stamped_ahead_of_the_clock", "within_the_slack")
+            s.tamper("read", "stamp", offset=slack / 2, times=3)
+            s.tick(5)
+            s.jog(None, 1, tests.STEP_RAD)
+            s.tamper("read", "stamp", offset=0.9 * slack, times=4)
+            s.until_hold()
+            self.keep(s)
+
+            s = begin("a_reading_stamped_ahead_of_the_clock", "past_the_slack")
+            s.tick(2)
+            s.tamper("read", "stamp", offset=1.1 * slack, times=1)
+            s.tick(3)
+            self.keep(s)
+
+        # a shutdown gives up waiting for its stop after its own time, and releases the hardware all the same. No
+        # stop of these stations stays unsettled for that long without a fault, so a slow move brakes with its own
+        # caps (for more than two seconds) and the clock is put on during the wait's first sleep, to five control
+        # periods short of the wait's time: the wait then sleeps on to its time and no further, before the stop's own
+        # deadline
+        control_config, _ = self.stations.configs("so101_station")
+        s = self.begin("a_shutdown_gives_up_after_its_own_wait", source, "memory", "so101_station", braking="move_caps")
+        s.jog(None, 1, 10 * tests.STEP_RAD, speed_scale=tests.SLOW_SCALE)
+        s.tick(50)
+        short = JointControlLoop.SHUTDOWN_WAIT_S - 5 * control_config.control_period_s
+        gave_up = s.wait("shutdown", hooks=[{"at": "before", "when": {"sleep": 1}, "do": [{"op": "clock", "add": short}]}])
+        if gave_up.get("error", {}).get("type") != "TimeoutError" or len(s.ops[-1]["sleeps"]) < 3:
+            raise AssertionError(f"The shutdown did not give up at its own wait: {gave_up}")
+        self.keep(s)
+
+        # a shutdown from a HOLD that every reading shows drifting: the HOLD faults while the shutdown waits for it,
+        # the shutdown raises the fault and releases the hardware
+        s = self.begin("a_shutdown_whose_hold_faults_while_it_waits", source, "memory", "so101_station")
+        s.set("velocity", tests.DRIFT_RAD_S)
+        s.tick(40)
+        if s.loop.snapshot()["arrival"]["settled"]:
+            raise AssertionError("The HOLD is settled although every reading shows a drift")
+        s.wait("shutdown")
+        self.keep(s)
+
+        # the SO-101's own loop: the jaw's trajectory ends at the time of its period, before the reading
+        s = self.begin("so101_a_period_takes_its_time_before_its_reading", source, "so101", "so101_quick_home")
+        s.set("blocked_gripper_opening", 0.4, "arm")
+        s.tamper("read", "advance_clock", seconds=self.stations.configs("so101_quick_home")[0].control_period_s / 8)
+        s.call("begin_grippers", request=False)
+        s.finish()
+        s.call("report")
         self.keep(s)
 
     # -- generated: any sequence of what a station does
@@ -2886,6 +3565,37 @@ def run_cases(stations: Stations, monkeypatch: pytest.MonkeyPatch) -> list[dict[
     return cases
 
 
+def close_record(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
+    """Returns what PEAR's own ``close`` does with a control thread that does not end: how long it joins the thread,
+    what it raises, and what it leaves of the loop (the hardware is not closed under a thread that may still command
+    it). The thread is a stand-in that never ends: PEAR's ``close`` is what joins it."""
+
+    class StuckThread:
+        def __init__(self) -> None:
+            self.join_timeouts: list[Any] = []
+
+        def join(self, timeout: float | None = None) -> None:
+            self.join_timeouts.append(timeout)
+
+        def is_alive(self) -> bool:
+            return True
+
+    clock = StandInClock().install(monkeypatch)
+    runtime, _, _ = pear_tests.JointRuntimeRig.rig("so101", clock)
+    thread = StuckThread()
+    runtime._thread = thread
+    record = {
+        "out": outcome(runtime.close),
+        "join_timeouts_s": plain(thread.join_timeouts),
+        "exit_is_set": runtime._exit_event.is_set(),
+        "status": runtime.status.value,
+    }
+    runtime._thread = None
+    runtime.close()
+
+    return record
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--scale", type=int, default=1, help="times as many generated cases (1: the committed set)")
@@ -2906,19 +3616,20 @@ def main() -> None:
             f"src/index.ts pins {pinned}",
         )
 
-    logging.disable(logging.CRITICAL)  # PEAR logs every request and every fault of a scenario
+    LOGS.install()  # PEAR logs every request and every fault of a scenario: kept in the records, not printed
     stations = Stations()
     monkeypatch = pytest.MonkeyPatch()
     try:
         trajectory = TrajectoryCases(stations, scale).all()
         scenarios = Catalogue(stations, monkeypatch, scale).all()
         runs = run_cases(stations, monkeypatch)
+        closing = close_record(monkeypatch)
     finally:
         monkeypatch.undo()
 
     Fixtures.write("trajectory.json", trajectory, is_compressed=True)
     Fixtures.write("loops.json", {"scenarios": scenarios}, is_compressed=True)
-    Fixtures.write("run.json", {"cases": runs})
+    Fixtures.write("run.json", {"cases": runs, "close": closing})
 
     kinds: dict[str, int] = {}
     for scenario in scenarios:
@@ -2951,6 +3662,8 @@ def main() -> None:
                     "SEQUENCE_MARGIN_S", "GRIPPER_TIMEOUT_S", "HOLD_WAIT_S", "SHUTDOWN_WAIT_S", "THREAD_JOIN_S",
                 )
             },
+            "THREAD_NAME": JointControlLoop.THREAD_NAME,
+            "CLOCK_SLACK_S": ArmState.CLOCK_SLACK_S,
             "MAX_DURATION_S": JointMove.MAX_DURATION_S,
             "MAX_ROWS": SequenceOperation.MAX_ROWS,
             "PHASE_EPSILON": SequenceOperation.PHASE_EPSILON,

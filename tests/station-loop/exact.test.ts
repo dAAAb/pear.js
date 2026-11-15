@@ -12,10 +12,13 @@ import { installOracle, type Oracle } from "../ruckig/oracle";
 import { Comparison } from "./compare";
 import { DIRECTORY, IS_LARGER_SET, loadFixture } from "./fixtures";
 import { playAndCompare, type ScenarioRecord } from "./player";
-import { compareTrajectoryFixture, type TrajectoryFixture } from "./trajectory_cases";
+import { trajectoryChecks, type TrajectoryFixture } from "./trajectory_cases";
 
 const MISSING = "the port asked for arguments libm.json does not hold: add them (see tests/ruckig/oracle.ts) and run again";
 const TIMEOUT_MS = IS_LARGER_SET ? 1_800_000 : 120_000;
+
+const checks = trajectoryChecks(loadFixture<TrajectoryFixture>("trajectory.json.gz"));
+const scenarios = loadFixture<{ scenarios: ScenarioRecord[] }>("loops.json.gz").scenarios;
 
 /** Prints every difference, when PEAR_JS_LOOP_REPORT asks for them (a failing test shows only the first). */
 function report(differences: string[]): void {
@@ -34,39 +37,62 @@ describe("with the reference's C library values, pear.js gives PEAR's numbers to
     oracle.close();
   });
 
-  test("JointMove, JointTrajectory, GripperProfile and the operations", { timeout: TIMEOUT_MS }, () => {
+  // one test a case and a scenario, so that a difference names what it breaks and a run counts what differs
+  describe("JointMove, JointTrajectory, GripperProfile and the operations", () => {
     const comparison = new Comparison(true);
-    const result = compareTrajectoryFixture(loadFixture<TrajectoryFixture>("trajectory.json.gz"), comparison);
-    console.info(`trajectory: ${result.summary}; ${comparison.summary()}`);
-    report(result.differences);
+    const differences: string[] = [];
+    for (const check of checks) {
+      test(check.name, { timeout: TIMEOUT_MS }, () => {
+        const difference = check.difference(comparison);
+        if (difference !== null) {
+          differences.push(difference);
+        }
+        expect(difference).toBeNull();
+      });
+    }
 
-    expect(oracle.missing(), MISSING).toBe(0);
-    expect(result.differences).toEqual([]);
-    expect(result.cases).toBeGreaterThanOrEqual(240);
-    expect(comparison.identical).toBe(comparison.numbers);
+    test("every case, and every number the same double", () => {
+      console.info(`trajectory: ${checks.length} cases, ${differences.length} differ; ${comparison.summary()}`);
+      report(differences);
+
+      expect(differences.length).toBe(0);
+      expect(checks.length).toBeGreaterThanOrEqual(IS_LARGER_SET ? 600 : 250);
+      expect(comparison.numbers).toBeGreaterThanOrEqual(150_000);
+      expect(comparison.identical).toBe(comparison.numbers);
+    });
   });
 
-  test("the control loop, period by period", { timeout: TIMEOUT_MS }, async () => {
-    const scenarios = loadFixture<{ scenarios: ScenarioRecord[] }>("loops.json.gz").scenarios;
+  describe("the control loop, period by period", () => {
     const comparison = new Comparison(true);
     const differences: string[] = [];
     let events = 0;
     for (const scenario of scenarios) {
-      const verdict = await playAndCompare(scenario, comparison);
-      events += verdict.events;
-      if (verdict.difference !== null) {
-        differences.push(`${scenario.name}: ${verdict.difference}`);
-      }
+      test(scenario.name, { timeout: TIMEOUT_MS }, async () => {
+        const verdict = await playAndCompare(scenario, comparison);
+        events += verdict.events;
+        if (verdict.difference !== null) {
+          differences.push(`${scenario.name}: ${verdict.difference}`);
+        }
+        expect(verdict.difference).toBeNull();
+      });
     }
-    console.info(
-      `loops: ${scenarios.length} scenarios, ${events} records and results, ${differences.length} scenarios differ; ` +
-        comparison.summary(),
-    );
-    report(differences);
 
+    test("every scenario, and every number the same double", () => {
+      console.info(
+        `loops: ${scenarios.length} scenarios, ${events} records and results, ${differences.length} scenarios differ; ` +
+          comparison.summary(),
+      );
+      report(differences);
+
+      expect(differences.length).toBe(0);
+      expect(scenarios.length).toBeGreaterThanOrEqual(IS_LARGER_SET ? 500 : 286);
+      expect(events).toBeGreaterThanOrEqual(20_000);
+      expect(comparison.numbers).toBeGreaterThanOrEqual(2_000_000);
+      expect(comparison.identical).toBe(comparison.numbers);
+    });
+  });
+
+  test("the table of the reference's C library values held every argument the port asked for", () => {
     expect(oracle.missing(), MISSING).toBe(0);
-    expect(differences.slice(0, 12)).toEqual([]);
-    expect(scenarios.length).toBeGreaterThanOrEqual(260);
-    expect(comparison.identical).toBe(comparison.numbers);
   });
 });

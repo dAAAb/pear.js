@@ -20,3 +20,6 @@ Thumbs.db
 
 # test reporters' output
 .vitest/
+
+# written by the C library oracle when a table lacks a value (tests/ruckig/oracle.ts)
+tests/fixtures/*/missing.txt

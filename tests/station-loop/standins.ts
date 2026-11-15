@@ -4,18 +4,20 @@
 // tests/deploy/station/test_joint_control_in_station.py; with the Probe of tools/fixtures/loop_fixtures.py, which
 // records the loop's calls of its driver and makes the driver misbehave as a scenario scripts it.
 //
-// PEAR's StandInSO101Driver is its real SO101Driver over the stand-in arm, without the feedforward. The driver here
-// is that driver's logic for a null feedforward (the glitch it tolerates, the offset it does not send again), kept in
-// the tests until src/so101/hardware's SO101Driver fits the joint layer's JointDriver: then it can wrap that one.
+// PEAR's StandInSO101Driver is its real SO101Driver over the stand-in arm, without the feedforward; so is the one
+// here: src/so101/hardware's SO101Driver (the glitch it tolerates, the offset it does not send again) over the
+// stand-in arm, whose readings are the hardware layer's SO101ArmState and whose servo fault is its ServoFault.
 
+import { OSError } from "../../src/python/errors";
 import type { SO101RobotConfig } from "../../src/so101/config";
-import { ARM, GRIPPER_INDEX, VECTOR_LENGTH } from "../../src/so101/layout";
+import { ServoFault, SO101ArmState, type ServoStatus } from "../../src/so101/hardware/arm_state";
+import { SO101Driver, type ArmHardware } from "../../src/so101/hardware/driver";
+import { GRIPPER_INDEX, VECTOR_LENGTH } from "../../src/so101/layout";
 import { ArmState } from "../../src/station/joint/arm_state";
 import type { MonotonicClock } from "../../src/station/joint/clock";
 import { JointDriver, type ArmVectors } from "../../src/station/joint/driver";
 import { RuntimeError, TimeoutError, ValueError } from "../../src/station/joint/errors";
 import type { JointLayout } from "../../src/station/joint/layout";
-import { clip, maximum, minimum } from "../../src/station/joint/numeric";
 import type { ArmFeedback, SampleId } from "../../src/station/schemas";
 
 /** The age of a stale reading of a stand-in's arm, s. */
@@ -23,17 +25,10 @@ export const STALE_S = 1.0;
 /** The most recent targets a stand-in keeps for a test to inspect. */
 export const SENT_KEPT = 5000;
 
-/** PEAR's ServoFault (robots/so101/hardware/arm_state.py): a RuntimeError. */
-export class ServoFault extends RuntimeError {
-  override readonly name: string = "ServoFault";
-}
-
-/** Python's OSError, which a scenario makes a driver raise. */
-export class OSError extends Error {
-  override readonly name: string = "OSError";
-}
-
-/** Python's KeyboardInterrupt, which a scenario raises in a wait: no Exception, so only a wait's own handler meets it. */
+/**
+ * Python's KeyboardInterrupt, which a scenario raises in a wait: a BaseException, for which the library of Python's
+ * exceptions (src/python/errors.ts) has no class, since no code of PEAR's raises it.
+ */
 export class KeyboardInterrupt extends Error {
   override readonly name: string = "KeyboardInterrupt";
 }
@@ -90,32 +85,11 @@ export interface StateChanges {
   velocity?: readonly number[];
   sampledMonotonicS?: number;
   sampleId?: SampleId;
-  servoStatus?: Record<string, unknown>;
-}
-
-/** A reading that a scenario can make anew with some of its fields changed (Python's `dataclasses.replace`). */
-export class StandInState extends ArmState {
-  replace(changes: StateChanges): StandInState {
-    return new StandInState(
-      changes.position ?? this.position,
-      changes.velocity ?? this.velocity,
-      changes.sampledMonotonicS ?? this.sampledMonotonicS,
-      changes.sampleId !== undefined ? changes.sampleId : this.sampleId,
-    );
-  }
+  servoStatus?: ServoStatus;
 }
 
 /** One YAM arm's reading as PEAR's stand-in joints give it: the SDK's fields of the force-limited gripper, unset. */
-export class TwoArmState extends StandInState {
-  override replace(changes: StateChanges): TwoArmState {
-    return new TwoArmState(
-      changes.position ?? this.position,
-      changes.velocity ?? this.velocity,
-      changes.sampledMonotonicS ?? this.sampledMonotonicS,
-      changes.sampleId !== undefined ? changes.sampleId : this.sampleId,
-    );
-  }
-
+export class TwoArmState extends ArmState {
   override feedback(now: number): ArmFeedback {
     return {
       ...super.feedback(now),
@@ -127,32 +101,30 @@ export class TwoArmState extends StandInState {
   }
 }
 
-/** The SO-101 arm's reading: PEAR's SO101ArmState, with its servos' status. */
-export class SO101State extends StandInState {
-  constructor(
-    position: readonly number[],
-    velocity: readonly number[],
-    sampledMonotonicS: number,
-    sampleId: SampleId = null,
-    /** The latest low-rate poll of the servos' status. */
-    readonly servoStatus: Record<string, unknown> = {},
-  ) {
-    super(position, velocity, sampledMonotonicS, sampleId);
+/**
+ * Returns a reading of the same class as `state` with some of its fields changed (Python's `dataclasses.replace`):
+ * the joint layer's ArmState, the two arms' reading, or the SO-101's with its servos' status, which no other
+ * reading takes (Python refuses the field with a TypeError).
+ */
+export function replaced<State extends ArmState>(state: State, changes: StateChanges): State {
+  const position = [...(changes.position ?? state.position)];
+  const velocity = [...(changes.velocity ?? state.velocity)];
+  const sampledMonotonicS = changes.sampledMonotonicS ?? state.sampledMonotonicS;
+  const sampleId = changes.sampleId !== undefined ? changes.sampleId : state.sampleId;
+
+  if (state instanceof SO101ArmState) {
+    const servoStatus = changes.servoStatus ?? state.servoStatus;
+    const state101 = new SO101ArmState(position, velocity, sampledMonotonicS, sampleId as number | null, servoStatus);
+    return state101 as ArmState as State;
+  }
+  if (changes.servoStatus !== undefined) {
+    throw new TypeError("__init__() got an unexpected keyword argument 'servo_status'");
+  }
+  if (state instanceof TwoArmState) {
+    return new TwoArmState(position, velocity, sampledMonotonicS, sampleId) as State;
   }
 
-  override replace(changes: StateChanges): SO101State {
-    return new SO101State(
-      changes.position ?? this.position,
-      changes.velocity ?? this.velocity,
-      changes.sampledMonotonicS ?? this.sampledMonotonicS,
-      changes.sampleId !== undefined ? changes.sampleId : this.sampleId,
-      changes.servoStatus ?? this.servoStatus,
-    );
-  }
-
-  override feedback(now: number): ArmFeedback {
-    return { ...super.feedback(now), servo: structuredClone(this.servoStatus) } as ArmFeedback;
-  }
+  return new ArmState(position, velocity, sampledMonotonicS, sampleId) as State;
 }
 
 function zeros(length: number): number[] {
@@ -163,7 +135,7 @@ function zeros(length: number): number[] {
  * A joint driver in memory: every arm reaches its command at once; a test makes its readings stale, holds its arms
  * where they are or gives its first joints a velocity (the MemoryDriver of PEAR's tests).
  */
-export class MemoryDriver extends JointDriver<StandInState> {
+export class MemoryDriver extends JointDriver<ArmState> {
   static readonly STALE_S = 1.0;
 
   /** Each arm's reading, by the arm's name. */
@@ -191,7 +163,7 @@ export class MemoryDriver extends JointDriver<StandInState> {
     this.positions = layout.split(start);
   }
 
-  async read(): Promise<Record<string, StandInState>> {
+  async read(): Promise<Record<string, ArmState>> {
     this.reads += 1;
     const sampledMonotonicS = this.clock.monotonic() - (this.isStale ? MemoryDriver.STALE_S : 0.0);
     const velocity = this.isOscillating ? this.velocity * (this.reads % 2 === 0 ? 1 : -1) : this.velocity;
@@ -199,12 +171,12 @@ export class MemoryDriver extends JointDriver<StandInState> {
     return Object.fromEntries(
       Object.entries(this.positions).map(([arm, position]) => [
         arm,
-        new StandInState(position, [velocity, ...zeros(position.length - 1)], sampledMonotonicS, this.reads),
+        new ArmState(position, [velocity, ...zeros(position.length - 1)], sampledMonotonicS, this.reads),
       ]),
     );
   }
 
-  async readForRecovery(): Promise<Record<string, StandInState>> {
+  async readForRecovery(): Promise<Record<string, ArmState>> {
     return this.read();
   }
 
@@ -300,7 +272,7 @@ export type ArmResponse = (goal: readonly number[], position: readonly number[])
  * The SO-101's arm without its bus: it reaches every command at once, and a test makes its readings stale, its
  * reads fail, its jaw stop on an object or the arm answer a command its own way (PEAR's StandInSO101Arm).
  */
-export class StandInSO101Arm {
+export class StandInSO101Arm implements ArmHardware {
   /** The arm's reading: Home, until a command. */
   position: readonly number[];
   isClosed = false;
@@ -322,7 +294,7 @@ export class StandInSO101Arm {
     this.position = (home !== null ? home.position : zeros(VECTOR_LENGTH)).map(Number);
   }
 
-  async read(): Promise<SO101State> {
+  async read(): Promise<SO101ArmState> {
     if (this.isClosed) {
       throw new RuntimeError("Hardware is closed");
     }
@@ -332,15 +304,15 @@ export class StandInSO101Arm {
 
     this.readCount += 1;
 
-    return new SO101State(
-      this.position,
+    return new SO101ArmState(
+      [...this.position],
       zeros(VECTOR_LENGTH),
       this.clock.monotonic() - (this.isStale ? STALE_S : 0),
       this.readCount,
     );
   }
 
-  async readForRecovery(): Promise<SO101State> {
+  async readForRecovery(): Promise<SO101ArmState> {
     return this.read();
   }
 
@@ -372,99 +344,16 @@ export class StandInSO101Arm {
 }
 
 /**
- * PEAR's SO101Driver over the stand-in arm, without the feedforward (its StandInSO101Driver): a target is sent as
- * it is, a held target is not sent again, and a bus glitch after the first command keeps the last reading.
+ * PEAR's StandInSO101Driver: the SO-101's own driver (src/so101/hardware/driver.ts) over the stand-in arm, without
+ * the feedforward, which pushes an arm that reaches every command exactly off its target. PEAR's driver takes its
+ * position bounds from the settings' limits section; the hardware layer's takes a robot's joint limits, which hold
+ * the same bounds.
  */
-export class StandInSO101Driver extends JointDriver<SO101State> {
-  /** A held target's offset this close to the one sent needs no new command. */
-  static readonly OFFSET_EPSILON = 1e-6;
-
-  readonly hardware: StandInSO101Arm;
-  /** The goal offset last sent. */
-  offset = zeros(VECTOR_LENGTH);
-  /** The last reading returned. */
-  state: SO101State | null = null;
-  /** Whether a target was sent, after which a bus glitch is tolerated. */
-  hasCommanded = false;
-
-  private readonly lowerBounds: readonly number[];
-  private readonly upperBounds: readonly number[];
+export class StandInSO101Driver extends SO101Driver {
+  declare readonly hardware: StandInSO101Arm;
 
   constructor(robotConfig: SO101RobotConfig, clock: MonotonicClock) {
-    super();
-    this.lowerBounds = robotConfig.limits.lower_bounds;
-    this.upperBounds = robotConfig.limits.upper_bounds;
-    this.hardware = new StandInSO101Arm(robotConfig, clock);
-  }
-
-  async read(): Promise<Record<string, SO101State>> {
-    try {
-      this.state = await this.hardware.read();
-    } catch (error) {
-      // a servo's fault is never a glitch, nor is a failed read before the first command, while enabling settles;
-      // a glitch's reading ages until the control loop finds it stale
-      if (error instanceof ServoFault || !this.hasCommanded) {
-        throw error;
-      }
-    }
-
-    return { [ARM]: this.state as SO101State };
-  }
-
-  async readForRecovery(): Promise<Record<string, SO101State>> {
-    this.state = await this.hardware.readForRecovery();
-
-    return { [ARM]: this.state };
-  }
-
-  async send(targets: ArmVectors, velocities: ArmVectors | null = null): Promise<void> {
-    const target = targets[ARM] as readonly number[];
-    if (velocities === null) {
-      await this.sendWithOffset(target, false);
-    } else {
-      await this.sendWithOffset(target, false);
-    }
-
-    this.hasCommanded = true;
-  }
-
-  override async refreshHold(targets: ArmVectors): Promise<void> {
-    await this.sendWithOffset(targets[ARM] as readonly number[], true);
-  }
-
-  override telemetry(): Record<string, unknown> {
-    return { feedforward: this.offset.slice(0, GRIPPER_INDEX) };
-  }
-
-  async close(): Promise<void> {
-    await this.hardware.close();
-  }
-
-  /**
-   * Commands `target` with the offset of no feedforward, zero, unless `skipsUnchanged` and that offset is the one
-   * sent (PEAR's `_hold` and `_move`).
-   */
-  private async sendWithOffset(target: readonly number[], skipsUnchanged: boolean): Promise<void> {
-    const offset = zeros(VECTOR_LENGTH);
-    const isUnchanged = offset.every(
-      (value, index) => Math.abs(value - this.offset[index]!) <= StandInSO101Driver.OFFSET_EPSILON,
-    );
-    if (skipsUnchanged && isUnchanged) {
-      return;
-    }
-
-    await this.hardware.send(this.goal(target, offset));
-    this.offset = offset;
-  }
-
-  /** Returns `target` plus `offset`, never further past a bound than `target` itself. */
-  private goal(target: readonly number[], offset: readonly number[]): number[] {
-    return target.map((coordinate, index) => {
-      const lowerBound = minimum(this.lowerBounds[index]!, coordinate);
-      const upperBound = maximum(this.upperBounds[index]!, coordinate);
-
-      return clip(coordinate + offset[index]!, lowerBound, upperBound);
-    });
+    super(new StandInSO101Arm(robotConfig, clock), robotConfig.jointLimits(), null, { clock });
   }
 }
 
@@ -480,8 +369,8 @@ export interface Tamper {
 
 export type ProbedMethod = "read" | "read_for_recovery" | "send" | "refresh_hold" | "close";
 
-type AnyState = StandInState;
-type AnyDriver = MemoryDriver | StandInJointDriver | StandInSO101Driver;
+type AnyState = ArmState;
+export type AnyDriver = MemoryDriver | StandInJointDriver | StandInSO101Driver;
 
 const METHODS: Record<ProbedMethod, { code: string; name: "read" | "readForRecovery" | "send" | "refreshHold" | "close" }> = {
   read: { code: "r", name: "read" },
@@ -659,7 +548,7 @@ export class Probe {
           values = [...state[field]];
           values[index] = value as number;
         }
-        states[arm] = state.replace({ [field]: values });
+        states[arm] = replaced(state, { [field]: values });
       }
     };
 
@@ -670,7 +559,7 @@ export class Probe {
       changed(kind, whole ? null : (tamper["index"] as number), (whole ? tamper["values"] : tamper["value"]) as number);
     } else if (kind === "sample_id") {
       for (const arm of arms) {
-        states[arm] = (states[arm] as AnyState).replace({ sampleId: tamper["value"] as SampleId });
+        states[arm] = replaced(states[arm] as AnyState, { sampleId: tamper["value"] as SampleId });
       }
     } else if (kind === "alternate") {
       const magnitude = tamper["magnitude"] as number;
@@ -696,12 +585,12 @@ export class Probe {
     } else if (kind === "stamp") {
       for (const arm of arms) {
         const state = states[arm] as AnyState;
-        states[arm] = state.replace({ sampledMonotonicS: state.sampledMonotonicS + (tamper["offset"] as number) });
+        states[arm] = replaced(state, { sampledMonotonicS: state.sampledMonotonicS + (tamper["offset"] as number) });
       }
     } else if (kind === "servo") {
       for (const arm of arms) {
-        const status = structuredClone(tamper["status"]) as Record<string, unknown>;
-        states[arm] = (states[arm] as AnyState).replace({ servoStatus: status });
+        const status = structuredClone(tamper["status"]) as ServoStatus;
+        states[arm] = replaced(states[arm] as AnyState, { servoStatus: status });
       }
     } else if (kind !== "advance_clock") {
       throw new Error(`No tamper ${kind}`);

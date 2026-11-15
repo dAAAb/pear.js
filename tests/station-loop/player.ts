@@ -24,7 +24,7 @@ import { MeasuredHoldRecovery, RecoveryRequest, ReleaseRecovery } from "../../sr
 import { SnapshotCheck, type ObservationReference } from "../../src/station/joint/snapshot_checks";
 import type { StabilityWindow } from "../../src/station/joint/stability";
 import { JointMove } from "../../src/station/joint/trajectory";
-import type { ControlSnapshot } from "../../src/station/schemas";
+import type { ControlSnapshot, RecoveryPhase } from "../../src/station/schemas";
 import { Comparison, plain, undelta } from "./compare";
 import { outcomeOf, outcomeOfAsync, stationOf, type Outcome } from "./fixtures";
 import {
@@ -32,16 +32,23 @@ import {
   makeResponse,
   MemoryDriver,
   Probe,
+  replaced,
   StandInClock,
   StandInJointDriver,
   StandInSO101Driver,
   type ProbedMethod,
-  type StandInState,
   type Tamper,
 } from "./standins";
 
 /** The most control periods an operation may take, as in PEAR's tests. */
 const MOST_TICKS = 2000;
+
+/** The vectors of a trajectory's input a script may set, by the name PEAR's input gives each. */
+const INPUT_PROPERTIES: Record<string, "currentPosition" | "currentVelocity" | "currentAcceleration"> = {
+  current_position: "currentPosition",
+  current_velocity: "currentVelocity",
+  current_acceleration: "currentAcceleration",
+};
 
 /** One operation of a script, with what PEAR did of it. */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -79,7 +86,7 @@ class NoGripper {}
 export function loopClassOf(recovery: string, braking: string, checksVelocityRms: boolean): typeof JointControlLoop {
   const policies: Record<string, RecoveryPolicyClass> = { MeasuredHoldRecovery, ReleaseRecovery };
 
-  return class StandInControlLoop extends JointControlLoop<StandInState> {
+  return class StandInControlLoop extends JointControlLoop<ArmState> {
     static override readonly GRIPPER_OPERATION_CLASS = NoGripper as unknown as GripperOperationClass;
     static override readonly RECOVERY_POLICY_CLASS = policies[recovery]!;
     static override readonly BRAKING = braking as Braking;
@@ -94,6 +101,7 @@ interface LoopInternals {
   settleSince: number | null;
   faultHoldError: string | null;
   blockedGripperOpenings: Record<string, number> | null;
+  recoveryRequest: RecoveryRequest | null;
 }
 
 /** Python's `max(abs(value) for value in values)`: the first of the largest. */
@@ -112,18 +120,64 @@ function gripperProgress(operation: SO101GripperOperation): Record<string, unkno
   };
 }
 
+/**
+ * Returns what a record holds of a loop's state: its whole snapshot, and what else the loop keeps of its operation
+ * (the `state` of the Scenario of tools/fixtures/loop_fixtures.py).
+ */
+export function stateOf(loop: JointControlLoop<ArmState>): unknown {
+  const internals = loop as unknown as LoopInternals;
+  const trajectoryInput = loop.trajectory.input;
+  const operation = loop.operation;
+  const interfaceName = Object.entries(ControlInterface).find(
+    ([, value]) => value === trajectoryInput.controlInterface,
+  )?.[0];
+  let progress: Record<string, unknown> | null = null;
+  if (operation instanceof JointMoveOperation) {
+    progress = { elapsed: operation.elapsedS };
+  } else if (operation instanceof SequenceOperation) {
+    progress = { index: operation.index, phase: operation.rowPhase, start: operation.startTime };
+  } else if (operation instanceof SO101GripperOperation) {
+    progress = gripperProgress(operation);
+  }
+
+  return plain({
+    snapshot: loop.snapshot(),
+    loop: {
+      operation: operation === null ? null : operation.constructor.name,
+      settled: internals.isSettled,
+      deadline: internals.operationDeadline,
+      settle_since: internals.settleSince,
+      duration: loop.trajectory.durationS,
+      target: trajectoryInput.targetPosition,
+      interface: interfaceName,
+      speed: largestMagnitude(trajectoryInput.currentVelocity),
+      acceleration: largestMagnitude(trajectoryInput.currentAcceleration),
+      hold_error: internals.faultHoldError,
+      blocked: internals.blockedGripperOpenings,
+      cancellation: loop.operationCancellation !== null,
+      // until when the recovery that is under way may take, which a release moves: null without one
+      recovery_deadline: internals.recoveryRequest === null ? null : internals.recoveryRequest.deadline,
+      progress,
+    },
+  });
+}
+
 /** Returns what PEAR gave of a scenario, in order: every record as the whole state it stands for. */
 export function expectedEvents(scenario: ScenarioRecord): ScenarioEvent[] {
   const events: ScenarioEvent[] = [];
   let state: unknown = null;
 
-  const record = (entry: { io: unknown[]; s?: unknown }, label: string): void => {
+  const record = (entry: { io: unknown[]; log?: unknown; s?: unknown }, label: string): void => {
+    // (the keys in the order PEAR's record has them: the driver's calls, what the loop logged, the state)
+    const value: Record<string, unknown> = { io: entry.io };
+    if ("log" in entry) {
+      value["log"] = entry.log;
+    }
     if ("s" in entry) {
       state = undelta(state, entry.s);
-      events.push({ kind: "rec", label, value: { io: entry.io, s: state } });
-    } else {
-      events.push({ kind: "rec", label, value: { io: entry.io } });
+      value["s"] = state;
     }
+    events.push({ kind: "rec", label, value });
   };
   const walk = (operation: ScriptOperation, label: string, records: boolean): void => {
     if (operation.op === "tick" || operation.op === "tick_at") {
@@ -139,7 +193,7 @@ export function expectedEvents(scenario: ScenarioRecord): ScenarioEvent[] {
       if ("out" in operation) {
         events.push({ kind: "out", label, value: operation.out });
       }
-      for (const name of ["phase", "dispatched"]) {
+      for (const name of ["phase", "dispatched", "deadline"]) {
         if (name in operation) {
           events.push({ kind: "value", label: `${label} ${name}`, value: operation[name] });
         }
@@ -150,6 +204,9 @@ export function expectedEvents(scenario: ScenarioRecord): ScenarioEvent[] {
     }
   };
 
+  // what PEAR's loop class names: its recovery policy, what its STOP brakes with, what its recovery window bounds
+  const { recovery, braking, checks_velocity_rms } = scenario.rig;
+  events.push({ kind: "value", label: "the loop's class", value: { recovery, braking, checks_velocity_rms } });
   events.push({ kind: "out", label: "the rig", value: scenario.init.out });
   record(scenario.init.rec, "the rig");
   scenario.ops.forEach((operation, index) => walk(operation, `operation ${index + 1} (${operation.op})`, true));
@@ -164,7 +221,7 @@ export function expectedEvents(scenario: ScenarioRecord): ScenarioEvent[] {
 export class Player {
   readonly events: ScenarioEvent[] = [];
   readonly clock = new StandInClock();
-  loop: JointControlLoop<StandInState> | null = null;
+  loop: JointControlLoop<ArmState> | null = null;
   driver!: MemoryDriver | StandInJointDriver | StandInSO101Driver;
   probe!: Probe;
   layout!: JointLayout;
@@ -175,6 +232,8 @@ export class Player {
   private readonly guards: Record<string, ActionGuard> = {};
   private gripperOperation: SO101GripperOperation | null = null;
   private tickCount = 0;
+  /** What the loop logged since the last record: each line's level and message. */
+  private readonly logged: [string, string][] = [];
 
   constructor(readonly scenario: ScenarioRecord) {}
 
@@ -212,18 +271,33 @@ export class Player {
       rig.kind === "so101"
         ? (SO101ControlLoop as unknown as typeof JointControlLoop)
         : loopClassOf(rig.recovery, rig.braking, rig.checks_velocity_rms);
+    // (of the SO-101 it is pear.js's own class that names them; the generic loops of the tests are made of the names)
+    this.events.push({
+      kind: "value",
+      label: "the loop's class",
+      value: {
+        recovery: loopClass.RECOVERY_POLICY_CLASS.name,
+        braking: loopClass.BRAKING,
+        checks_velocity_rms: loopClass.CHECKS_VELOCITY_RMS,
+      },
+    });
     this.clock.advancesOnSleep = rig.sleeps_while_enabling;
     const made = await outcomeOfAsync(() =>
-      loopClass.create(this.driver, this.controlConfig, station.robotConfig, { clock: this.clock }),
+      loopClass.create(this.driver, this.controlConfig, station.robotConfig, {
+        clock: this.clock,
+        log: (level, message) => {
+          this.logged.push([level, message]);
+        },
+      }),
     );
     this.clock.advancesOnSleep = true;
     if ("error" in made) {
       this.events.push({ kind: "out", label: "the rig", value: made });
-      this.events.push({ kind: "rec", label: "the rig", value: { io: plain(this.probe.take()) } });
+      this.record("the rig");
       return;
     }
 
-    this.loop = made.ok as JointControlLoop<StandInState>;
+    this.loop = made.ok as JointControlLoop<ArmState>;
     this.events.push({ kind: "out", label: "the rig", value: { ok: null } });
     this.record("the rig");
   }
@@ -231,49 +305,23 @@ export class Player {
   // -- what a record holds
 
   private state(): unknown {
-    const loop = this.loop as JointControlLoop<StandInState>;
-    const internals = loop as unknown as LoopInternals;
-    const trajectoryInput = loop.trajectory.input;
-    const operation = loop.operation;
-    const interfaceName = Object.entries(ControlInterface).find(
-      ([, value]) => value === trajectoryInput.controlInterface,
-    )?.[0];
-    let progress: Record<string, unknown> | null = null;
-    if (operation instanceof JointMoveOperation) {
-      progress = { elapsed: operation.elapsedS };
-    } else if (operation instanceof SequenceOperation) {
-      progress = { index: operation.index, phase: operation.rowPhase, start: operation.startTime };
-    } else if (operation instanceof SO101GripperOperation) {
-      progress = gripperProgress(operation);
-    }
-
-    return plain({
-      snapshot: loop.snapshot(),
-      loop: {
-        operation: operation === null ? null : operation.constructor.name,
-        settled: internals.isSettled,
-        deadline: internals.operationDeadline,
-        settle_since: internals.settleSince,
-        duration: loop.trajectory.durationS,
-        target: trajectoryInput.targetPosition,
-        interface: interfaceName,
-        speed: largestMagnitude(trajectoryInput.currentVelocity),
-        acceleration: largestMagnitude(trajectoryInput.currentAcceleration),
-        hold_error: internals.faultHoldError,
-        blocked: internals.blockedGripperOpenings,
-        cancellation: loop.operationCancellation !== null,
-        progress,
-      },
-    });
+    return stateOf(this.loop as JointControlLoop<ArmState>);
   }
 
   private record(label: string): void {
-    const io = plain(this.probe.take());
-    this.events.push({ kind: "rec", label, value: this.loop === null ? { io } : { io, s: this.state() } });
+    const value: Record<string, unknown> = { io: plain(this.probe.take()) };
+    const log = this.logged.splice(0);
+    if (log.length > 0) {
+      value["log"] = log;
+    }
+    if (this.loop !== null) {
+      value["s"] = this.state();
+    }
+    this.events.push({ kind: "rec", label, value });
   }
 
   private end(): Record<string, unknown> {
-    const loop = this.loop as JointControlLoop<StandInState>;
+    const loop = this.loop as JointControlLoop<ArmState>;
     const trajectoryInput = loop.trajectory.input;
 
     return {
@@ -298,7 +346,7 @@ export class Player {
   // -- the interpreter of an operation
 
   private async tick(periodS: number | null, label: string): Promise<void> {
-    const loop = this.loop as JointControlLoop<StandInState>;
+    const loop = this.loop as JointControlLoop<ArmState>;
     this.clock.now += periodS === null ? loop.controlConfig.controlPeriodS : periodS;
     await loop.step();
     this.tickCount += 1;
@@ -306,7 +354,7 @@ export class Player {
   }
 
   private async execute(operation: ScriptOperation, label: string, records: boolean): Promise<void> {
-    const loop = this.loop as JointControlLoop<StandInState>;
+    const loop = this.loop as JointControlLoop<ArmState>;
     const op = operation.op as string;
     const out = (value: unknown): void => {
       this.events.push({ kind: "out", label, value: plain(value) });
@@ -380,7 +428,11 @@ export class Player {
       }
       this.events.push({ kind: "value", label: `${label} dispatched`, value: guard.hasDispatched });
     } else if (op === "clock") {
-      if ("set" in operation) {
+      if (operation.to === "recovery_deadline") {
+        // onto the deadline of the recovery that is under way
+        const request = (loop as unknown as LoopInternals).recoveryRequest as RecoveryRequest;
+        this.clock.now = request.deadline;
+      } else if ("set" in operation) {
         this.clock.now = operation.set as number;
       } else {
         this.clock.now += operation.add as number;
@@ -434,23 +486,41 @@ export class Player {
       snapshot.settling["samples"] = -1;
     } else if (op === "set_state") {
       // a reading handed straight to the loop, past its own check
-      const state = loop.states[operation.arm as string] as StandInState;
+      const state = loop.states[operation.arm as string] as ArmState;
       const position = [...state.position];
       position[operation.index as number] = operation.value as number;
-      loop.states = { ...loop.states, [operation.arm as string]: state.replace({ position }) };
+      loop.states = { ...loop.states, [operation.arm as string]: replaced(state, { position }) };
     } else if (op === "policy_step") {
+      // one step of the recovery policy on a request of its own, past the loop's checks
       const window = { reset: () => undefined } as unknown as StabilityWindow;
       const request = new RecoveryRequest(window, this.clock.now + (operation.timeout_s as number), {
         clock: this.clock,
+        // (the operator paused it before the step)
+        cancellation: operation.cancelled ? { aborted: true } : null,
       });
+      if ("from_phase" in operation) {
+        // the request is that far already
+        request.phase = operation.from_phase as RecoveryPhase;
+      }
       out(
         await outcomeOfAsync(() =>
           loop.recoveryPolicy.step(loop as unknown as JointControlLoop, request, loop.snapshot(), operation.is_stable as boolean),
         ),
       );
       this.events.push({ kind: "value", label: `${label} phase`, value: request.phase });
+      this.events.push({ kind: "value", label: `${label} deadline`, value: request.deadline });
     } else if (op === "raise") {
       throw makeError(operation as { type: string; message?: string });
+    } else if (op === "set_exit") {
+      // the control thread's exit event, set while the loop is open: its thread is gone
+      (loop as unknown as { exitEvent: { set(): void } }).exitEvent.set();
+    } else if (op === "set_input") {
+      // the planned state, changed behind the loop's back
+      const property = INPUT_PROPERTIES[operation.name as string];
+      if (property === undefined) {
+        throw new Error(`No input ${operation.name as string}`);
+      }
+      loop.trajectory.input[property] = operation.values as number[];
     } else if (op === "call") {
       out(await this.executeCall(operation.method as string, operation.args as Record<string, unknown>));
     } else {
@@ -491,7 +561,7 @@ export class Player {
   }
 
   private async executeCall(method: string, callArguments: Record<string, unknown>): Promise<Outcome> {
-    const loop = this.loop as JointControlLoop<StandInState>;
+    const loop = this.loop as JointControlLoop<ArmState>;
     const observation = this.observations[callArguments["observation"] as string] ?? null;
 
     if (method === "move") {
@@ -614,7 +684,7 @@ export class Player {
    * scenario's hooks run before or after the step.
    */
   private async executeWait(operation: ScriptOperation, label: string): Promise<void> {
-    const loop = this.loop as JointControlLoop<StandInState>;
+    const loop = this.loop as JointControlLoop<ArmState>;
     const method = operation.method as string;
     const callArguments = operation.args as Record<string, unknown>;
     const hooks = operation.hooks as ScriptOperation[];
@@ -650,6 +720,10 @@ export class Player {
     this.clock.onSleep = async (seconds) => {
       this.clock.now += seconds;
       sleeps += 1;
+      if (sleeps > MOST_TICKS) {
+        // (every wait of PEAR's record ends; one that would not end here fails instead of stepping for ever)
+        throw new Error(`The wait still sleeps after ${MOST_TICKS} control periods`);
+      }
       try {
         await runHooks("before");
         await loop.step();

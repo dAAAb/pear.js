@@ -23,6 +23,14 @@
 //   `waitForHold` and `recover` read their snapshots under the lock and never see it.
 // - The lock does not know its holder: what runs inside a step (a recovery policy, an operation, a driver) calls the
 //   methods PEAR documents as "the caller holds the lock" and never the asynchronous ones above.
+// - PEAR holds every arm's targets and readings as tuples and hands them out as they are: to its driver, its
+//   operation, its recovery policy and every snapshot. Here a tuple is a frozen array (`tupleOf`), so none of them
+//   can write into what the loop holds and commands: the write throws a TypeError, as Python's does.
+// - What PEAR logs is told to the `log` option. A loop that is given none prints what PEAR logs at error level with
+//   `console.error` (a fault, a fault's hold that could not be commanded, the end of the control thread), and `start`
+//   prints the failure that ended `run` whatever the log does, as Python prints the traceback of a thread that died.
+// - Once a fault is latched nothing throws before its hold is commanded, whatever was thrown, whatever it carries
+//   and whatever the log does (PEAR's `deepcopy` of an error's details copies what a structured clone refuses).
 
 import { pythonFloatRepr } from "../../protocol/python_float";
 import { formatTemplate } from "../../so101/kinematics/text";
@@ -34,7 +42,7 @@ import {
   type ControlSnapshot,
 } from "../schemas";
 import { ActionGuard, type GuardedControlLoop } from "./action_guard";
-import { ArmState } from "./arm_state";
+import { ArmState, tupleOf } from "./arm_state";
 import { secondsClock, type MonotonicClock } from "./clock";
 import type { ControlConfig, RobotConfig } from "./config";
 import type { ArmVectors, JointDriver } from "./driver";
@@ -100,11 +108,31 @@ export type RecoveryPolicyClass = new () => RecoveryPolicy;
 /** Told what PEAR logs: a request, an end of motion, a fault. */
 export type ControlLog = (level: "info" | "warning" | "error", message: string, error?: unknown) => void;
 
+/**
+ * The log of a loop that is given none. What PEAR logs at error level is printed with `console.error`, with what was
+ * thrown (PEAR's logger prints its traceback): a fault, a fault's hold that could not be commanded ("a physical stop
+ * may be required"), the end of the control thread. The lower levels are dropped: a request, an end of motion, a
+ * controlled stop, a failed read in FAULT (PEAR's logger, made at INFO, prints those too).
+ */
+export const logErrorsToConsole: ControlLog = (level, message, error) => {
+  if (level !== "error") {
+    return;
+  }
+  if (error === undefined) {
+    console.error(message);
+  } else {
+    console.error(message, error);
+  }
+};
+
 /** What a control loop is given besides its driver and its two configurations. */
 export interface ControlLoopOptions {
   /** The monotonic clock and the sleep of the loop and of every part it makes (by default the page's). */
   readonly clock?: MonotonicClock;
-  /** Told what PEAR logs (by default nobody). */
+  /**
+   * Told what PEAR logs (by default `logErrorsToConsole`: the error level alone, to `console.error`). A page that
+   * gives its own is the only one told of a fault, of a hold that could not be commanded and of the loop's end.
+   */
   readonly log?: ControlLog;
 }
 
@@ -123,16 +151,21 @@ export interface WaitForHoldOptions {
  * the blocks that came before it.
  */
 export class LoopLock {
-  private isHeld = false;
+  private held = false;
   private readonly waiters: (() => void)[] = [];
+
+  /** Whether a block holds the lock now: a control period that is under way, or a caller's block. */
+  get isHeld(): boolean {
+    return this.held;
+  }
 
   /** Runs `block` with the lock held and returns what it returns. */
   async run<Result>(block: () => Result | Promise<Result>): Promise<Result> {
-    if (this.isHeld) {
+    if (this.held) {
       // the lock is handed over still held, so nothing that arrives later runs first
       await new Promise<void>((resolve) => this.waiters.push(resolve));
     } else {
-      this.isHeld = true;
+      this.held = true;
     }
 
     try {
@@ -142,7 +175,7 @@ export class LoopLock {
       if (next !== undefined) {
         next();
       } else {
-        this.isHeld = false;
+        this.held = false;
       }
     }
   }
@@ -191,9 +224,65 @@ interface ControlThread {
   ended: Promise<void>;
 }
 
-/** Returns Python's `str()` of what was thrown: an error's message. */
+/**
+ * Returns Python's `str()` of what was thrown: an error's message. It does not throw, whatever was thrown (`fail`
+ * calls it between latching a fault and commanding its hold): what has no text, as an object without a prototype,
+ * is named by its kind.
+ */
 function errorText(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
+  try {
+    return error instanceof Error ? error.message : String(error);
+  } catch {
+    return textOf(error);
+  }
+}
+
+/** Returns a text for `value` that no value can refuse: for what is thrown or carried without being data. */
+function textOf(value: unknown): string {
+  try {
+    if (typeof value === "function") {
+      return `<function ${value.name}>`;
+    }
+    return typeof value === "symbol" ? value.toString() : (Object.prototype.toString.call(value) as string);
+  } catch {
+    return "<unprintable>";
+  }
+}
+
+/**
+ * Returns a fault's details: Python's `copy.deepcopy` of what `error` carries as `details`, or null. It does not
+ * throw, whatever the error carries (`fail` calls it between latching the fault and commanding its hold). PEAR's own
+ * errors carry plain data, which the structured clone copies as `deepcopy` does. Of anything else, the parts the
+ * clone refuses (a function, a symbol) are kept as their text, so that the details stay data a snapshot can copy;
+ * details that cannot be read at all are dropped.
+ */
+function faultDetailsOf(error: unknown): Record<string, unknown> | null {
+  try {
+    const details = (error as { details?: unknown } | null | undefined)?.details ?? null;
+
+    return clonedOrText(details, []) as Record<string, unknown> | null;
+  } catch {
+    return null;
+  }
+}
+
+/** Returns the structured clone of `value`, or, where the clone refuses a part of it, that part as its text. */
+function clonedOrText(value: unknown, parents: object[]): unknown {
+  try {
+    return structuredClone(value);
+  } catch {
+    // (the clone refuses a part of `value`: its parts are copied one by one)
+  }
+  if (typeof value !== "object" || value === null || parents.includes(value)) {
+    return textOf(value);
+  }
+
+  const inside = [...parents, value];
+  if (Array.isArray(value)) {
+    return value.map((item) => clonedOrText(item, inside));
+  }
+
+  return Object.fromEntries(Object.entries(value).map(([key, child]) => [key, clonedOrText(child, inside)]));
 }
 
 /**
@@ -212,6 +301,27 @@ function deepCopy<Value>(value: Value): Value {
     return copy as Value;
   }
   return value;
+}
+
+/**
+ * Returns `targets` as PEAR holds them, each arm's vector a tuple (`tupleOf`): the loop hands its targets to its
+ * driver, its operation, its recovery policy and every snapshot as they are, and none of them can write into what
+ * the loop holds and commands. Targets whose vectors are tuples already are returned as they are. It never throws
+ * (`fail` calls it before the fault is latched): what is no vector is left as it is, for the driver to refuse.
+ */
+function tupleTargets(targets: ArmTargets): ArmTargets {
+  if (typeof targets !== "object" || targets === null) {
+    return targets;
+  }
+
+  let isChanged = false;
+  const tuples: Record<string, readonly number[]> = {};
+  for (const [arm, vector] of Object.entries(targets)) {
+    tuples[arm] = Array.isArray(vector) || ArrayBuffer.isView(vector) ? tupleOf(vector) : vector;
+    isChanged ||= tuples[arm] !== vector;
+  }
+
+  return isChanged ? tuples : targets;
 }
 
 // the numbers of a snapshot that Python holds as an int, by their key; every other number is a float
@@ -257,6 +367,8 @@ function pythonRepr(value: unknown, key = "", parent = "", isServoStatus = false
 
 /** One owner and one bounded trajectory for every arm of a joint-streaming robot, stepped at its control rate. */
 export class JointControlLoop<State extends ArmState = ArmState> implements GuardedControlLoop {
+  /** Of the control thread: what the report of a `run` that `start` began and that failed names. */
+  static readonly THREAD_NAME: string = "station-control";
   /** A recovery's stability window is never shorter, s. */
   static readonly RECOVERY_WINDOW_FLOOR_S: number = 0.5;
   /** How closely a move must start at the held command. */
@@ -337,7 +449,20 @@ export class JointControlLoop<State extends ArmState = ArmState> implements Guar
     options: ControlLoopOptions = {},
   ) {
     this.clock = options.clock ?? secondsClock();
-    this.log = options.log ?? (() => undefined);
+    const log = options.log ?? logErrorsToConsole;
+    this.log = (level, message, error) => {
+      try {
+        log(level, message, error);
+      } catch (logError) {
+        // Python's logging does not raise what a handler raised, it prints it: a log that throws breaks neither a
+        // control period nor a caller's call, and in `fail` the hold is commanded after it
+        try {
+          console.error("--- Logging error ---", logError);
+        } catch {
+          // (nobody is left to tell)
+        }
+      }
+    };
     this._controlConfig = deepCopy(controlConfig);
     this._robotConfig = deepCopy(robotConfig);
     this.layout = this._robotConfig.LAYOUT;
@@ -423,9 +548,16 @@ export class JointControlLoop<State extends ArmState = ArmState> implements Guar
       () => {
         thread.isAlive = false;
       },
-      () => {
-        // the failure was logged where it happened; the loop keeps the state it had
+      (error: unknown) => {
+        // the loop keeps the state it had, and nothing steps it any more: the hold is not renewed and tracking is
+        // not checked. `run` has told the log; Python also prints the traceback of a thread that died, whatever the
+        // logger does, so the failure is printed here too, also for a caller whose `log` drops it
         thread.isAlive = false;
+        try {
+          console.error(`Exception in thread ${this.loopClass.THREAD_NAME}:`, error);
+        } catch {
+          // (a console that throws must not make `ended` reject, which `close` awaits)
+        }
       },
     );
     this.thread = thread;
@@ -450,7 +582,8 @@ export class JointControlLoop<State extends ArmState = ArmState> implements Guar
       { speedScale: options.speedScale ?? 1.0, caps: options.caps ?? null },
     );
     this.dispatchJointMove(move);
-    this.log("info", `move requested: ${pythonRepr(targets, "", "targets")}`);
+    // (Python writes the targets as they were given; PEAR's own commands give each arm's as a tuple)
+    this.log("info", `move requested: ${pythonRepr(targets, TUPLE_PARENT)}`);
   }
 
   /**
@@ -668,8 +801,10 @@ export class JointControlLoop<State extends ArmState = ArmState> implements Guar
   /** Waits for a settled HOLD that `accepts` accepts and returns its snapshot; any failure stops the arms. */
   async waitForHold(timeoutS: number, options: WaitForHoldOptions = {}): Promise<ControlSnapshot> {
     // accepts may annotate the snapshot but never commands; even an unguarded caller is bound to the operation seen
-    // on entry
-    const guard = options.guard ?? new ActionGuard(this);
+    // on entry. PEAR's guard reads that operation's generation under the lock, so after a control period that is
+    // under way: here too, and at once when none is
+    const guard =
+      options.guard ?? (this.lock.isHeld ? await this.lock.run(() => new ActionGuard(this)) : new ActionGuard(this));
     const label = options.label ?? "Motion";
 
     const readSnapshot = (): Promise<ControlSnapshot> =>
@@ -804,14 +939,16 @@ export class JointControlLoop<State extends ArmState = ArmState> implements Guar
    * it inside the loop's step.
    */
   async transferHold(targets: ArmTargets, velocities: ArmVectors | null = null): Promise<void> {
+    // (PEAR's policies hand tuples; here the driver and the loop get tuples of what the policy handed)
+    const held = tupleTargets(targets);
     try {
-      await this.driver.send(targets, velocities);
+      await this.driver.send(held, velocities);
     } catch (error) {
       this.faultHoldError = errorText(error);
       throw new RuntimeError(`Recovery hold write failed: ${errorText(error)}`, { cause: error });
     }
 
-    this.targets = targets;
+    this.targets = held;
   }
 
   /**
@@ -877,7 +1014,7 @@ export class JointControlLoop<State extends ArmState = ArmState> implements Guar
     // the hold is exactly where the arms are: feedback may rest just past a limit against a mechanical stop, and
     // clipping it into the bounds would jump the arm at enable
     this.targets = Object.fromEntries(
-      this.layout.arms.map((arm) => [arm, this.states[arm]!.position.map(Number)]),
+      this.layout.arms.map((arm) => [arm, Object.freeze(this.states[arm]!.position.map(Number))]),
     );
     this.trajectory.hold(this.layout.join(this.targets));
     await this.driver.send(this.targets);
@@ -900,23 +1037,21 @@ export class JointControlLoop<State extends ArmState = ArmState> implements Guar
       this.states = states;
       const feedback = this.feedbackSnapshot();
       this.checkTracking(feedback);
-      // (read after the await: what a caller began during the reading was begun before this step)
-      const isHolding = this.status === ControlState.HOLD;
-      if (isHolding) {
+      // (the status is read after the await: what a caller began during the reading was begun before this step)
+      if (this.status === ControlState.HOLD) {
         this.isSettled = this.settlingWindow.checkHold(feedback);
         const generation = this.generation;
         await this.driver.refreshHold(this.targets);
         if (this.generation !== generation) {
-          // a caller began an operation during the renewal: PEAR's step is over here, and the operation starts with
-          // the next period
+          // a caller began an operation during the renewal: in PEAR nothing between the renewal and the step's end
+          // leaves a HOLD, so the step is over here, and the operation starts with the next period
           return;
         }
       }
       if (this.operationCancellation !== null && this.operationCancellation.aborted) {
         await this.stopLocked(MotionEndReason.CANCELLED);
       }
-      // a step that found a HOLD never advances: in PEAR nothing between the two tests leaves a HOLD
-      if (!isHolding && MOVING_CONTROL_STATES.includes(this.status)) {
+      if (MOVING_CONTROL_STATES.includes(this.status)) {
         await this.advance(now, feedback);
       }
     } catch (error) {
@@ -1067,7 +1202,10 @@ export class JointControlLoop<State extends ArmState = ArmState> implements Guar
 
     this.limits.checkCommand(sample.position, this.layout.join(this.targets), this.layout);
     const targets = Object.fromEntries(
-      Object.entries(this.layout.split(sample.position)).map(([arm, positions]) => [arm, positions.map(Number)]),
+      Object.entries(this.layout.split(sample.position)).map(([arm, positions]) => [
+        arm,
+        Object.freeze(positions.map(Number)),
+      ]),
     );
     await this.driver.send(targets, this.plannedVelocities(sample));
     this.targets = targets;
@@ -1092,7 +1230,7 @@ export class JointControlLoop<State extends ArmState = ArmState> implements Guar
         this.motionEndReason = MotionEndReason.FINISHED;
       }
       this.status = ControlState.HOLD;
-      this.log("info", `motion finished at ${pythonRepr(this.targets, "", "targets")}`);
+      this.log("info", `motion finished at ${pythonRepr(this.targets, TUPLE_PARENT)}`);
     } else if (now - this.settleSince > this._controlConfig.settle_timeout_s) {
       throw this.settlingWindow.stabilityError("Motion remained unstable before timeout");
     }
@@ -1102,16 +1240,19 @@ export class JointControlLoop<State extends ArmState = ArmState> implements Guar
   protected async fail(error: unknown): Promise<void> {
     this.finishRecovery(error);
     if (this.operation !== null) {
-      this.targets = this.operation.faultTargets(error, this.clock.monotonic(), this.states, this.targets);
+      this.targets = tupleTargets(
+        this.operation.faultTargets(error, this.clock.monotonic(), this.states, this.targets),
+      );
     }
-    this.targets = this.recoveryPolicy.faultTargets(this);
+    this.targets = tupleTargets(this.recoveryPolicy.faultTargets(this));
 
     this.operation = null;
     this.generation += 1;
     this.status = ControlState.FAULT;
+    // from here to the hold's command nothing throws, whatever `error` is, whatever it carries and whatever the log
+    // does: an arm whose fault is latched is always commanded to hold
     this.fault = errorText(error);
-    const details = (error as { details?: unknown } | null | undefined)?.details;
-    this.faultDetails = structuredClone(details ?? null) as Record<string, unknown> | null;
+    this.faultDetails = faultDetailsOf(error);
     this.isSettled = false;
     this.settlingWindow.reset();
     this.motionEndReason = MotionEndReason.FAULT;

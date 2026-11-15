@@ -57,8 +57,11 @@ function sampleRow(sample: CommandSample): unknown[] {
   return [sample.position, sample.velocity, sample.acceleration, sample.isFinished, sample.requestedTarget];
 }
 
-/** What `JointMove.build` gives for a case: the refusal, or the move's caps, duration and states. */
-function moveOutcome(item: Case): Outcome {
+/**
+ * What `JointMove.build` gives for a case: what build itself gave (a refusal is its own, not the move's afterwards),
+ * and the refusal or the move's caps, duration and states.
+ */
+function moveOutcome(item: Case): { built: Outcome; out: Outcome } {
   const { controlConfig, robotConfig, layout } = stationOf(item.station as string);
   const limits = robotConfig.jointLimits();
   const options: { speedScale?: number; caps?: MotionCaps } = {};
@@ -68,8 +71,12 @@ function moveOutcome(item: Case): Outcome {
   if ("caps" in item) {
     options.caps = item.caps as MotionCaps;
   }
+  const built = outcomeOf(() => {
+    JointMove.build(item.start as number[], item.goal as number[], limits, layout, options);
+    return null;
+  });
 
-  return outcomeOf(() => {
+  const out = outcomeOf(() => {
     const move = JointMove.build(item.start as number[], item.goal as number[], limits, layout, options);
     const duration = move.durationS;
     // the control periods a JointMoveOperation plays the move in
@@ -92,6 +99,8 @@ function moveOutcome(item: Case): Outcome {
       ]),
     };
   });
+
+  return { built, out };
 }
 
 /** Runs a script on a JointTrajectory of a station: each operation with what it gave, and the input after it. */
@@ -300,28 +309,33 @@ export interface TrajectoryResult {
   summary: string;
 }
 
-/** Runs every case of the fixture on pear.js and compares what it gives with what PEAR gave. */
-export function compareTrajectoryFixture(fixture: TrajectoryFixture, comparison: Comparison): TrajectoryResult {
-  const differences: string[] = [];
-  const counts: string[] = [];
-  let cases = 0;
+/** One case of the fixture: its group, its name, and the comparison of what pear.js gives with what PEAR gave. */
+export interface TrajectoryCheck {
+  group: string;
+  name: string;
+  /** Returns null when pear.js gives what PEAR gave, else where they first differ and how. */
+  difference(comparison: Comparison): string | null;
+}
 
-  const each = (name: string, items: Case[], actualOf: (item: Case) => unknown, expectedOf: (item: Case) => unknown): void => {
-    let differing = 0;
+/** Returns every case of the fixture as a check, in the fixture's order. */
+export function trajectoryChecks(fixture: TrajectoryFixture): TrajectoryCheck[] {
+  const checks: TrajectoryCheck[] = [];
+
+  const each = (group: string, items: Case[], actualOf: (item: Case) => unknown, expectedOf: (item: Case) => unknown): void => {
     items.forEach((item, index) => {
-      cases += 1;
-      let difference: string | null;
-      try {
-        difference = comparison.difference(plain(actualOf(item)), expectedOf(item), `${name} ${index} (${item.k as string})`);
-      } catch (error) {
-        difference = `${name} ${index} (${item.k as string}): the case stopped: ${(error as Error).name}: ${(error as Error).message}`;
-      }
-      if (difference !== null) {
-        differing += 1;
-        differences.push(difference);
-      }
+      const name = `${group} ${index} (${item.k as string})`;
+      checks.push({
+        group,
+        name,
+        difference(comparison: Comparison): string | null {
+          try {
+            return comparison.difference(plain(actualOf(item)), expectedOf(item), name);
+          } catch (error) {
+            return `${name}: the case stopped: ${(error as Error).name}: ${(error as Error).message}`;
+          }
+        },
+      });
     });
-    counts.push(`${items.length} ${name} (${differing} differ)`);
   };
 
   each(
@@ -329,13 +343,13 @@ export function compareTrajectoryFixture(fixture: TrajectoryFixture, comparison:
     fixture.move_cases,
     (item) => {
       if ("station" in item) {
-        return { out: moveOutcome(item) };
+        return moveOutcome(item);
       }
       // a move made without build
       const move = new JointMove(item.start as number[], item.goal as number[], item.motion_caps as number[][]);
       return { out: outcomeOf(() => move.durationS), again: outcomeOf(() => move.durationS) };
     },
-    (item) => ("station" in item ? { out: item.out } : { out: item.out, again: item.again }),
+    (item) => ("station" in item ? { built: item.built, out: item.out } : { out: item.out, again: item.again }),
   );
   each("trajectory_sessions", fixture.trajectory_sessions, trajectorySession, (item) => item.ops);
   each("gripper_sessions", fixture.gripper_sessions, gripperSession, (item) => ({ duration: item.duration, out: item.out }));
@@ -347,5 +361,26 @@ export function compareTrajectoryFixture(fixture: TrajectoryFixture, comparison:
     steps: item.steps,
   }));
 
-  return { cases, differences, summary: counts.join(", ") };
+  return checks;
+}
+
+/** Runs every case of the fixture on pear.js and compares what it gives with what PEAR gave. */
+export function compareTrajectoryFixture(fixture: TrajectoryFixture, comparison: Comparison): TrajectoryResult {
+  const differences: string[] = [];
+  const groups = new Map<string, { cases: number; differing: number }>();
+  const checks = trajectoryChecks(fixture);
+
+  for (const check of checks) {
+    const group = groups.get(check.group) ?? { cases: 0, differing: 0 };
+    groups.set(check.group, group);
+    group.cases += 1;
+    const difference = check.difference(comparison);
+    if (difference !== null) {
+      group.differing += 1;
+      differences.push(difference);
+    }
+  }
+  const counts = [...groups].map(([name, group]) => `${group.cases} ${name} (${group.differing} differ)`);
+
+  return { cases: checks.length, differences, summary: counts.join(", ") };
 }

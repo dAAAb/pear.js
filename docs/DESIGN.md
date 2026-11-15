@@ -30,6 +30,10 @@ One turn of the station, as PEAR defines it and pear.js keeps it:
   the pinned commit and write JSON to `tests/fixtures/`. The fixtures are committed; `npm test` needs only Node.
   A fixture script takes no machine-specific path: it runs inside a PEAR station environment
   (`<work dir>/envs/station/bin/python tools/fixtures/<name>.py`) and writes relative to the repository.
+  Where PEAR's Python cannot give a record, because the thing exists only in a page (a call that arrives while a
+  control period is under way, a write into a vector PEAR holds as a tuple, where a line is logged when nobody
+  asked for the log), a test compares pear.js with itself or with an expectation written by hand; its file says so
+  at its top, and the module's note counts such tests apart from the others.
 - **The core has no runtime dependencies** and runs in a browser and in Node 20 or newer: ES modules, no Node-only
   API under `src/` (tests and tools may use Node's).
 - **A deliberate difference is written down** in the section of that name below, with its reason and its test.
@@ -44,11 +48,11 @@ One turn of the station, as PEAR defines it and pear.js keeps it:
 | `src/feetech/` | Not PEAR's own code: the Feetech STS3215 protocol as the Feetech Python SDK and lerobot's `FeetechMotorsBus` speak it (PEAR drives the arm through them); a simulated servo chain |
 | `src/so101/hardware/` | `deploy/station/control/robots/so101/hardware/` `arms.py`, `driver.py`, `startup.py`, `arm_state.py`; lerobot's SO follower and its calibration file |
 | `src/ruckig/` | Not PEAR's own code: Ruckig 0.15.3, community edition (MIT), which `deploy/station/control/joint/trajectory.py` calls every control period |
-| `src/station/joint/`, `src/station/schemas.ts` | `deploy/station/control/schemas.py`; `deploy/station/control/joint/` `config.py`, `limits.py`, `layout.py`, `texts.py`, `arm_state.py`, `stability.py`, `tracking.py`, `action_guard.py`, `snapshot_checks.py`, `feedforward.py`, `driver.py`; `deploy/station/exceptions.py` |
-| `src/so101/joint/` | `deploy/station/control/robots/so101/joint/feedforward.py`; the checks of `deploy/station/control/robots/so101/config.py` are in `src/so101/config.ts` |
+| `src/station/joint/`, `src/station/schemas.ts` | `deploy/station/control/schemas.py`; `deploy/station/control/joint/` `config.py`, `limits.py`, `layout.py`, `texts.py`, `arm_state.py`, `stability.py`, `tracking.py`, `action_guard.py`, `snapshot_checks.py`, `feedforward.py`, `driver.py`, and the control loop: `trajectory.py`, `operations.py`, `control_loop.py`, `recovery.py`; `deploy/station/exceptions.py` |
+| `src/so101/joint/` | `deploy/station/control/robots/so101/joint/` `feedforward.py`, `grippers.py`, `control_loop.py`; the checks of `deploy/station/control/robots/so101/config.py` are in `src/so101/config.ts` |
 | `src/agent/` | `deploy/station/agent_loop/` `agent_loop.py`, `schemas.py`, `config.py`, `messages.py` (the frames of a turn); `deploy/station/agent_loop/clients/` `client.py`, `vllm.py`, `schemas.py`, `metrics.py`, `health_checks.py`; what those run of the OpenAI Python SDK |
 | `src/python/` | Not PEAR's own code: what PEAR's texts and results take from Python itself (CPython 3.12), in one place for every module: the built-in exceptions under their names and bases, with how PEAR reads an error it caught (`type(error).__name__`, `isinstance(error, ValueError)`); `repr` of a float, `round` and the format specifications, `json.dumps` and `json.loads`, `repr` and `str` of a value, `str.isprintable`, whitespace |
-| `src/station/` (in progress) | `deploy/station/control/joint/` `trajectory.py`, `operations.py`, `control_loop.py`, `recovery.py`; `deploy/station/control/motion/` `execution.py`, `planning.py`, `homing.py`; `deploy/station/control/robot.py`, `cameras.py`; the SO-101's `joint/grippers.py`, `joint/control_loop.py`, `motion/planning.py`, `motion/homing.py`, `robot.py` |
+| `src/station/` above the joint layer (in progress, not in the repository yet) | `deploy/station/control/motion/` `execution.py`, `planning.py`, `homing.py`; `deploy/station/control/robot.py`, `cameras.py`; the SO-101's `motion/planning.py`, `motion/homing.py`, `robot.py` |
 | `web/` | Not in PEAR: the page, which GitHub Pages builds from this directory. It reaches the arm through Web Serial and the wrist camera through the browser. Its first version only reads: a guard between the bus and the port lets only PING, READ and SYNC READ through (`docs/progress/web.md`) |
 | `tests/sim-bridge/` | Not in PEAR: the servo layer on a simulated SO-101 servo chain over TCP, compared packet by packet with PEAR's Python on the same chain; and PEAR's own robot stepped on that chain, recorded as the reference for step 4 of the ladder (`docs/progress/station-reference.md`) |
 
@@ -60,7 +64,8 @@ Each step is claimed only when it has been run.
 2. Kinematics: equal to PEAR within stated tolerances (fixtures).
 3. Feetech: packets equal to the reference SDK's; a simulated servo bus in TypeScript; and, on a simulated SO-101
    servo chain over TCP, the packets PEAR's Python sends on the same chain (`docs/progress/sim-bridge.md`).
-4. Station: actions executed on a simulated SO-101 give the results PEAR's Python station gives.
+4. Station: actions executed on a simulated SO-101 give the results PEAR's Python station gives. Run so far: the
+   control loop alone, period by period, on the stand-in arm of PEAR's own tests (`docs/progress/loop.md`).
 5. A real model drives the simulated arm through pear.js.
 6. A real SO-101, by a person at the arm.
 
@@ -92,12 +97,28 @@ Node on a simulated servo chain, a period's read and send take about 1 ms of the
 3 ms at the 99th percentile and 6 ms at worst, and no period was skipped (`docs/progress/web.md`); a hidden tab, and
 what Web Serial on a real adapter adds, are still to be measured.
 
+PEAR's loop runs in a thread of its own and steps under a lock: a caller's thread waits, so every call falls before
+a control period or after it. A page has one thread. There the loop is an asynchronous function, and a call can
+arrive while a period awaits the serial line. The loop is written so that such a call acts as PEAR's would just
+before that period or just after it, and `tests/station-loop/interleaving.test.ts` and `sweep.test.ts` hold it to
+that by comparing with a second loop on which the call is made before and after. PEAR's thread and lock are in no
+record, so these tests compare pear.js with itself. What PEAR holds as tuples, an arm's targets and readings, are
+frozen arrays: a reader of a snapshot cannot change what the loop holds and commands. What PEAR logs goes to a
+`log` option; a loop that is given none prints the error level (a fault, a hold that could not be commanded, the
+end of the loop) with `console.error` (`docs/progress/loop.md`, "Deliberate differences").
+
 ## Safety
 
 The model does what it is asked and is not a safety mechanism. The station bounds what an answer can do: joint
 limits, a bound on each increment, speed and acceleration limits, a stop that latches. A page that drives an arm
 keeps a visible stop control and assumes a person is at the arm. When the page is closed the servos hold their
 last target; pear.js has no process that outlives the page.
+
+To stop an arm, call the control loop's `stop()`: it brakes into a hold, with the torque on. A fault and a timeout
+command a hold too; if that command cannot be sent, the loop says so ("Could not command a hold; a physical stop
+may be required"). `close()`, `shutdown()` and an `open()` that fails release the hardware as PEAR's do: they
+switch the SO-101's torque off, and an arm that is not supported then falls under its own weight. A page's stop
+control must never close the loop to stop an arm.
 
 ## Conventions
 

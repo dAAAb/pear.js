@@ -3,19 +3,41 @@
 import type { ArmFeedback, SampleId } from "../schemas";
 import type { JointLayout } from "./layout";
 
+/**
+ * Returns `vector` as PEAR holds an arm's vector: a tuple, here a frozen array. Whoever is handed it (a snapshot's
+ * reader, a driver, an operation, a recovery policy) cannot change it for the one that holds it: a write throws a
+ * TypeError in a module, as Python's does, and changes nothing in a script that is not strict. A vector that is
+ * frozen already is returned as it is; any other is copied, so the caller's own array is neither frozen under it nor
+ * shared.
+ */
+export function tupleOf(vector: ArrayLike<number>): readonly number[] {
+  if (Array.isArray(vector) && Object.isFrozen(vector)) {
+    return vector as readonly number[];
+  }
+
+  return Object.freeze(Array.from(vector));
+}
+
 /** One arm's measured coordinates; a robot may extend it to carry its own telemetry. */
 export class ArmState {
   /** How far a reading's stamp may run ahead of the local clock, s. */
   static readonly CLOCK_SLACK_S = 0.001;
 
+  /** The arm's coordinates and their rates: tuples (`tupleOf`), which a control loop hands out as they are. */
+  readonly position: readonly number[];
+  readonly velocity: readonly number[];
+
   constructor(
-    readonly position: readonly number[],
-    readonly velocity: readonly number[],
+    position: readonly number[],
+    velocity: readonly number[],
     /** Local monotonic time of the reading, s, not of the caller's read. */
     readonly sampledMonotonicS: number,
     /** Tells a repeated reading from a new one at the same time. */
     readonly sampleId: SampleId = null,
-  ) {}
+  ) {
+    this.position = tupleOf(position);
+    this.velocity = tupleOf(velocity);
+  }
 
   /** Throws if this reading is not one finite arm vector of `layout`. */
   check(layout: JointLayout): void {
