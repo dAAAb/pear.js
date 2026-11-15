@@ -41,7 +41,8 @@ One turn of the station, as PEAR defines it and pear.js keeps it:
 | --- | --- |
 | `src/protocol/` | `agent_loop/protocol.py`; `deploy/station/agent_loop/` `messages.py`, `action_parser.py`, `system_prompt.md`; `deploy/station/control/motion/` `actions.py`, `results.py`; `deploy/station/control/robots/so101/` `formats.py`, `motion/actions.py`, `motion/results.py`, `prompts/single_arm_pose.md` |
 | `src/so101/kinematics/` | `deploy/station/control/robots/so101/` `layout.py`, `config.py` and `config.yaml` (geometry, limits), `motion/kinematics.py`, `description/so101_new_calib.urdf`; `deploy/station/control/motion/kinematics.py`; `deploy/station/control/joint/limits.py`; lerobot's `RobotKinematics` as those files use it |
-| `src/feetech/` | The Feetech STS3215 protocol as lerobot's `FeetechMotorsBus` speaks it; `deploy/station/control/robots/so101/hardware/` `arms.py`, `driver.py`, `startup.py`, `arm_state.py` |
+| `src/feetech/` | Not PEAR's own code: the Feetech STS3215 protocol as the Feetech Python SDK and lerobot's `FeetechMotorsBus` speak it (PEAR drives the arm through them); a simulated servo chain |
+| `src/so101/hardware/` | `deploy/station/control/robots/so101/hardware/` `arms.py`, `driver.py`, `startup.py`, `arm_state.py`; lerobot's SO follower and its calibration file |
 | `src/station/` (later) | `deploy/station/control/joint/*`, `deploy/station/control/motion/` `execution.py`, `planning.py`, `homing.py`; the SO-101's `joint/grippers.py`, `motion/planning.py`, `motion/homing.py`, `robot.py`; `deploy/station/agent_loop/agent_loop.py`; `deploy/station/agent_loop/clients/` `client.py`, `vllm.py` |
 | `src/web/` (later) | Not in PEAR: the Web Serial transport, camera capture, a demo page |
 
@@ -58,10 +59,19 @@ Each step is claimed only when it has been run.
 
 ## Deliberate differences from PEAR
 
-None yet. Expected when the station is ported: PEAR streams joint targets from a 50 Hz loop in its own process; a
-web page cannot promise that timing, so pear.js will lean on the servos' own speed and acceleration limits and on
-checks between moves. What that changes for the model (nothing, if the reports stay the same) will be tested at
-step 4.
+Each module lists its own under "Deliberate differences" in `docs/progress/<module>.md`. The ones that shape the
+library:
+
+- Calls that reach the arm are asynchronous, and the bus makes them take turns; Python's block.
+- Python's exceptions become JavaScript error classes that carry the Python class name, because that name is what
+  the model reads of a refused action (`error.code`).
+- The inverse kinematics solve the same optimisation problem as PEAR's solver (placo) with code of their own, and
+  no robot description is read at run time: the kinematic chain is a constant, checked against the URDF by a test.
+- A transport is handed to the bus already open; pear.js never scans for ports or changes baud rates.
+
+Expected when the station is ported: PEAR streams joint targets from a 50 Hz loop in its own process; a web page
+cannot promise that timing, so pear.js will lean on the servos' own speed and acceleration limits and on checks
+between moves. What that changes for the model (nothing, if the reports stay the same) will be tested at step 4.
 
 ## Safety
 

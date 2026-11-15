@@ -16,3 +16,6 @@ scratch/
 
 .DS_Store
 Thumbs.db
+
+# test reporters' output
+.vitest/

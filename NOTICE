@@ -10,6 +10,21 @@ assets/pear are PEAR's own, unchanged unless the README beside them says otherwi
 
 This product includes the robot description of the SO-101 arm from SO-ARM100
 (https://github.com/TheRobotStudio/SO-ARM100), licensed under the Apache License, Version 2.0,
-as PEAR changed and distributes it (pear/deploy/station/control/robots/so101/description).
+as PEAR changed and distributes it (pear/deploy/station/control/robots/so101/description):
+assets/pear/so101, and the kinematic chain transcribed from it in src/so101/kinematics.
 
-pear.js is not affiliated with or endorsed by the PEAR project, its authors, or the authors of SO-ARM100.
+This product includes software derived from LeRobot (https://github.com/huggingface/lerobot), version 0.6.1,
+Copyright 2024 The Hugging Face team, licensed under the Apache License, Version 2.0: src/feetech/bus.ts and
+src/feetech/tables.ts port its Feetech motors bus and control table, src/so101/hardware/follower.ts its SO follower
+and calibration file.
+
+src/feetech/protocol.ts ports the packet handler of the FEETECH Servo Python SDK, version 1.0.0
+(https://github.com/Adam-Software/FEETECH-Servo-Python-SDK), which its authors released into the public domain
+(The Unlicense).
+
+The inverse kinematics step in src/so101/kinematics reproduces, in new code, the optimisation problem that
+placo's kinematics solver (https://github.com/rhoban/placo, version 0.9.15) solves when PEAR calls it; no code of
+placo is included. placo is Copyright (c) Rhoban Team and licensed under the MIT License.
+
+pear.js is not affiliated with or endorsed by the PEAR project or its authors, Hugging Face, TheRobotStudio,
+Feetech, or the Rhoban team.

@@ -35,12 +35,15 @@ model something it has never seen. So:
 
 | Part | What it is | State |
 | --- | --- | --- |
-| `src/protocol` | The texts the model reads and the action it writes: system prompt, turn text, answer parsing, execution feedback | in progress |
-| `src/so101/kinematics` | The SO-101's forward and inverse kinematics in PEAR's pose convention, joint limits | in progress |
-| `src/feetech` | The Feetech STS3215 serial protocol and the SO-101's servo layer, over an abstract transport | in progress |
-| station | Motion execution (settling, tracking protection, gripper outcomes, Home), the agent loop, the model client | planned |
-| web | Web Serial transport, camera capture, a demo page | planned |
+| `src/protocol` | The texts the model reads and the action it writes: system prompt, turn text, answer parsing, execution feedback | Ported. Every text equals PEAR's on the fixtures (1,491 tests), PEAR's own stored texts among them |
+| `src/so101/kinematics` | The SO-101's forward and inverse kinematics in PEAR's pose convention, joint limits | Ported. Poses equal PEAR's on 2,010 joint vectors. Inverse kinematics gives PEAR's answer wherever PEAR's solver converged (1,250 of 2,255 fixture cases) and on 92% of the cases where it ran out of steps, where PEAR's own answer changes with the ninth decimal of its input |
+| `src/feetech`, `src/so101/hardware` | The Feetech STS3215 serial protocol, lerobot's bus on it and PEAR's SO-101 servo layer, over an abstract transport; a simulated servo chain | Ported. Packets, bus exchanges and unit conversions equal the reference Python's on the fixtures. Never run on a real servo or a real serial port |
+| station | Motion execution (settling, tracking protection, gripper outcomes, Home), the agent loop, the model client | next |
+| web | Web Serial on a real adapter, camera capture, a demo page | planned |
 | a real SO-101 | by a person at the arm | not yet |
+
+What each ported part covers, how it was compared with PEAR and what it leaves out is in `docs/progress/`.
+Nothing has been run in a browser yet: the tests run in Node.
 
 ## Develop
 

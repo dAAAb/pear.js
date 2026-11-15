@@ -1,6 +1,15 @@
 /**
  * pear.js: PEAR's robot station in TypeScript.
  *
+ *   protocol   the texts a PEAR model reads and the action it writes
+ *   so101      the SO-101 arm: joint layout and default settings, kinematics, servo layer
+ *   feetech    the Feetech STS3215 serial protocol and bus, over an abstract transport
+ */
+export * as feetech from "./feetech/index";
+export * as protocol from "./protocol/index";
+export * as so101 from "./so101/index";
+
+/**
  * The commit of PEAR (https://github.com/mit-han-lab/pear) that every module here ports and is tested against.
  * A module is changed to follow a newer PEAR only together with its fixtures (tools/fixtures).
  */

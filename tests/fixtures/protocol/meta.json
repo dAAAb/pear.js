@@ -1,0 +1,179 @@
+{
+ "pear_commit": "f32aa1f7c2ec9c3f45630cc9f8541b3201e8e087",
+ "python": "3.12.15",
+ "pydantic": "2.13.5",
+ "format": "single_arm_pose",
+ "schema": {
+  "arm": [
+   "x",
+   "y",
+   "z",
+   "pitch",
+   "roll"
+  ],
+  "gripper": [
+   "width"
+  ]
+ },
+ "decimals": {
+  "x": 1,
+  "y": 1,
+  "z": 1,
+  "pitch": 2,
+  "roll": 2,
+  "width": 1
+ },
+ "cameras": [
+  "wrist"
+ ],
+ "json_block_pattern": "```json\\s*(\\{.*?\\})\\s*```",
+ "think_start": "<think>",
+ "unreachable_code": "UnreachablePoseError",
+ "motion_statuses": [
+  "completed",
+  "rejected",
+  "failed"
+ ],
+ "gripper_outcomes": [
+  "open",
+  "closed",
+  "stopped_before_closed"
+ ],
+ "whitespace": [
+  9,
+  10,
+  11,
+  12,
+  13,
+  28,
+  29,
+  30,
+  31,
+  32,
+  133,
+  160,
+  5760,
+  8192,
+  8193,
+  8194,
+  8195,
+  8196,
+  8197,
+  8198,
+  8199,
+  8200,
+  8201,
+  8202,
+  8232,
+  8233,
+  8239,
+  8287,
+  12288
+ ],
+ "prompts": {
+  "system_prompt.md": {
+   "pear_path": "pear/deploy/station/agent_loop/system_prompt.md",
+   "sha256": "de3e97a8829d4027c8f8e362b66292ee9c5183e5a1bcedc71f3bd713f1fbb1e3"
+  },
+  "single_arm_pose.md": {
+   "pear_path": "pear/deploy/station/control/robots/so101/prompts/single_arm_pose.md",
+   "sha256": "7384a11eb4c7757d2102d668afa41cdbd380b229bc592e929a8d3318787fbe26"
+  }
+ },
+ "stored_texts": {
+  "prompt": {
+   "instruction": "Pick up the red cube.",
+   "text": "You are controlling a robot. Each turn you see the robot's current state and its camera images, and you respond with the next action.\n\n## OBSERVATION\n\nThe robot is made of named parts, and each part has named quantities you can set. Every turn begins with the current value of every such quantity, grouped by part, followed by the camera images:\n\n{\"<part>\": {\"<quantity>\": <value>, ...}, ...}\n\nLengths are in centimeters and angles in radians; any other quantity is a plain number. Nothing beyond these names is given about what each quantity corresponds to.\n\n## ACTION\n\nThe action changes the listed quantities by these amounts:\n\n{\"<part>\": {\"<quantity>\": <change>, ...}, ...}\n\nWrite the change of every quantity; 0 leaves a quantity as it is.\n\n## EXECUTION\n\nThe action ends once every target is reached and the robot is at rest. If something keeps a target from being reached, the robot stops there and the action ends. Either way, you then receive the next observation.\n\n## RESPONSE FORMAT\n\nEnd your response with exactly one fenced json block containing the action, and nothing after it:\n\n```json\n<action>\n```\n\n## ENVIRONMENT\n\nRobot geometry:\n\n- SO-101: five arm joints; base origin at mounting height. +x forward, +y left, +z up; centimeters/radians. xyz is the modeled fixed fingertip from joint feedback and kinematics, not the grasp center. **z is not table clearance; table height is uncalibrated.**\n- Two tapered fingers: one fixed finger, one hinged jaw. Closing swings the jaw across the gap, not along the fingers.\n- pitch measures direction below horizontal: 0 horizontal, 1.57 downward. **roll rotates the wrist about the finger axis, NOT the base.** Forward at roll 0: moving jaw above fixed finger; near Home at roll -1.57: on robot's right. Home approximately pitch 0.69, roll -1.66, open.\n- No direct base-joint command: x/y sets horizontal fingertip position; IK determines base rotation. Pointing stays in the vertical plane through base and fingertips. Reachability couples position and orientation; joint interpolation need not trace a straight fingertip path.\n\nWrist camera:\n\n- Fixed near the finger roots. The fixed finger is the blade at the bottom middle; its projection stays fixed. The open jaw may leave view.\n- **Throughout alignment and approach, keep the target's grasp region at 80% of wrist-image width from the left; recheck before closing. This reference stays fixed across arm heights and poses.** Keep the fixed finger at the object's left contact side. **NEVER substitute the fixed fingertip, image center or a guessed vanishing point for this reference.**\n- Near Home: +x moves stationary targets down, +y right, positive roll turns the scene clockwise. Recheck after orientation changes. Vertical translation does not tilt the camera; finger pitch is not camera tilt.\n- 640x480; approximate measured FOV 85/69 degrees horizontally/vertically. Edge distortion is incompletely validated; camera-to-finger transform is uncalibrated; object depth is not supplied. **Disappearance does not prove alignment or success.**\n\nAction and feedback:\n\n- Arm commands are increments, normally from the held command; observations report measured state. Compare requested and actual motion.\n- gripper.width commands: +1=open, -1=close, 0=hold; magnitude sets neither gap nor force. Observations: unitless -1 closed, +1 open (0 halfway). Position alone does not prove a grasp.\n- Combined actions move the arm before the jaw; IK rejection executes neither. reached means joint tolerance, not contact or success. No contact force is reported; tracking protection is not contact sensing.\n- closed means the closed endpoint: evidence against an object between the fingers. stopped_before_closed means obstruction, not its identity. There is no automatic task-success detector; continued observations do not imply failure.\n\nAction fields:\n\nEvery action MUST include both parts and every quantity; use 0 for unchanged command components.\n\n```json\n{\"arm\": {\"x\": 0, \"y\": 0, \"z\": 0, \"pitch\": 0, \"roll\": 0}, \"gripper\": {\"width\": 0}}\n```\n\nCamera observations: each observation includes the current [wrist] image. Only the wrist view is available.\n\n## TASK\n\nPick up the red cube.\n"
+  },
+  "observation": {
+   "state": {
+    "arm": {
+     "x": 39.1,
+     "y": 0.0,
+     "z": 22.6,
+     "pitch": 0.0,
+     "roll": -0.05
+    },
+    "gripper": {
+     "width": 6.0
+    }
+   },
+   "feedback": "an earlier execution report",
+   "parts": [
+    "{\"arm\": {\"x\": 39.1, \"y\": 0.0, \"z\": 22.6, \"pitch\": 0.0, \"roll\": -0.05}, \"gripper\": {\"width\": 6.0}}\n\nThe current camera frame follows. End your response with one json block containing the next action.",
+    "--- images: wrist turn-1-wrist.jpg",
+    "--- with feedback:",
+    "{\"arm\": {\"x\": 39.1, \"y\": 0.0, \"z\": 22.6, \"pitch\": 0.0, \"roll\": -0.05}, \"gripper\": {\"width\": 6.0}}\n\nThe current camera frame follows. End your response with one json block containing the next action.\n\nPrevious execution: an earlier execution report"
+   ]
+  },
+  "parse": {
+   "answers": {
+    "valid": "Moving.\n```json\n{\"arm\": {\"x\": 0.0, \"y\": 0.0, \"z\": 0.3, \"pitch\": 0.0, \"roll\": 0.0}, \"gripper\": {\"width\": 0.0}}\n```",
+    "missing part": "```json\n{\"gripper\": {\"width\": 0.0}}\n```",
+    "text after the block": "```json\n{\"arm\": {\"x\": 0.0, \"y\": 0.0, \"z\": 0.3, \"pitch\": 0.0, \"roll\": 0.0}, \"gripper\": {\"width\": 0.0}}\n```\nDone.",
+    "non-number": "```json\n{\"arm\": {\"x\": 0.0, \"y\": 0.0, \"z\": \"up\", \"pitch\": 0.0, \"roll\": 0.0}, \"gripper\": {\"width\": 0.0}}\n```",
+    "thinking block": "<think>plan</think>\n```json\n{\"arm\": {\"x\": 0.0, \"y\": 0.0, \"z\": 0.3, \"pitch\": 0.0, \"roll\": 0.0}, \"gripper\": {\"width\": 0.0}}\n```",
+    "duplicate field": "```json\n{\"arm\": {\"x\": 0, \"x\": 1}}\n```",
+    "no block": "I will move the arm."
+   },
+   "lines": [
+    "valid: {\"arm\": {\"pitch\": 0.0, \"roll\": 0.0, \"x\": 0.0, \"y\": 0.0, \"z\": 0.3}, \"gripper\": {\"width\": 0.0}, \"type\": \"single_arm_delta\"}",
+    "missing part: ValueError: Expected exactly the parts arm, gripper",
+    "text after the block: ValueError: Final answer must end with a fenced json action",
+    "non-number: ValueError: Action quantities must be finite numbers, not booleans",
+    "thinking block: ValueError: Final answer unexpectedly contains a thinking block",
+    "duplicate field: ValueError: Duplicate action field: x",
+    "no block: ValueError: Final answer must end with a fenced json action"
+   ]
+  },
+  "feedback": {
+   "cases": [
+    {
+     "label": "interrupted",
+     "result": null,
+     "is_dispatched": false,
+     "text": "The previous inference was interrupted; no action was executed. Observe again."
+    },
+    {
+     "label": "completed move",
+     "result": {
+      "status": "completed",
+      "is_settled": true,
+      "target_reached": true,
+      "gripper_outcome": null,
+      "error": null
+     },
+     "is_dispatched": true,
+     "text": "{\"status\": \"completed\", \"execution_requested\": true, \"settled\": true, \"reached\": true} Use the new measured observation."
+    },
+    {
+     "label": "out of reach",
+     "result": {
+      "status": "rejected",
+      "is_settled": true,
+      "target_reached": false,
+      "gripper_outcome": null,
+      "error": {
+       "code": "UnreachablePoseError",
+       "message": "The target is out of reach. Along the requested change the arm can go at most 2% (x +4.6 of +200, z 0.0 of +0.3)."
+      }
+     },
+     "is_dispatched": true,
+     "text": "{\"status\": \"rejected\", \"moved\": false, \"error\": {\"code\": \"out_of_reach\", \"message\": \"Nothing moved: the whole action was discarded (arm and gripper). The target is out of reach. Along the requested change the arm can go at most 2% (x +4.6 of +200, z 0.0 of +0.3).\"}} Use the new measured observation."
+    },
+    {
+     "label": "gripper closing",
+     "result": {
+      "status": "completed",
+      "is_settled": true,
+      "target_reached": true,
+      "gripper_outcome": "closed",
+      "error": null
+     },
+     "is_dispatched": true,
+     "text": "{\"status\": \"completed\", \"execution_requested\": true, \"settled\": true, \"reached\": true, \"gripper\": \"closed\"} Use the new measured observation."
+    }
+   ]
+  }
+ }
+}
