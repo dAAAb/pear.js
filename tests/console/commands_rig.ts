@@ -152,7 +152,7 @@ function pearKeywords(options: object | undefined): Record<string, unknown> {
 /** PEAR's Annotations.clean_tags (records/annotations.py), which the port takes as an interface: the tags trimmed,
  * with single spaces and without case-insensitive duplicates, in their first spelling. The rig's own copy: the
  * white space and the case folding are JavaScript's, which are Python's for the tags the scenarios give. */
-function cleanTags(rawTags: unknown): string[] {
+export function cleanTags(rawTags: unknown): string[] {
   const [maxTags, maxTagLength, maxTagInputs] = [20, 40, 100];
   if (!Array.isArray(rawTags) || rawTags.length > maxTagInputs) {
     throw new ValueError("Tags must be a list of text");

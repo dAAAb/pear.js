@@ -13,12 +13,15 @@ browser that holds control, the recording, the cameras or the control fail, and 
 checks on.
 
 Written from PEAR's source at `f32aa1f7c2ec9c3f45630cc9f8541b3201e8e087`, and held to records of PEAR's own
-classes by three replays, each comparing every part of every step: fifteen scripted scenarios of PEAR's `TaskRun`
+classes by four replays, each comparing every part of every step: fifteen scripted scenarios of PEAR's `TaskRun`
 (every place of the records the same but the last digits of some joints in two of them: see "How the task run
 was verified"); twenty of PEAR's `Console`, `HomeReview` and `ControlLease` (see "The console itself"); thirty of
-PEAR's `Commands` and `Watchdog` (see "The operator's commands"). The last two stand on scripted stand-ins for
-the robot and the task run: no record yet has the commands run a task on the real robot. What the records do not
-reach is either held by tests written by hand, which compare with nothing of PEAR's, or named as not verified.
+PEAR's `Commands` and `Watchdog` (see "The operator's commands"); and one of PEAR's `Commands` running a task on
+PEAR's `Console`, `TaskRun` and real robot, replayed on the three ported parts together (see "The three parts
+together"). The second and the third stand on scripted stand-ins for the robot and the task run. The fourth is
+the only one in which the commands run a task on the real robot, and it has one scenario so far: `start`, two
+completed turns, and `pause` while the model is asked for the third. What the records do not reach is either
+held by tests written by hand, which compare with nothing of PEAR's, or named as not verified.
 The camera preview and the page's service are not here (see "Left"), and no page uses the console yet.
 
 ## Done
@@ -563,10 +566,11 @@ against the port found no difference beyond the deliberate ones above.
 
 ### Not verified of the commands
 
-- **The commands on PEAR's robot and PEAR's `TaskRun`.** Every scenario stands on scripted stand-ins: no turn
-  runs (`task_run.run` and `close_session` are recorded calls that return at once), and the robot answers what
-  the scenario scripts. A task from `start` to `clear` on the real robot and the real task run has no record
-  yet; neither has the robot's own Home under the console's review.
+- **The commands on PEAR's robot and PEAR's `TaskRun`.** Every scenario of this replay stands on scripted
+  stand-ins: no turn runs (`task_run.run` and `close_session` are recorded calls that return at once), and the
+  robot answers what the scenario scripts. The replay of the three parts together (below) has one scenario on
+  the real robot: `start`, two turns and `pause`. `resume`, `clear`, STOP MOTION during a move and a turn that
+  fails have no record on the real robot yet; neither has the robot's own Home under the console's review.
 - **Held by tests written by hand alone, by no record of PEAR's**: a Home that is admitted and `home_confirm`; a
   robot class with a choice of Home arms or with a Home that can keep the grippers; the folder of a task whose
   images cannot be attached; a draft image that cannot be removed; the count of steps at `clear`; the failure a
@@ -593,6 +597,90 @@ against the port found no difference beyond the deliberate ones above.
 - What PEAR logs (`logger.warning`, `logger.exception`) is not in the record; of the port's log lines only the
   warning for a draft image is compared, by hand.
 
+## The three parts together: a task run by the commands
+
+The replays above hold each part by itself: the task run on the real robot with a console written for the test,
+the console and the commands on scripted stand-ins. `tests/console/task_commands.test.ts` runs the three ported
+parts together for the first time: the port's `Commands` start a task, the port's `Console` runs it on its
+worker, with its own `TaskRun`, on pear.js's real robot on the stepped stand-in arm, and the operator pauses it.
+
+### The record
+
+`tests/fixtures/console/task_commands.json` is PEAR's own `Commands` (`Commands(console)`), `Console` with its
+worker thread (`launch`, `_operate`, `emit`, `set_phase` unchanged), `TaskRun` and real robot on the stepped
+stand-in SO-101 of PEAR's tests, with PEAR's scripted model, run by PEAR's Python through
+`tools/fixtures/console_task_commands_fixtures.py`. The recordings, the preview, the camera feed, the uploads,
+the annotations and the health checks are stand-ins that record their calls; there is no watchdog. One scenario
+so far, of two steps: `start` (the task's record and its `task.json`, the event `task`, the recording started,
+then two completed turns: a lift of the arm, and the gripper closed), taken while the model is asked for the
+third turn; and `pause` given there through `Commands.run` on the main thread, taken when the worker has ended
+(the event `stopping`, the model's late `usage`, the turn's end as an interruption, the recording stopped by
+both threads). 36 events, 3 requests of the model, 27 calls. Three runs of the script give the same bytes.
+
+The order of the two threads in the record is the script's choice, and its docstring says so: PEAR's
+`Console.stop` sets the cancellation at its first line, so in PEAR the worker may react while `stop()` still
+runs. The script has `stop()` run with a cancellation of its own and sets the worker's when `stop()` has
+returned, so that every effect of the command comes before the worker's reaction on any machine.
+
+### How the three parts together were verified
+
+`tests/console/task_commands_rig.ts` makes the scenario's rig as the script makes PEAR's: the port's `Console` by
+its constructor, with the `TaskRun` and the worker it makes itself; the port's `Commands`, made in the console's
+option `commands`; the real robot as the task run's rig makes it; the scripted model through the port's
+`ModelsConfig` and `OfferedModel`; the stand-ins, each recording its calls in PEAR's form; the records in memory;
+the stand-in clock, the wall clock's readings and the UUIDs by who draws them. PEAR's three threads (`main` gives
+the commands, `worker` is the console's worker, `model` is the thread in which the session asks the model) are
+one thread here and are told apart by an async context around what `launch` starts and around the model's
+request. The script's hand-over (the model's request held at a named point until the main thread has given its
+command) is a promise the rig releases. The port's `stop` is wrapped as the script wraps PEAR's, so the order
+within each thread is compared as PEAR's, and the order between the threads (the events' ids, each call's
+`after_event`, the clock) as the script's choice among the orders PEAR allows. PEAR's kinematics' answers are
+given to the port's robot from the record's `ik`; the test fails if the robot asks a question the record does
+not answer.
+
+Compared for each step, exactly (a number is the same double, a dictionary has PEAR's keys in PEAR's order, a
+list has as many items): what `run` returned or raised; every event (id, type, data, time, `monotonic_s`,
+`task_id`), its thread and whether the task's events hold it; the phases by thread; the console's fields; the
+task; the task run's fields and the session's (its turn count, its blocked reason, the last result's record);
+the robot's status; every file under the root; the calls of the robot and of each stand-in by thread; what the
+model was sent at each request; the UUIDs drawn and the clock (the control periods stepped, the stand-in
+clock, the readings of the wall clock); and before the first step the console's fields, the robot's status, the
+UUIDs and the periods of the robot's opening. **No difference, and no tolerance**: with PEAR's kinematics'
+answers given, every double of the scenario is PEAR's. The port, the record and the rig were written without
+sight of each other; no line of the port was changed.
+
+That the replay can fail: changes were made to the port on purpose, one at a time. Ten made by the test's author
+each made it fail: `start` leaving the turn number at 1; the event `task` not published; the event `task`
+published before `task.json` is written; a turn that opens as Thinking; the task run launched as not recorded;
+a turn's phase not shown on the console; `pause` that latches; `stop` without the event `stopping`; another
+reason of the pause; another phase in `stop`. Ten more, made by a second reader, each made it fail: a completed
+turn counted twice; an interrupted turn's end not saved; the worker's phase after an operator's pause; the
+reason with which the worker ends the recording; a second reading of the wall clock in `start`; a task's record
+without `images`; `pause` that is not immediate; the uploads given another task's id; another time in the
+stop's report; an event's id. Three passed, and each changes nothing this scenario can show: `start` not
+resetting the count of steps (a new console's is 0); the recording started after the launch (the port's worker
+begins on a later microtask, so the recording is started before the worker's first step either way; in PEAR
+the two would race); the interrupted turn's phase set to another word at the turn's end (the record of the
+interruption sets it again before the step ends, in PEAR as here).
+
+### Not verified of the three parts together
+
+- **One scenario.** `resume` after a pause, `clear` of a paused and of a running task, `start` again, STOP
+  MOTION while the arm moves and its reset, a turn that fails, and the watchdog's check between them are in no
+  record of the three parts together; the commands' replay holds each command on stand-ins only.
+- **One order of the threads.** The record pins the order in which the command's stop has returned before the
+  worker reacts. What the port does when its worker reacts while `stop()` still awaits the robot is not
+  compared with anything; PEAR allows that order too.
+- **A frame's bytes and a frame's folder**, as for the task run: the port's loop writes no frame; a frame is
+  compared by its name, and the path an observation's record holds by its last part.
+- **The stand-ins' answers.** The uploads attach nothing (the task has no images, no tags), the preview says the
+  cameras are live, the health checks are asked nothing: the real records, recordings and preview are not
+  ported.
+- **The values of the C library** are not in the record. Nothing differed without them in this scenario; another
+  scenario may show last digits.
+- The robot is on the stepped stand-in arm and the model is scripted: nothing here is a real arm, a real model
+  or a page.
+
 ## Left
 
 Of `TaskRun`: nothing of its code; the JSON text of a record (above).
@@ -607,9 +695,9 @@ class with two action formats, with a choice of Home arms and with a Home that c
 whose images cannot be attached, with the folders under the root; a draft image that cannot be removed; `clear`
 after turns; a failure shown while a recovery runs.
 
-Of all three: a record of the commands running a task on PEAR's robot with PEAR's `TaskRun` (the fixtures hold
-the task run on the real robot, and the console and the commands on stand-ins, apart).
-
+Of the three parts together: more scenarios on the real robot (`resume` after a pause, `clear` of a paused and
+of a running task, `start` again, STOP MOTION while the arm moves and its reset, a turn that fails, the
+watchdog's check between them), and the robot's own Home under the console's review.
 Of the console, not ported:
 
 - `preview.py` (154 lines), `PreviewFrame` and `Preview`: the cameras as the page shows them: the latest frame of

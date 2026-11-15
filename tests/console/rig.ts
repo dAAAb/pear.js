@@ -47,7 +47,7 @@ import { RecordingClock, StandInCameras, SteppedStandInSO101Robot, type DrawnFra
 const WAIT_S = 20.0;
 /** PEAR's configuration by the name the console's fixture gives (ConfigFiles.load("so101"), no overrides) -> the
  * station of tests/fixtures/station-robot that holds it (tools/fixtures/robot_fixtures.py: "so101_station"). */
-const STATIONS: Readonly<Record<string, string>> = { so101: "so101_station" };
+export const STATIONS: Readonly<Record<string, string>> = { so101: "so101_station" };
 /** The file of a task's saved events (TaskFiles.events_path). */
 export const EVENTS_NAME = "events.jsonl";
 
@@ -749,7 +749,7 @@ export class ConsoleRig implements RigHooks, CallContext, ConsoleStation {
   private ahead: number | null = null;
   private readonly frames: string[] = [];
 
-  private constructor(
+  protected constructor(
     private readonly meta: FixtureMeta,
     private readonly scenario: RecordedScenario,
   ) {}
