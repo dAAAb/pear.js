@@ -25,6 +25,20 @@ the same station on the recorded line of PEAR's run (the section "The replay" be
   required in its place, and no value its station computes differs in the 652 steps; with its own kinematics the
   same 26 goal packets of the one step differ, and all that the chain's first test requires holds. The servo side
   of a replay is PEAR's recording and proves nothing.
+- **In real time** (the port's own loop started by `open` on `realTimeClock()`, the chain's arm on the wall clock;
+  the section "In real time"): in every run of each of the 8 sessions on Node for Linux (four runs a session, two
+  of them after the runner's control calls were made quick), every step returns or raises as in PEAR's stepped run
+  and as in PEAR's two real-time runs, every action's result has the same status, settled, reached, gripper outcome
+  and error, and every report text is the same; the chain counted no unanswered packet, no corrupt packet and no
+  dropped byte, and no run faulted on its own. In the last two runs the station also takes PEAR's number of control
+  periods (11,599 and 11,604 where PEAR's runs take 11,682 and 11,686) and logs what PEAR's logs. The loop kept its
+  period on the line: 20.003 ms on average and 20.13 ms at the 99th percentile (PEAR's: 20.004 and 20.28).
+- **Where the arm stops when a fault interrupts a motion is not the same from run to run, in PEAR's runs and in
+  these.** PEAR polls the servos' Status and their Torque_Enable once in 10 reads of the positions each, so a fault
+  is noticed between 1 and 10 control periods after it arrives, and one read more or fewer before the fault decides
+  which. The script's torque loss arrives one read before a poll in PEAR's three runs (noticed 1, 1 and 2 reads
+  later); in the last two runs here it was noticed 11 reads later in one (the arm 2.8 cm further on) and 1 read
+  later in the other. The polls are at the same reads in every run.
 - No defect of the port was found, and nothing under `src/` was changed.
 - `SO101Robot.makeDriver` (`SO101Driver.fromConfig`), which no test had run, ran here on the chain's line.
 
@@ -34,12 +48,13 @@ the same station on the recorded line of PEAR's run (the section "The replay" be
 | --- | --- |
 | `tests/sim-bridge/station_runner.ts` | `StationRunner`: one robot of pear.js driven through the script on the chain's line, a `StationRunResult` of the form the reference writes; the line and the controls can be given to it (by default the chain over TCP) |
 | `tests/sim-bridge/station_chain.test.ts` | The gated test: the sessions run twice (pear.js's own kinematics; PEAR's answers and the C library's values) and compared with the reference's result |
+| `tests/sim-bridge/station_realtime.test.ts` | The gated test in real time (the section "In real time"): the runner with `clock: "realtime"`, the port's own loop on its own clock, beside the reference's stepped run and its runs in real time |
 | `tests/sim-bridge/replayed_chain.ts` | `ReplayedChain`: a chain replayed in process from a reference result: the line that requires PEAR's instruction packets and hands back PEAR's answers, and the controls the runner asks of a chain |
 | `tests/sim-bridge/station_reference.result.json.gz` | The reference's stored result of all 8 sessions (PEAR's Python station on the chain): 652 steps, 25,502 and 87,210 packets |
 | `tests/sim-bridge/station_replay.test.ts` | The test that needs no chain: the 8 sessions on the replayed line, twice as above; the replayed chain by itself; the changes of the reference that must be found |
 | `tests/sim-bridge/station_kinematics.json` | PEAR's kinematics' answers in a run of the reference: by session, what `SO101Kinematics.joint_target` was asked and what it returned or raised (61 questions, 9 of them refused) |
 | `tests/sim-bridge/libm.json` | The reference C library's values for the 622 arguments the trajectory generator asks its five functions over the 8 sessions (the table of `tests/ruckig/oracle.ts`) |
-| `tests/sim-bridge/bridge_control.ts` | Added: `place`, and the fields of the chain's state a stepped station reads |
+| `tests/sim-bridge/bridge_control.ts` | Added: `place`, and the fields of the chain's state a stepped station reads. Changed: every call of the controls on a connection of its own (the section "In real time") |
 
 ## How the runner keeps the stepping rule
 
@@ -182,6 +197,187 @@ byte (the packed bytes depend on the zlib at hand, the content does not). The gz
 file name. The file's first session is that of the committed `station_sample.result.json` in every key and every
 bit, and so are the fields outside the sessions but `run`.
 
+## In real time
+
+The same script with nothing replaced but the camera: the port's own control loop, started by `open` as the port
+starts it (its `run()` on the clock); the robot given no clock, so that the robot, its loop and every wait run on
+`realTimeClock()` as a caller of the library gets it (`loop.md`, deliberate difference 12); the chain's arm on the
+wall clock. `StationRunner` with `clock: "realtime"` does what the reference's `--clock realtime` does: a hold and
+an idle sleep the script's ticks as control periods of the machine's clock, an "after tick N" event is a timer of
+N periods from the step's start, a step's `ticks` are the reads of the positions the chain saw during it (so an
+`open` has ticks: 28 here, 27 in PEAR's runs), and a step's record holds no `sleeps` and no `phases`. Where
+JavaScript makes the runner do otherwise than the reference: the loop, the caller and the events share one thread
+(an event runs between two turns of the loop, and a step's record waits for an event that fired to end); the
+runner's own waits sleep on the robot's clock, which is the port's `time.sleep()`, because an engine's timer of
+20 ms is no sleep of 20 ms on every engine.
+
+`station_realtime.test.ts`, gated by `PEAR_JS_SIM_BRIDGE_STATION_REALTIME`, runs the sessions once so, prints one
+line `RT {...}` of JSON a session with the rows below, and asserts only what PEAR's own two real-time runs keep,
+beside each other and beside PEAR's stepped run: the rows of the table of `station-reference.md` that are 0 in all
+three columns, counted again from the three stored results with the reference's comparison tool. Those are: no
+step raises on one side only (and none raises another class or message); no result of an action differs in
+status, settled, reached, gripper outcome or error; no report text differs. It also requires what both of PEAR's
+runs have of the chain's counters (no unanswered packet, no corrupt packet, no dropped byte), that the script
+closed the robot, and that every event of the script was done.
+
+### What was run, and the table
+
+Node 22.22.2 for Linux (where PEAR's real-time runs were made), pear.js's own kinematics, each session on a chain
+started anew. Two rounds: runs a and b on 2026-11-15, each of the 8 sessions twice; then, after the runner's calls
+of the chain's controls were made quick (the next section), runs c and d on 2026-11-16, each of the 8 sessions
+twice again. All 32 runs pass. The rows, counted by the reference's comparison tool on the written results (the
+test's own lines give the same counts), beside PEAR's stepped run and PEAR's two real-time runs A and B of
+`station-reference.md`, for runs c and d:
+
+| | stepped / c | stepped / d | A / c | B / c | c / d |
+| --- | --- | --- | --- | --- | --- |
+| steps that raised on one side only (of 652) | 0 | 0 | 0 | 0 | 0 |
+| results differing in status, settled, reached, gripper outcome or error (of 81) | 0 | 0 | 0 | 0 | 0 |
+| report texts differing (of 81) | 0 | 0 | 0 | 0 | 0 |
+| turn texts differing (of 85) | 2 | 2 | 8 | 4 | 2 |
+| measured positions of completed actions identical in every bit (of 59) | 58 | 58 | 54 | 57 | 58 |
+| largest difference of a shown quantity | y 2.8 cm | y 0.2 cm | y 2.8 cm | y 2.8 cm | y 2.6 cm |
+| largest difference of a measured joint, completed actions | 0.110 rad (72 counts) | 0.009 rad (6 counts) | 0.110 rad (72 counts) | 0.110 rad (72 counts) | 0.103 rad (67 counts) |
+| the same, actions not completed | 0.133 rad (87 counts) | 0.011 rad (7 counts) | 0.133 rad (87 counts) | 0.133 rad (87 counts) | 0.123 rad (80 counts) |
+| ticks of all steps but `open` | 11,548 / 11,599 | 11,548 / 11,604 | 11,682 / 11,599 | 11,686 / 11,599 | 11,599 / 11,604 |
+
+Beside run d, A and B give 8 and 4 turn texts, 54 and 57 positions, y 0.4 and 0.3 cm, 15 and 9 counts. Runs a and
+b, made with the slow control calls, have the first three rows 0 as well; their turn texts are 4 and 4 beside the
+stepped run, 10 and 4 beside A and B, 2 between them; their positions 57, 57, 53, 57 and 58; the largest
+differences y 0.5 to 0.9 cm and 25 counts; their ticks 12,593 and 12,594. In all 32 runs the chain counted no
+unanswered packet, no corrupt packet and no dropped byte; no run faulted on its own (no stale feedback, no
+tracking error, no servo error, no "Persistent motion during HOLD", no stability timeout but the scripted ones),
+no answer was read one behind, the loop never stopped, and no event of the script failed.
+
+What stays: everything the test asserts, and wherever no event interrupts a motion the model reads the same as in
+PEAR's stepped run and the joints rest on the same encoder counts (the six sessions without a fault: every turn
+text, and every measured position of a completed action in every bit, in all four runs; the operator's pauses
+stopped the arm where the stepped run's did). What moves: the two sessions with a fault. In runs c and d the
+overload session reads as the stepped run in every turn text and the torque session differs in 2, by 0.2 cm in
+run d and by 2.8 cm in run c ("When a fault is noticed" below); the 6 more against A are A's own, in "the operator
+pauses", where A differs from the stepped run and from B too.
+
+### The runner's calls of the chain's controls
+
+- **What runs a and b showed, and whose it was.** 12,593 ticks where PEAR's runs show 11,682 and 11,686: 2 more on
+  every step, also on those that take no time. Seven warnings "feedback read failed in FAULT" in a fault session
+  where PEAR's log 5. The script's faults at the chain 2 reads late. All three were the runner's: every call of
+  the chain's controls (the mark before each step is one) took about 43 ms, and the loop ran on meanwhile.
+- **The cause** (measured 2026-11-16, 30 calls each way, Node 22 for Linux, the chain idle): a call by `fetch`
+  takes 43.0 ms, by `node:http` on a connection kept alive 39.8 ms, by `node:http` on a connection of its own
+  0.8 ms; the reference's client, Python's, which makes a connection a call, 1.0 ms. On a connection that is kept,
+  every answer of the chain's server comes about 40 ms late. `BridgeControl` now makes a connection a call.
+- **With that** (runs c and d): the ticks by op, A beside c: `execute` 5,788 / 5,764, `home` 4,531 / 4,535, `hold`
+  873 / 867, `wait_settled` 61 / 63, `recover` 106 / 105, `open` 27 / 28 each, and nothing on the steps that take
+  no time; between the calls the runner spends 4.3 ms a step (the reference's: 4.6 ms). The script's faults reach
+  the chain 400.0 to 400.2 ms after the step's mark (PEAR's: 400.1 ms; once 420.1 ms). The log is PEAR's in every
+  session of both runs: 14 times "An action did not complete", the two station faults, and 5 warnings "feedback
+  read failed in FAULT" in each fault session. The test does not compare the log.
+- **The stepped runs do not depend on it.** After the change, on chains started anew: both stepped runs of all 8
+  sessions write the same comparison as before, byte for byte (0 differences; 9,159 differences and 26 packets),
+  and the same results but for the wall times, in 11 s each where they took 48 s; the 4 gated tests of
+  `sim-bridge.test.ts` pass on the `packets` clock.
+
+### When a fault is noticed
+
+PEAR's hardware layer polls the servos' Status (address 65) on every 10th read of the positions and their
+Torque_Enable (address 40) on every 10th, half a cycle apart (`statusPollTicks`; `poll()` in
+`src/so101/hardware/arms.ts`, as in PEAR). A fault that only one of the two registers shows is noticed at that
+register's next poll: 1 to 10 reads after it arrives, up to 0.2 s, and until then the loop follows the trajectory.
+At the poll the loop holds in the same period; the action returns one or two periods later, in PEAR's runs and in
+these.
+
+The torque session, in reads of the positions since the session began:
+
+| | the action begins | the fault arrives | the action has failed | noticed after |
+| --- | --- | --- | --- | --- |
+| PEAR, stepped | 585 | 605 | 606 | 1 read |
+| PEAR, A | 585 | 605 | 606 | 1 |
+| PEAR, B | 585 | 605 | 607 | 2 |
+| pear.js, run c | 586 | 606 | 617 | 11 |
+| pear.js, run d | 584 | 605 | 606 | 1 |
+
+Torque_Enable is polled at reads 596, 606 and 616 in all five. The script puts the fault "after tick 20" of an
+action that begins at read 585 in PEAR's stepped run: it arrives at read 605, one read before a poll, which is the
+best case. In run c the Home before it took 548 reads where it took 547 in PEAR's three runs; the fault arrived
+at read 606, just after that poll, and was noticed at the next, 10 reads later: the base joint 0.13 rad further on
+(87 counts), the tip 2.8 cm, and the next action went on from there. Run d began at 584 and reads as PEAR's. A run
+with PEAR's kinematics' answers gave run c's three numbers again. The overload, which the Status poll shows, was
+noticed 6 reads after it arrived in every run, PEAR's three and c and d.
+
+So what a real-time run of this script shows of a fault session is the phase of the polls as much as the station.
+The station is held to PEAR's at one phase by the stepped run and by the replay, where the port's Status poll made
+one read later fails both ("How it was verified"); that a servo's fault can go unnoticed for up to 10 control
+periods is PEAR's, and the port keeps it.
+
+### What one thread does
+
+- **The planner's work is the loop's delay.** The caller plans an action on the loop's thread. In run c four
+  periods were late, each followed by a short one, so that the next kept its hour: 36.8 then 3.1 ms and 26.3 then
+  13.7 ms in "what the station refuses" (steps 013 and 037; the first is an action out of reach that searches how
+  far the arm can go), 26.1 then 13.9 ms and 26.3 then 13.7 ms in "a task" (steps 187 and 193). In run d none; in
+  run a two (36.3 then 3.7 ms, 26.0 then 14.0 ms, the calls 17.6 and 7.2 ms long); in run b none: it depends on
+  where in a period the call begins. PEAR's loop has its own thread and shows nothing there. Nothing came of the
+  late steps.
+- **An event runs between two turns of the loop**, and an action that has ended returns to its caller when the
+  thread is free: one or two periods after the loop's hold, as in PEAR's runs (the table above).
+
+### The loop's period on the line
+
+The first measurement of pear.js's loop against a line: the time between two reads of the positions in the
+chain's byte log (each entry carries the chain's own time of its arrival), from the end of `open` to the close.
+
+| | periods | mean | p99 | largest | over 25 ms |
+| --- | --- | --- | --- | --- | --- |
+| pear.js, run a (Node 22 for Linux) | 12,593 | 20.003 ms | 20.125 ms | 39.983 ms | 4 |
+| pear.js, run b | 12,594 | 20.003 ms | 20.138 ms | 39.968 ms | 2 |
+| pear.js, run c | 11,599 | 20.003 ms | 20.130 ms | 40.118 ms | 6 |
+| pear.js, run d | 11,604 | 20.003 ms | 20.126 ms | 39.996 ms | 2 |
+| PEAR, A | 11,682 | 20.004 ms | 20.281 ms | 40.268 ms | 2 |
+| PEAR, B | 11,686 | 20.004 ms | 20.254 ms | 40.689 ms | 2 |
+
+Two of each of pear.js's are the 40.0 ms at the recovery of the two fault sessions, which PEAR's runs have at the
+same place (B: 40.7 and 40.1 ms): a read the recovery leaves out, not a late step. The others are the planner's
+above. During `open` the enable's waits read every 19.7 to 19.8 ms on average (PEAR's: 20.5 ms). The clock's own
+count: in every session of runs c and d a sleep ended 0.003 ms after its hour on average, or less; the latest
+ended 16.3 ms after it in run c (the planner's, in "what the station refuses") and 4.9 ms in run d.
+
+### From Node for Windows
+
+Node 24.18.1 for Windows against the same chain, where the clock keeps the period with a busy thread, pear.js's
+own kinematics, each session on a chain started anew.
+
+With the slow control calls, five sessions once (the shortest, "what the station refuses", "the operator pauses"
+and the two with a fault; 299 steps). All five pass: beside the stepped run and beside A no step raises on one
+side only, no result differs, no report text differs; the chain's counters are 0. Beside the stepped run 4 turn
+texts differ (the two fault sessions, 2 each), 8 of 10 measured positions of completed actions are identical, and
+the largest differences are y 2 cm and 0.081 rad (53 counts), in a fault session. The period on the line: 4,045
+periods, mean 20.026 ms, p99 22.96 ms, largest 55.9 ms, 29 over 25 ms (7 over 30 ms), each late step followed by a
+short one; during `open` the first waits take 28 to 33 ms, until the clock has learnt the timers.
+
+With a connection a call, three sessions once (the shortest and the two with a fault; 103 steps). All three pass,
+beside the stepped run, A and B; the counters are 0. The ticks are PEAR's (77, 784 and 780 where A has 78, 784 and
+776), and an `open` has 27 reads as in PEAR's runs. The torque session reads as the stepped run in every turn text
+and every measured position (the action began at read 585 and the fault was noticed 1 read after it arrived); the
+overload was noticed 9 reads after it arrived and its session differs in 2 turn texts, by y 0.6 cm. The period on
+the line: 1,641 periods, mean 20.024 ms, p99 22.37 ms, largest 40.1 ms (the recovery's), 8 over 25 ms. The other
+five sessions were not run so.
+
+### With PEAR's kinematics' answers
+
+The answers of `station_kinematics.json` are those of PEAR's stepped run, given in their order. In real time they
+are PEAR's answers to the same questions only where the arm rests where it rested in the stepped run. With a
+connection a call, all 8 sessions once on Node for Linux: all pass, and beside the stepped run no row of the test
+differs, 84 of 85 turn texts are the same, and the measured positions of all 59 completed actions are identical in
+every bit; the run takes 11,592 ticks. Of the 61 questions asked, 59 were the stepped run's in every bit. The two
+others: one in "a task", which changed nothing the model reads; and one in "a servo reports overload during a
+move", where the arm had stopped elsewhere (the fault noticed 8 reads after it arrived, 6 in the stepped run) and
+the answer given was PEAR's to PEAR's question: a joint target, so the arm went where PEAR's went and not by what
+was asked, and one turn text differs, by y 0.3 cm. The test's line counts them (`asked_otherwise`). In this run
+the torque loss was noticed 1 read after it arrived, and that session is the stepped run's in every text and every
+position. Before the change three sessions had been run so (the shortest, "the operator pauses", the overload),
+and one more with it, where the torque loss was noticed 11 reads after it arrived.
+
 ## How it was verified
 
 2026-11-15, on the chain started with `packets --steps-per-packet 0 --steps-per-position-read 4`.
@@ -230,20 +426,47 @@ bit, and so are the fields outside the sessions but `run`.
   given no clock took another one (`loop.md`, deliberate difference 12; a stepped run gives every part its clock):
   all 8 sessions, each way on a chain started anew: exact, 0 differences, and the reference's own tool finds none on
   the byte log; with pear.js's own kinematics the same 9,159 differences and the same 26 packets as before.
-- Without the chain: `npx vitest run`: 75 files pass, 2 are skipped; 9,169 tests pass, 8 are skipped (the 4 gated
-  tests of `sim-bridge.test.ts`, the 2 of `station_chain.test.ts` and the 2 of the joint layer that measure real
-  time). `npx tsc --noEmit` is clean.
+- **In real time**, on the chain started with `realtime`, anew for every run: `PEAR_JS_SIM_BRIDGE_STATION_REALTIME=
+  <host:port> PEAR_JS_STATION_SESSIONS=<name> PEAR_JS_STATION_REALTIME_REFERENCE=<A's result>;<B's result>
+  PEAR_JS_STATION_OUT=<directory> npx vitest run tests/sim-bridge/station_realtime.test.ts -t "own kinematics"`.
+  2026-11-15, with the slow control calls: 16 runs on Node 22.22.2 for Linux (each session twice), 5 on Node
+  24.18.1 for Windows (beside A only), and 3 with PEAR's answers on Linux. 2026-11-16, by a second hand: 4 runs on
+  Linux before the change; then, with a connection a call, 19 on Linux (each session twice, and three single
+  sessions), 9 with PEAR's answers (each session, the torque session twice) and 3 on Windows. Every run passes.
+  The tables are the reference's comparison tool on the results put together a run (652 steps each), and the
+  test's own counts agree with it. The periods and the reads of "When a fault is noticed" are read from the chain's
+  byte logs. The rows asserted were found in PEAR's three stored results with the same tool.
+- **The test in real time can fail.** Breaks of the port, in a scratch copy, one at a time, each run on the
+  session that meets it: a result whose `reached` is turned around (`src/station/motion/results.ts`; the shortest
+  session: `reached` and the report text differ); a jaw that stopped on an object reported as closed
+  (`src/so101/joint/grippers.ts`; "the jaw stops on an object": the gripper's outcome, `reached` and the report
+  text differ); another wording of the refusal of a target outside the commissioned bounds ("actions outside the
+  model's format": the error and the report text differ). All three runs fail, each in the rows it should.
+- **The stepped mode after the runner's changes**: after the real-time mode was added, the gated stepped test on a
+  chain started anew, the shortest session: 85 differences in 4 steps with pear.js's own kinematics and 0 with
+  PEAR's answers, as before. After the control calls took a connection each: all 8 sessions both ways, and
+  `sim-bridge.test.ts` ("The runner's calls of the chain's controls").
+- **The replay on a hosted runner** (Node 24, Linux): it passed, the file's 12 tests in 5.9 s.
+- Without the chain: `npx vitest run`: 75 files pass, 3 are skipped; 9,169 tests pass, 10 are skipped (the 4 gated
+  tests of `sim-bridge.test.ts`, the 2 of `station_chain.test.ts`, the 2 of `station_realtime.test.ts` and the 2 of
+  the joint layer that measure real time). `npx tsc --noEmit` is clean.
 
 ## Not verified
 
-- The replay on other engines than the two it has run on (Node 24.18.1 for Windows and Node 22.22.2 for Linux,
+- The replay on other engines than the three it has run on (Node 24.18.1 for Windows and Node 22.22.2 for Linux,
   both x64: all 12 tests pass on both, and the run with pear.js's own kinematics gives the same counts on both, the
-  26 goal writes and the 9,048 numbers in 467 steps). The exact run takes PEAR's values for both known causes; the
-  run with pear.js's own kinematics uses the engine's functions, and whether another engine's last bits change a
-  count or a tick there is not known.
+  26 goal writes and the 9,048 numbers in 467 steps; and Node 24 for Linux on a hosted runner, where the 12 pass).
+  The exact run takes PEAR's values for both known causes; the run with pear.js's own kinematics uses the engine's
+  functions, and whether another engine's last bits change a count or a tick there is not known.
 - Anything on a real arm, and anything through Web Serial: the line here is a TCP connection in Node.
-- pear.js's loop on a timer against the chain's real-time clock: only the stepped run was made, so how much of a
-  real-time run of the port is timing is not known (`station-reference.md` measures it for PEAR).
+- In real time: the numbers are from four runs a session on one machine with Node 22 for Linux (two of them with
+  the quick control calls), and from a few sessions run once with Node 24 for Windows. No browser has run it:
+  neither a page's nor a worker's timers under `realTimeClock()`, nor Web Serial, have met a line.
+- A fault at every phase of the polls. The runs met two phases of the torque loss (noticed 1 and 11 reads after
+  it arrived) and three of the overload (6, 8 and 9), by chance: in real time the script does not choose the read
+  at which a fault arrives.
+- What a planner's computation longer than a control period does to the station: the latest step seen came 16.8 ms
+  after its hour (a period of 36.8 ms), and nothing came of it.
 - A feedforward other than zero, lost answers and retries under the station, a timeout of an action, a pause
   during Home: the script has none (see `station-reference.md`).
 - With pear.js's own kinematics a goal can differ by a count where a trajectory ends on the edge between two; over
@@ -252,9 +475,11 @@ bit, and so are the fields outside the sessions but `run`.
 
 ## Left
 
-- A run of pear.js's station in real time (its control loop on the page's timer), beside the reference's two
-  real-time runs.
-- The test on the chain needs the chain, so it does not run where the chain is not. Continuous integration runs
+- Done since: a run of pear.js's station in real time beside the reference's two real-time runs (the section "In
+  real time"), in Node. Left of it: the same from a page (the page's timers, Web Serial); and a script whose
+  faults arrive at a chosen read, so that a real-time run meets the phase of the polls it means to.
+- The tests on the chain need the chain, so they do not run where the chain is not. Continuous integration runs
   the replay instead: it holds pear.js's station to the stored result of PEAR's run, and not the chain, the
-  reference or a station that leaves PEAR's run to anything.
-- The first run of the replay on a hosted runner, and its time there.
+  reference or a station that leaves PEAR's run to anything. Nothing in real time runs there.
+- Done since: the first run of the replay on a hosted runner (Node 24, Linux): it passed, the file's 12 tests in
+  5.9 s.

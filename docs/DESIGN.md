@@ -56,7 +56,7 @@ One turn of the station, as PEAR defines it and pear.js keeps it:
 | `src/station/motion/`, `src/station/robot.ts`, `src/station/cameras.ts` | `deploy/station/control/motion/` `actions.py`, `results.py`, `execution.py`, `planning.py`, `homing.py`; `deploy/station/control/robot.py`, `cameras.py`. `robot.ts` also holds what is not in PEAR: the adapter through which the turn loop of `src/agent/` drives a robot |
 | `src/so101/motion/`, `src/so101/robot.ts`, `src/so101/formats.ts`, `src/so101/hardware/cameras.ts` | `deploy/station/control/robots/so101/` `motion/planning.py`, `motion/homing.py`, `motion/actions.py`, `motion/results.py`, `formats.py`, `robot.py`, `hardware/cameras.py` |
 | `web/` | Not in PEAR: the page, which GitHub Pages builds from this directory. It reaches the arm through Web Serial and the wrist camera through the browser. Its first version only reads: a guard between the bus and the port lets only PING, READ and SYNC READ through (`docs/progress/web.md`) |
-| `tests/sim-bridge/` | Not in PEAR: the servo layer on a simulated SO-101 servo chain over TCP, compared packet by packet with PEAR's Python on the same chain; PEAR's own robot stepped on that chain, recorded as the reference for step 4 of the ladder (`docs/progress/station-reference.md`); and pear.js's own station stepped on that chain and compared with that reference (`docs/progress/station-chain.md`). The chain is not part of this repository, and the tests that need it are skipped without it |
+| `tests/sim-bridge/` | Not in PEAR: the servo layer on a simulated SO-101 servo chain over TCP, compared packet by packet with PEAR's Python on the same chain; PEAR's own robot stepped on that chain, recorded as the reference for step 4 of the ladder (`docs/progress/station-reference.md`); and pear.js's own station on that chain, stepped and in real time, compared with that reference (`docs/progress/station-chain.md`). The chain is not part of this repository, and the tests that need it are skipped without it |
 
 ## Verification ladder
 
@@ -72,7 +72,10 @@ Each step is claimed only when it has been run.
    (`docs/progress/robot.md`); on a simulated SO-101 servo chain, the whole station through 8 scripted sessions,
    with the packets and the results of PEAR's own station on that chain (`docs/progress/station-chain.md`). The
    chain is not in this repository; what every run of the tests repeats is the station on the recorded line of
-   PEAR's run of those sessions, replayed. Not run: the station in real time.
+   PEAR's run of those sessions, replayed. In real time (in Node; the port's own loop on its own clock) the
+   station on that chain keeps every row that PEAR's own two real-time runs keep; where the arm stops after a
+   fault depends on the phase of PEAR's polls of the servos, in PEAR's runs too. Not run: the station in a
+   browser.
 5. A real model drives the simulated arm through pear.js.
 6. A real SO-101, by a person at the arm.
 

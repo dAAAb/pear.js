@@ -13,6 +13,17 @@
 //   the camera          StandInCameras (PEAR's drawn stand-in camera); a result keeps of a frame only when it came
 // PEAR's callers (its turn loop and its console) do not run: a step of the script is one call they make of the
 // robot, under PEAR's name, and `call` below makes the port's.
+//
+// In real time (`clock: "realtime"`, the reference's `--clock realtime`) only the camera is replaced. The robot is
+// given no clock and takes the one a caller of the library gets (realTimeClock()); its control loop is the port's
+// own, which `open` starts on that clock; the chain runs the arm on the wall clock. The script's ticks are then
+// control periods of that clock: a hold and an idle sleep them, an "after tick N" event is a timer of N periods
+// from the step's start, and a step's `ticks` are the reads of the positions the chain saw during it. Where the
+// engine makes the runner do otherwise than the reference, which has a thread for the loop and one for each timer:
+// an event runs between two turns of the loop on the one thread, and a step's record waits for an event that fired
+// to end (a promise nobody waits for has nowhere to raise); what it raised is kept in the run's record. The
+// reference collects PEAR's half-made hardware after a start-up that failed; here the line is the runner's and is
+// closed at the session's end, in both modes.
 
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
@@ -23,10 +34,13 @@ import type { Transport } from "../../src/feetech/transport";
 import { pythonErrorMessage, pythonErrorName, RuntimeError } from "../../src/python/errors";
 import { SO101_DEFAULT_CONFIG, type SO101Config } from "../../src/so101/config";
 import { SINGLE_ARM_POSE_FORMAT } from "../../src/so101/formats";
+import { SO101ControlLoop } from "../../src/so101/joint/control_loop";
 import { SO101Kinematics, type ArmDelta } from "../../src/so101/kinematics/kinematics";
 import { SO101Robot } from "../../src/so101/robot";
 import { OperatorPaused } from "../../src/station/exceptions";
+import type { MonotonicClock } from "../../src/station/joint/clock";
 import type { JointControlLoop } from "../../src/station/joint/control_loop";
+import { realTimeClock } from "../../src/station/joint/deadline_clock";
 import type { MotionResult, MotionStatus } from "../../src/station/motion/results";
 import type { ControlLoopClass, StationConfig } from "../../src/station/robot";
 import type { BriefStatus, DetailedStatus, HomePlan, Observation } from "../../src/station/schemas";
@@ -54,6 +68,9 @@ const FORMAT = SINGLE_ARM_POSE_FORMAT; // the SO-101's one action format
 const SESSION_MARK = "session: "; // the label of the mark that starts a session's traffic, before its name
 /** The sleeps a step may take before the runner stops it: the script's longest step takes some hundreds. */
 const RUNAWAY_SLEEPS = 5000;
+/** A sync read of Present_Position, as the hex of an instruction packet after its header, its id and its length:
+ * the instruction, the register's address and its length. The control loop sends one at each of its steps. */
+const POSITION_READ = "823802";
 /** PEAR's loggers are named by their Python modules; the port's robot names the module's last word. */
 const PEAR_LOGGERS: Record<string, string> = {
   robot: "pear.deploy.station.control.robot",
@@ -138,6 +155,12 @@ class SteppedSO101Robot extends SO101Robot<DrawnFrame> {
   }
 }
 
+/** The SO-101 with the port's own control loop, which `open` starts on the robot's clock (as the reference runs
+ * PEAR's SO101Robot in real time). Only the kinematics keep what they were asked. */
+class RealTimeSO101Robot extends SteppedSO101Robot {
+  static override readonly CONTROL_LOOP_CLASS: ControlLoopClass = SO101ControlLoop;
+}
+
 /** Returns `value` in JSON's values, as the reference's runner writes PEAR's: no value as null, a list or an
  * object copied with its items so, a number that is not finite as the word that names it. A zero keeps its sign. */
 export function jsonOf(value: unknown): Json {
@@ -199,6 +222,10 @@ export interface StationRunOptions {
   control: ChainControl;
   /** Opens the chain's line; by default a TCP connection to the host and the port. */
   line?: () => Promise<ChainLine>;
+  /** "stepped" (the default): the station's clock is a stand-in whose waits step the loop, on a chain whose arm
+   * ages at the reads of the positions. "realtime": the port's loop at its own pace on the machine's clock, on a
+   * chain whose arm runs on the wall clock. */
+  clock?: "stepped" | "realtime";
   /** The script; by default the committed station_session.json. */
   sessions?: { document: StationSessionDocument; sha256: string };
   /** The names of the sessions to run; by default all. */
@@ -218,6 +245,10 @@ export class StationRunner {
   /** Where the kinematics were asked something else than PEAR's were at the same place: the session, the number of
    * the question, and what differs. */
   readonly askedOtherwise: string[] = [];
+  /** Whether the run is stepped; otherwise it is in real time. */
+  readonly isStepped: boolean;
+  /** In real time: the events of the script that failed, which have no step to raise in. */
+  readonly eventErrors: string[] = [];
 
   private readonly control: ChainControl;
   private readonly config: StationConfig<SO101Config>;
@@ -238,8 +269,12 @@ export class StationRunner {
   private events: TickEvent[] = [];
   private phases: [name: string, count: number][] = [];
   private log: [level: string, logger: string, message: string][] = [];
+  // of the running step in real time: the timers of its events, and the events that fired
+  private timers: ReturnType<typeof setTimeout>[] = [];
+  private fired: Promise<void>[] = [];
 
   constructor(private readonly options: StationRunOptions) {
+    this.isStepped = (options.clock ?? "stepped") === "stepped";
     const sessions = options.sessions ?? loadStationSessions();
     this.document = sessions.document;
     this.sha256 = sessions.sha256;
@@ -282,6 +317,7 @@ export class StationRunner {
     this.checkBridge(state);
     const calibrationFile = await this.control.calibrationFile();
     this.calibration = await this.control.calibration();
+    if (!this.isStepped) realTimeClock().resetStats();
 
     const sessions: StationSessionResult[] = [];
     for (const session of this.document.sessions) {
@@ -291,7 +327,7 @@ export class StationRunner {
     return {
       format: STATION_RESULT_FORMAT,
       side: "pear.js",
-      clock: "stepped",
+      clock: this.isStepped ? "stepped" : "realtime",
       session_sha256: this.sha256,
       station: this.document.station,
       bridge: {
@@ -309,6 +345,8 @@ export class StationRunner {
           sessions.map((session) => [session.name, this.options.kinematics?.[session.name] === undefined ? "own" : "recorded"]),
         ),
         asked_otherwise: this.askedOtherwise,
+        // in real time: what the robot's clock did meanwhile, and the events that failed
+        ...(this.isStepped ? {} : { real_time_clock: jsonOf(realTimeClock().stats()), event_errors: this.eventErrors }),
         only,
         started_unix_s: Math.round(startedUnixS * 1000) / 1000,
         wall_s: Math.round(performance.now() - started) / 1000,
@@ -317,8 +355,12 @@ export class StationRunner {
   }
 
   /** Refuses a chain whose clock is not a stepped station's: the arm must age one control period at each read of
-   * the positions, and at no other time. */
+   * the positions, and at no other time. In real time the chain must be on its real-time clock. */
   private checkBridge(state: BridgeState): void {
+    if (!this.isStepped) {
+      if (state.clock !== "realtime") throw new Error("A station in real time needs the chain on its realtime clock");
+      return;
+    }
     const steps = state.steps_per_position_read;
     if (state.clock !== "packets" || state.steps_per_packet !== 0 || steps === undefined || steps === null || steps === 0) {
       throw new Error("A stepped station needs the chain on packets, 0 steps a packet and N steps a position read");
@@ -332,9 +374,10 @@ export class StationRunner {
 
   /** Returns a robot of the station on ``transport``; without one it can be asked its settings and not opened. */
   private makeRobot(transport: ChainLine | null): SteppedSO101Robot {
-    const robot = new SteppedSO101Robot(this.config, {
-      cameras: new StandInCameras(SO101Robot.CAMERAS, this.clock),
-      clock: this.clock,
+    const robot = new (this.isStepped ? SteppedSO101Robot : RealTimeSO101Robot)(this.config, {
+      cameras: new StandInCameras(SO101Robot.CAMERAS, this.waits),
+      // in real time the robot is given no clock: it takes the one a caller of the library gets
+      ...(this.isStepped ? { clock: this.clock } : {}),
       // PEAR's warnings and errors, as the reference keeps them: the level, the logger, the message
       log: (logger, level, message) => {
         if (level !== "info") this.log.push([level.toUpperCase(), PEAR_LOGGERS[logger] ?? logger, message]);
@@ -418,6 +461,10 @@ export class StationRunner {
     }
     records.slice(1).forEach((record, index) => {
       record.packets = traffic[index + 2].packets;
+      if (!this.isStepped) {
+        // the loop's steps as the line shows them: one read of the positions each
+        record.ticks = record.packets.filter(([direction, hex]) => direction === "h" && hex.slice(8, 14) === POSITION_READ).length;
+      }
     });
 
     const line = (await this.control.state()).line;
@@ -459,10 +506,23 @@ export class StationRunner {
     await this.control.mark(labelOf(step));
     clock.take();
     clock.ticksLeft = RUNAWAY_SLEEPS;
-    const nowBefore = clock.monotonic();
+    const nowBefore = this.waits.monotonic();
     this.stepTicks = 0;
     this.phases = [];
     this.events = [...(step.at_tick ?? [])];
+    if (!this.isStepped) {
+      // no step of the loop to count: the script's ticks are periods of the machine's clock, from here
+      this.timers = this.events.map((event) =>
+        setTimeout(() => {
+          this.fired.push(
+            this.fire(event).catch((error: unknown) => {
+              const raised = `${pythonErrorName(error)}: ${pythonErrorMessage(error)}`;
+              this.eventErrors.push(`${session.name} / ${labelOf(step)}: after tick ${event.tick}: ${raised}`);
+            }),
+          );
+        }, event.tick * this.periodS * 1000),
+      );
+    }
     const started = performance.now();
 
     try {
@@ -472,14 +532,22 @@ export class StationRunner {
       record.raised = raisedOf(error);
       this.lastError = error;
     } finally {
+      for (const timer of this.timers) clearTimeout(timer);
+      this.timers = [];
       this.events = [];
+    }
+    if (this.fired.length > 0) {
+      await Promise.all(this.fired); // an event that fired ends before the step's record is made
+      this.fired = [];
     }
 
     record.wall_ms = Math.round((performance.now() - started) * 1000) / 1000; // never compared
-    record.clock_s = [nowBefore, clock.monotonic()];
-    record.ticks = this.stepTicks;
-    record.sleeps = clock.take().length;
-    record.phases = this.phases;
+    record.clock_s = [nowBefore, this.waits.monotonic()];
+    if (this.isStepped) {
+      record.ticks = this.stepTicks;
+      record.sleeps = clock.take().length;
+      record.phases = this.phases;
+    }
     // the robot's status with its control snapshot, as PEAR's page reads it; OFF while the robot is closed
     const robot = this.robot;
     record.status = robot === null ? null : jsonOf(robot.status(true));
@@ -525,7 +593,7 @@ export class StationRunner {
         this.transport = await (this.options.line?.() ?? TcpTransport.connect(this.options.host, this.options.port));
         this.robot = this.makeRobot(this.transport);
         await this.robot.open();
-        clock.controlLoop = this.robot.controlLoop; // each sleep steps it from here on
+        if (this.isStepped) clock.controlLoop = this.robot.controlLoop; // each sleep steps it from here on
         return null;
       }
       default:
@@ -576,7 +644,7 @@ export class StationRunner {
         for (let index = 0; index < (step.ticks ?? 0); index++) {
           OperatorPaused.checkCancelled(this.cancellation);
           holding.push(robot.isHolding(this.held()));
-          await clock.sleep(this.periodS);
+          await this.waits.sleep(this.periodS);
         }
         OperatorPaused.checkCancelled(this.cancellation);
         holding.push(robot.isHolding(this.held()));
@@ -671,7 +739,13 @@ export class StationRunner {
 
   /** Lets ``ticks`` control periods pass while nobody asks anything of the robot. */
   private async idle(ticks: number): Promise<void> {
-    for (let index = 0; index < ticks; index++) await this.clock.sleep(this.periodS);
+    for (let index = 0; index < ticks; index++) await this.waits.sleep(this.periodS);
+  }
+
+  /** The clock of the runner's own waits and readings and of the cameras' stamps: the stand-in that steps the
+   * loop, or in real time the clock the robot takes when it is given none. */
+  private get waits(): MonotonicClock {
+    return this.isStepped ? this.clock : realTimeClock();
   }
 
   /** What PEAR's console does at the operator's pause: it sets the running operation's cancellation and stops the

@@ -2,6 +2,8 @@
 // repository). Besides its serial line the chain offers controls over HTTP on 127.0.0.1, which a test uses to put
 // the simulated arm in a known state and to break it on purpose. docs/progress/sim-bridge.md describes them.
 
+import http from "node:http";
+
 import type { MotorCalibration } from "../../src/feetech/bus";
 import { parseCalibration } from "../../src/so101/hardware/follower";
 
@@ -115,16 +117,43 @@ export class BridgeControl {
     return this.request("/calibration");
   }
 
-  private async request<T>(path: string, body?: Record<string, unknown>): Promise<T> {
-    const response = await fetch(
-      this.base + path,
-      body === undefined
-        ? undefined
-        : { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) },
-    );
-    const text = await response.text();
-    if (!response.ok) throw new Error(`The servo chain's controls refused ${path}: ${response.status} ${text}`);
+  /** One call of the controls, on a connection of its own. On a connection kept alive (`fetch`'s, or an agent's of
+   * `node:http`) every answer of the chain's server comes about 40 ms late, measured on Linux; on a new one it
+   * takes under 1 ms. In real time 40 ms are two control periods, which the loop runs between a station's steps. */
+  private request<T>(path: string, body?: Record<string, unknown>): Promise<T> {
+    const text = body === undefined ? null : JSON.stringify(body);
 
-    return JSON.parse(text) as T;
+    return new Promise<T>((resolve, reject) => {
+      const request = http.request(
+        this.base + path,
+        {
+          method: text === null ? "GET" : "POST",
+          agent: false,
+          headers:
+            text === null ? {} : { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(text) },
+        },
+        (response) => {
+          const chunks: Buffer[] = [];
+          response.on("data", (chunk: Buffer) => chunks.push(chunk));
+          response.on("error", reject);
+          response.on("end", () => {
+            const answer = Buffer.concat(chunks).toString("utf8");
+            const status = response.statusCode ?? 0;
+            if (status < 200 || status > 299) {
+              reject(new Error(`The servo chain's controls refused ${path}: ${status} ${answer}`));
+              return;
+            }
+            try {
+              resolve(JSON.parse(answer) as T);
+            } catch (error) {
+              reject(error);
+            }
+          });
+        },
+      );
+      request.on("error", reject);
+      if (text === null) request.end();
+      else request.end(text);
+    });
   }
 }
