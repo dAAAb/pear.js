@@ -1,0 +1,18 @@
+node_modules/
+dist/
+coverage/
+*.log
+*.tsbuildinfo
+__pycache__/
+*.py[cod]
+
+# never commit: keys, local settings, scratch
+.env
+.env.*
+*.key
+*.pem
+.tmp/
+scratch/
+
+.DS_Store
+Thumbs.db

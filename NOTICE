@@ -1,0 +1,15 @@
+pear.js
+Copyright 2026 the pear.js contributors
+
+This product is a TypeScript port of parts of PEAR (https://github.com/mit-han-lab/pear),
+Copyright contributors to the PEAR project, licensed under the Apache License, Version 2.0.
+It derives from PEAR at commit f32aa1f7c2ec9c3f45630cc9f8541b3201e8e087: the robot station's agent loop,
+its control of the SO-101 arm and the prompt texts they send to a model (pear/agent_loop and
+pear/deploy/station). Each source file that ports a PEAR file names that file; the files under
+assets/pear are PEAR's own, unchanged unless the README beside them says otherwise.
+
+This product includes the robot description of the SO-101 arm from SO-ARM100
+(https://github.com/TheRobotStudio/SO-ARM100), licensed under the Apache License, Version 2.0,
+as PEAR changed and distributes it (pear/deploy/station/control/robots/so101/description).
+
+pear.js is not affiliated with or endorsed by the PEAR project, its authors, or the authors of SO-ARM100.
