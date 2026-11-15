@@ -8,7 +8,8 @@
 //
 // These are expectations written by hand: no record of PEAR holds a write into an observation. What PEAR does with
 // each was run on PEAR's own robot on its stepped rig (the station "so101_quick", opened and at rest, then an action
-// of z +0.02 m from the observation), and the rows below are that run's:
+// of z +0.02 m from the observation), and the rows below are that run's. tools/rows/observation_rows.py prints
+// these rows:
 //
 //   the observation as it is, or a copy of it         completed; joint 1 at 0.0001 rad
 //   session_id changed in place                       rejected: Observation belongs to a different station session

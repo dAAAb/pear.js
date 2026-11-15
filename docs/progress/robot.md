@@ -572,8 +572,9 @@ script). The whole suite: 72 files pass, 1 skipped; 9,138 tests pass, 4 skipped.
   script of actions with a Home (a ticker starts the periods; a stop, a cancellation or a close at a period), and
   by the control loop's own interleaving tests on the loop's side. Not run by either: a fault of the arm, a
   recovery or a joint chunk while control periods are under way; the robot on a loop that runs on a page's timers;
-  `SO101Robot.makeDriver` on a real line (`SO101Driver.fromConfig`) and `openCameras` on a page's frame reader
-  (they compile; their two own messages have no test).
+  `openCameras` on a page's frame reader (it compiles; its own message has no test). `SO101Robot.makeDriver`
+  (`SO101Driver.fromConfig`) has run since, on the line of a simulated servo chain over TCP and stepped
+  (`station-chain.md`); not on a serial port.
 - **PEAR's side of two interleavings**, which PEAR's stepped rig cannot make with its one thread: a `close()` that
   rejects during an action (equal to PEAR by reading), and a handler that never returns.
 - **How long planning holds the page's one thread on a slow device** (the audit measured at most 8.0 ms of a 20 ms
@@ -714,11 +715,12 @@ From the independent audit (the numbers are its findings; Round 4 has the table)
 - `modelState` of a joint vector of fewer than six entries: PEAR raises `IndexError: list index out of range`,
   pear.js pydantic's text for `gripper.width`. Only a caller that hands a short vector meets it.
 - The rows of the files written by hand (`observation`, `handlers`, `cameras`, `adapter`, `session`, `guards`) are
-  runs of PEAR by scripts that are not in the repository (all but the cameras' import
-  `tools/fixtures/robot_fixtures.py` for its rig); if they are to be run again with a new PEAR they belong under
-  `tools/`.
+  runs of PEAR by the scripts of `tools/rows/` (its README has the table; all but the cameras' import
+  `tools/fixtures/robot_fixtures.py` for its rig). No test reads what they print: with a new PEAR each script is
+  run again and its output is compared with the rows in its test file's header by hand.
 
 If PEAR is updated: run `tools/fixtures/robot_fixtures.py` in the new environment,
 then `npx vitest run tests/station-robot/parts.test.ts`, `sessions.test.ts` and `capstone.test.ts` one at a time,
 each followed by `tools/fixtures/ruckig_fixtures.py --libm tests/fixtures/station-robot` until no `missing.txt` is
-written.
+written. Then run the scripts of `tools/rows/` and compare what they print with the rows in the headers of the six
+test files written by hand.

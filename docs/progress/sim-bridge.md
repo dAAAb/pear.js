@@ -216,4 +216,5 @@ limited by pear.js's bus code. It says nothing about a real line: the chain answ
 - Decide where the reference runner should live (it needs only PEAR's station environment, a serial device and the
   controls' address); today the public repository holds the sessions, pear.js's runner and the comparison.
 - The error codes of the hardware layer, for the station port (Found, 1).
-- A feedforward other than zero, and the station's own loop, on the same chain: ladder step 4.
+- A feedforward other than zero on the same chain. (The station's own loop on it, ladder step 4, has been run
+  since: `station-chain.md`.)

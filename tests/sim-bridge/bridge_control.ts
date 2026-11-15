@@ -10,12 +10,27 @@ export interface BridgeState {
   /** "realtime": the simulated arm ages with the wall clock; "packets": only when the line is used. */
   clock: string;
   steps_per_packet: number | null;
+  /** In a chain started for a stepped station: the physics steps the arm ages just before each sync read of
+   * Present_Position, and at no other time. */
+  steps_per_position_read?: number | null;
   timestep_s: number;
   time_s: number;
   joints_rad: Record<string, number>;
   gripper_opening: number;
   torque_enabled: Record<string, boolean>;
-  line: { client: string | null; instructions: Record<string, number>; unanswered: Record<string, number> };
+  /** In a chain whose scene holds objects: the fixed fingertip, the middle between the fingers, each object's pose. */
+  fingertip_m?: number[];
+  grasp_m?: number[];
+  objects?: Record<string, { position_m: number[]; quat: number[] }>;
+  line: {
+    client: string | null;
+    instructions: Record<string, number>;
+    unanswered: Record<string, number>;
+    /** Packets that were part of no valid packet, bytes that were dropped, and what the line reported. */
+    corrupt_packets?: number;
+    dropped_bytes?: number;
+    errors?: string[];
+  };
 }
 
 /** One segment of the recorded traffic: the packets between two marks, in the order they crossed the line.
@@ -77,6 +92,12 @@ export class BridgeControl {
    * answers, a silent line; ``{clear: true}`` removes them. */
   async inject(faults: Record<string, unknown>): Promise<void> {
     await this.request("/inject", faults);
+  }
+
+  /** Puts an object of the simulated scene at rest at ``position_m``. Like a mark and a fault it takes effect just
+   * before the next instruction packet that is not a sync write. */
+  async place(object: string, positionM: readonly number[]): Promise<void> {
+    await this.request("/place", { object, position_m: positionM });
   }
 
   /** The packets of both directions since the last reset. */

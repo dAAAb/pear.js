@@ -6,8 +6,8 @@ through a scripted list of what a task does, in such a way that the same script 
 returns the same results at every run. This note says what the reference is, what the script and a result hold,
 and the stepping rule a runner of pear.js's station must reproduce to be compared with it bit for bit.
 
-Nothing under `src/` was written or changed for it. No station of pear.js has been run against it yet: that is the
-next step, and what this note is for.
+Nothing under `src/` was written or changed for it. pear.js's station has since been run against it, stepped by
+this rule: `station-chain.md` has that run and what it found.
 
 ## Result
 
@@ -328,7 +328,7 @@ Stepped run; a tick is 20 ms of the station's clock and of the simulated arm.
 
 ## Not verified
 
-- No station of pear.js has run the script: no difference between pear.js and PEAR is known or excluded here.
+- This note is the reference's side alone: what pear.js's station does with the script is in `station-chain.md`.
 - A feedforward other than zero (then a hold sends sync writes while the friction offset fades).
 - Lost answers and retries under the station (the SDK's timeout is on the wall clock): step 3 covers them below it.
 - Timeouts of an action, a persistent motion during a hold, a tracking error, a pause during Home: not scripted.
@@ -339,6 +339,6 @@ Stepped run; a tick is 20 ms of the station's clock and of the simulated arm.
 
 ## Left
 
-- A stepped runner of pear.js's station (`tests/sim-bridge`): the script, this rule, a `StationRunResult`, then
-  `compareStationResults` against the reference's result of all 8 sessions.
-- The chain's controls in `bridge_control.ts` lack `place` and the state's new fields; the runner needs them.
+- Done since (`station-chain.md`): a stepped runner of pear.js's station, and its result compared with the
+  reference's result of all 8 sessions.
+- A run of pear.js's station in real time beside the two real-time runs of the reference above.

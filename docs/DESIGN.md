@@ -33,7 +33,8 @@ One turn of the station, as PEAR defines it and pear.js keeps it:
   Where PEAR's Python cannot give a record, because the thing exists only in a page (a call that arrives while a
   control period is under way, a write into a vector PEAR holds as a tuple, where a line is logged when nobody
   asked for the log), a test compares pear.js with itself or with an expectation written by hand; its file says so
-  at its top, and the module's note counts such tests apart from the others.
+  at its top, and the module's note counts such tests apart from the others. Where such an expectation can be
+  taken from a run of PEAR's own classes, the script of that run is kept under `tools/rows/`.
 - **The core has no runtime dependencies** and runs in a browser and in Node 20 or newer: ES modules, no Node-only
   API under `src/` (tests and tools may use Node's).
 - **A deliberate difference is written down** in the section of that name below, with its reason and its test.
@@ -55,7 +56,7 @@ One turn of the station, as PEAR defines it and pear.js keeps it:
 | `src/station/motion/`, `src/station/robot.ts`, `src/station/cameras.ts` | `deploy/station/control/motion/` `actions.py`, `results.py`, `execution.py`, `planning.py`, `homing.py`; `deploy/station/control/robot.py`, `cameras.py`. `robot.ts` also holds what is not in PEAR: the adapter through which the turn loop of `src/agent/` drives a robot |
 | `src/so101/motion/`, `src/so101/robot.ts`, `src/so101/formats.ts`, `src/so101/hardware/cameras.ts` | `deploy/station/control/robots/so101/` `motion/planning.py`, `motion/homing.py`, `motion/actions.py`, `motion/results.py`, `formats.py`, `robot.py`, `hardware/cameras.py` |
 | `web/` | Not in PEAR: the page, which GitHub Pages builds from this directory. It reaches the arm through Web Serial and the wrist camera through the browser. Its first version only reads: a guard between the bus and the port lets only PING, READ and SYNC READ through (`docs/progress/web.md`) |
-| `tests/sim-bridge/` | Not in PEAR: the servo layer on a simulated SO-101 servo chain over TCP, compared packet by packet with PEAR's Python on the same chain; and PEAR's own robot stepped on that chain, recorded as the reference for step 4 of the ladder (`docs/progress/station-reference.md`) |
+| `tests/sim-bridge/` | Not in PEAR: the servo layer on a simulated SO-101 servo chain over TCP, compared packet by packet with PEAR's Python on the same chain; PEAR's own robot stepped on that chain, recorded as the reference for step 4 of the ladder (`docs/progress/station-reference.md`); and pear.js's own station stepped on that chain and compared with that reference (`docs/progress/station-chain.md`). The chain is not part of this repository, and the tests that need it are skipped without it |
 
 ## Verification ladder
 
@@ -65,9 +66,12 @@ Each step is claimed only when it has been run.
 2. Kinematics: equal to PEAR within stated tolerances (fixtures).
 3. Feetech: packets equal to the reference SDK's; a simulated servo bus in TypeScript; and, on a simulated SO-101
    servo chain over TCP, the packets PEAR's Python sends on the same chain (`docs/progress/sim-bridge.md`).
-4. Station: actions executed on a simulated SO-101 give the results PEAR's Python station gives. Run so far, on the
-   stand-in arm of PEAR's own tests and not yet on a simulated servo chain: the control loop period by period
-   (`docs/progress/loop.md`), and the robot's sessions and the turn loop's 19 tasks (`docs/progress/robot.md`).
+4. Station: actions executed on a simulated SO-101 give the results PEAR's Python station gives. Run with the
+   clock stepped one control period at a time: on the stand-in arm of PEAR's own tests, the control loop period by
+   period (`docs/progress/loop.md`) and the robot's sessions and the turn loop's 19 tasks
+   (`docs/progress/robot.md`); on a simulated SO-101 servo chain, the whole station through 8 scripted sessions,
+   with the packets and the results of PEAR's own station on that chain (`docs/progress/station-chain.md`). Not
+   run: the station in real time.
 5. A real model drives the simulated arm through pear.js.
 6. A real SO-101, by a person at the arm.
 

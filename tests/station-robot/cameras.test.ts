@@ -10,7 +10,7 @@
 //
 // These are expectations written by hand: no record of PEAR holds calls that overlap. What PEAR does was run on
 // PEAR's own CameraFeed and WristCamera, with threads and readers that hold a read or a close until they are let
-// go, and the rows below are that run's:
+// go, and the rows below are that run's. tools/rows/cameras_rows.py prints these rows:
 //
 //   a  a read and a preview at once            the reader is read once at a time; both get its frames
 //   a2 the first of two reads raises           the second gets the reader's frames

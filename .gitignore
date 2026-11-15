@@ -23,3 +23,4 @@ Thumbs.db
 
 # written by the C library oracle when a table lacks a value (tests/ruckig/oracle.ts)
 tests/fixtures/*/missing.txt
+tests/sim-bridge/missing.txt

@@ -11,7 +11,7 @@
 // These are expectations written by hand: no record of PEAR holds a failing encoder, a wait that is cancelled, a
 // result at a snapshot or a copy of an observation. What PEAR does was run on PEAR's own StationAgentLoop over PEAR's
 // own robot on its stepped rig (the station "so101_quick" with the drawn cameras, opened and at rest), and the rows
-// below are that run's:
+// below are that run's. tools/rows/adapter_rows.py prints these rows:
 //
 //   one step of the loop, the message cannot be built
 //     a frame that is no uint8 RGB image      raises ValueError: Expected a uint8 RGB image from the wrist camera

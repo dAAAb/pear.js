@@ -10,7 +10,8 @@
 //
 // These are expectations written by hand. What PEAR does was run on PEAR's own robot on its stepped rig (the station
 // "so101_quick"; Home on "so101_quick_home" with the drawn cameras after an action of z +0.05 m), and the rows below
-// are that run's:
+// are that run's. tools/rows/session_rows.py prints these rows, and session_model_state_rows.py beside it the whole
+// texts of model_state's errors and the row of seven joints:
 //
 //   the control loop shut down under the robot
 //     status()                        {status OFF, settled false, reached true, fault None}

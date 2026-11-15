@@ -10,7 +10,8 @@
 //
 // These are expectations written by hand: no record of PEAR holds a handler that stops the robot. What PEAR does
 // was run on PEAR's own robot on its stepped rig (the station "so101_quick" with the drawn cameras; Home on
-// "so101_quick_home" after an action of z +0.05 m that closes the gripper), and the rows below are that run's:
+// "so101_quick_home" after an action of z +0.05 m that closes the gripper), and the rows below are that run's.
+// tools/rows/guards_rows.py prints these rows:
 //
 //   an action whose handler does nothing             the result   camera reads   generation
 //     an action that asks nothing (all zero)         completed    1              +0

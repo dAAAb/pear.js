@@ -6,7 +6,8 @@
 // the fixture script's handler only notes the phase. So these are expectations written by hand, and what PEAR does
 // with each was run on PEAR's own robot on its stepped rig, with a handler that sleeps control periods, raises,
 // stops the robot, sets the cancellation or calls the robot again (an action of z +0.02 m from an observation on
-// the station "so101_quick"; Home on "so101_quick_home" after an action of z +0.05 m). That run's results:
+// the station "so101_quick"; Home on "so101_quick_home" after an action of z +0.05 m). That run's results, which
+// tools/rows/handlers_rows.py prints:
 //
 //   an action whose handler ...
 //     sleeps three control periods at each phase   completed; HOLD and no command while it sleeps; 10 commands after
