@@ -52,7 +52,8 @@ One turn of the station, as PEAR defines it and pear.js keeps it:
 | `src/so101/joint/` | `deploy/station/control/robots/so101/joint/` `feedforward.py`, `grippers.py`, `control_loop.py`; the checks of `deploy/station/control/robots/so101/config.py` are in `src/so101/config.ts` |
 | `src/agent/` | `deploy/station/agent_loop/` `agent_loop.py`, `schemas.py`, `config.py`, `messages.py` (the frames of a turn); `deploy/station/agent_loop/clients/` `client.py`, `vllm.py`, `schemas.py`, `metrics.py`, `health_checks.py`; what those run of the OpenAI Python SDK |
 | `src/python/` | Not PEAR's own code: what PEAR's texts and results take from Python itself (CPython 3.12), in one place for every module: the built-in exceptions under their names and bases, with how PEAR reads an error it caught (`type(error).__name__`, `isinstance(error, ValueError)`); `repr` of a float, `round` and the format specifications, `json.dumps` and `json.loads`, `repr` and `str` of a value, `str.isprintable`, whitespace |
-| `src/station/` above the joint layer (in progress, not in the repository yet) | `deploy/station/control/motion/` `execution.py`, `planning.py`, `homing.py`; `deploy/station/control/robot.py`, `cameras.py`; the SO-101's `motion/planning.py`, `motion/homing.py`, `robot.py` |
+| `src/station/motion/`, `src/station/robot.ts`, `src/station/cameras.ts` | `deploy/station/control/motion/` `actions.py`, `results.py`, `execution.py`, `planning.py`, `homing.py`; `deploy/station/control/robot.py`, `cameras.py`. `robot.ts` also holds what is not in PEAR: the adapter through which the turn loop of `src/agent/` drives a robot |
+| `src/so101/motion/`, `src/so101/robot.ts`, `src/so101/formats.ts`, `src/so101/hardware/cameras.ts` | `deploy/station/control/robots/so101/` `motion/planning.py`, `motion/homing.py`, `motion/actions.py`, `motion/results.py`, `formats.py`, `robot.py`, `hardware/cameras.py` |
 | `web/` | Not in PEAR: the page, which GitHub Pages builds from this directory. It reaches the arm through Web Serial and the wrist camera through the browser. Its first version only reads: a guard between the bus and the port lets only PING, READ and SYNC READ through (`docs/progress/web.md`) |
 | `tests/sim-bridge/` | Not in PEAR: the servo layer on a simulated SO-101 servo chain over TCP, compared packet by packet with PEAR's Python on the same chain; and PEAR's own robot stepped on that chain, recorded as the reference for step 4 of the ladder (`docs/progress/station-reference.md`) |
 
@@ -64,8 +65,9 @@ Each step is claimed only when it has been run.
 2. Kinematics: equal to PEAR within stated tolerances (fixtures).
 3. Feetech: packets equal to the reference SDK's; a simulated servo bus in TypeScript; and, on a simulated SO-101
    servo chain over TCP, the packets PEAR's Python sends on the same chain (`docs/progress/sim-bridge.md`).
-4. Station: actions executed on a simulated SO-101 give the results PEAR's Python station gives. Run so far: the
-   control loop alone, period by period, on the stand-in arm of PEAR's own tests (`docs/progress/loop.md`).
+4. Station: actions executed on a simulated SO-101 give the results PEAR's Python station gives. Run so far, on the
+   stand-in arm of PEAR's own tests and not yet on a simulated servo chain: the control loop period by period
+   (`docs/progress/loop.md`), and the robot's sessions and the turn loop's 19 tasks (`docs/progress/robot.md`).
 5. A real model drives the simulated arm through pear.js.
 6. A real SO-101, by a person at the arm.
 
@@ -107,6 +109,14 @@ frozen arrays: a reader of a snapshot cannot change what the loop holds and comm
 `log` option; a loop that is given none prints the error level (a fault, a hold that could not be commanded, the
 end of the loop) with `console.error` (`docs/progress/loop.md`, "Deliberate differences").
 
+The robot above the loop keeps PEAR's order of checks and acts. Where PEAR's lock keeps a check and a submission
+out of a control period, here both are synchronous, so nothing falls between them, but both can run while a period
+awaits the line; `tests/station-robot/periods.test.ts` runs that with control periods started by a ticker, and what
+it does not run is listed in `docs/progress/robot.md`. Planning runs on the page's one thread: no control period
+starts during a plan. An observation is what PEAR's is, a plain object that its holder can write into, and the
+robot plans from what the object holds when it is handed back. A progress handler or an approval that never
+settles keeps the robot taken, as a handler that never returns blocks PEAR's thread.
+
 ## Safety
 
 The model does what it is asked and is not a safety mechanism. The station bounds what an answer can do: joint
@@ -118,7 +128,8 @@ To stop an arm, call the control loop's `stop()`: it brakes into a hold, with th
 command a hold too; if that command cannot be sent, the loop says so ("Could not command a hold; a physical stop
 may be required"). `close()`, `shutdown()` and an `open()` that fails release the hardware as PEAR's do: they
 switch the SO-101's torque off, and an arm that is not supported then falls under its own weight. A page's stop
-control must never close the loop to stop an arm.
+control must never close the loop to stop an arm. The robot's `close()` can reject while an action is under way
+although it has released the arm: a page must not take a rejected `close()` for a robot that is still open.
 
 ## Conventions
 

@@ -14,6 +14,7 @@
 // and the result feedback; of its snapshot and statuses any field and none required).
 
 import type { ModelState, MotionResult, MotionStatus, SingleArmDelta } from "../protocol/types";
+import { resultRecord as stationResultRecord } from "../station/motion/results";
 import {
   ActionPhase,
   type ActionFormat as StationActionFormat,
@@ -32,14 +33,7 @@ export type { Camera };
 /** A value, or a promise of it. */
 export type Awaitable<T> = T | Promise<T>;
 
-/** Which actions a robot takes. */
-export const ActionMode = {
-  /** Every action of the robot, as a model's session gives them. */
-  CARTESIAN: "cartesian",
-  /** Chunks of joint targets alone, as maintenance gives them. */
-  JOINT: "joint",
-} as const;
-export type ActionMode = (typeof ActionMode)[keyof typeof ActionMode];
+export { ActionMode } from "../station/robot";
 
 /** A key of one of PEAR's dictionaries as the field of an object is named in pear.js: `observation_id` as
  * `observationId`. */
@@ -142,16 +136,6 @@ export interface AgentRobot<State = ModelState, Action = SingleArmDelta> {
   ): Awaitable<MotionResult>;
 }
 
-/** Returns the result as a task's records and the page keep it, under their keys (MotionResult.to_record). */
-export function resultRecord(result: MotionResult): EventData {
-  return {
-    status: result.status,
-    settled: result.isSettled,
-    reached: result.targetReached,
-    measured_position: result.measuredPosition,
-    tracking_error: result.trackingError,
-    measured_state: result.measuredState,
-    gripper_outcome: result.gripperOutcome,
-    error: result.error,
-  };
-}
+/** Returns the result as a task's records and the page keep it, under their keys (MotionResult.to_record): the
+ * function of the port of PEAR's results.py (src/station/motion/results.ts), as the loop records it. */
+export const resultRecord = stationResultRecord as (result: MotionResult) => EventData;

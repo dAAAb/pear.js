@@ -49,14 +49,12 @@ export interface SingleArmDelta {
   gripper: GripperQuantity;
 }
 
-/** How an action ended, by the word its result carries. */
-export const MotionStatus = {
-  COMPLETED: "completed",
-  /** Refused before anything was sent to the arm. */
-  REJECTED: "rejected",
-  FAILED: "failed",
-} as const;
-export type MotionStatus = (typeof MotionStatus)[keyof typeof MotionStatus];
+// MotionStatus, MotionError and the fields of a result are defined once, in the port of PEAR's results.py
+// (src/station/motion/results.ts), and given here under the names the texts of this module were written against.
+import type { MotionResultFields } from "../station/motion/results";
+
+export { MotionStatus } from "../station/motion/results";
+export type { MotionError } from "../station/motion/results";
 
 /** How the jaw's operation ended. */
 export const GripperOutcome = {
@@ -67,29 +65,10 @@ export const GripperOutcome = {
 } as const;
 export type GripperOutcome = (typeof GripperOutcome)[keyof typeof GripperOutcome];
 
-/** What ended an action: in PEAR the class name of the Python exception and its message. */
-export interface MotionError {
-  code: string;
-  message: string;
-}
-
 /** The code of a pose the offline inverse kinematics refused (PEAR's UnreachablePoseError): nothing was commanded.
  * Its message comes from the kinematics (SO101Kinematics.unreachable_message). */
 export const UNREACHABLE_POSE_ERROR = "UnreachablePoseError";
 
-/** The outcome of an action. */
-export interface MotionResult {
-  status: MotionStatus;
-  isSettled: boolean;
-  /** The action completed, the arm arrived and the jaw was not stopped before it closed. */
-  targetReached: boolean;
-  /** The measured joint vector (rad, the gripper's opening last); null of a robot that is closed. */
-  measuredPosition: number[] | null;
-  /** The measured joints' signed errors against what the action requested. */
-  trackingError: number[] | null;
-  /** What the model reads of the measured joints. */
-  measuredState: ModelState | null;
-  /** How the jaw ended, when the action moved it. */
-  gripperOutcome: GripperOutcome | null;
-  error: MotionError | null;
-}
+/** The outcome of an SO-101 action: the fields of PEAR's MotionResult, with the SO-101's state and the jaw's
+ * outcome (the measured joint vector in rad, the gripper's opening last). */
+export type MotionResult = MotionResultFields<ModelState, GripperOutcome>;

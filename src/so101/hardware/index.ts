@@ -2,6 +2,7 @@
 
 export * from "./arm_state";
 export * from "./arms";
+export * from "./cameras";
 export * from "./driver";
 export * from "./follower";
 export * from "./motors";
