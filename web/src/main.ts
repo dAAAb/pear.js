@@ -20,14 +20,25 @@ import {
 import { applyStaticTexts, count, initialLanguage, language, listed, onLanguageChange, setLanguage, t } from "./i18n";
 import { PageLog, redact } from "./log";
 import { checkModel, type ModelCheck } from "./model";
+import {
+  allBlockers,
+  armingReportParts,
+  blockerSentences,
+  confirmationItems,
+  lineSentences,
+  refusalsSince,
+  refusedSentence,
+} from "./arming_view";
 import { type PreflightPart, preflightParts } from "./preflight_view";
 import { type GuardSelfTest, guardSelfTest } from "./readonly";
 import { SIM_CALIBRATION, SIM_SCENARIOS, SimArm, type SimScenario } from "./sim_port";
 import { StationClient } from "./station_client";
-import { CLOCK_NUMBERS } from "./station_protocol";
+import { ARMING_LIMIT_MS, CLOCK_NUMBERS } from "./station_protocol";
 import type {
   ActionReport,
   ArmFingerprint,
+  ArmingBlocker,
+  PortSource,
   HomeResult,
   PreflightReport,
   StationEvent,
@@ -622,7 +633,7 @@ function renderArm(): void {
   const driven = drivenStatus();
   status.dataset.phase = view.isStalled ? "stalled" : view.phase;
   status.dataset.driven = String(driven !== null);
-  setText(status, t(driven !== null ? "arm.status.driven" : statusKey));
+  setText(status, t(driven !== null ? (stationView.real !== null ? "arm.status.drivenReal" : "arm.status.driven") : statusKey));
   setText(
     byId<HTMLElement>("arm-readings"),
     view.phase === "reading" && view.live !== null ? t("arm.readings", { count: count(view.live.count) }) : "",
@@ -1065,7 +1076,7 @@ async function runModelCheck(): Promise<void> {
 
 /** What an ask still lacks, as a text's key; null when the model can be asked. */
 function askMissing(): TextKey | null {
-  if (stationView.phase !== "off") return "ask.need.station";
+  if (stationView.phase !== "off") return stationView.real !== null ? "ask.need.stationReal" : "ask.need.station";
   const live = arm.view.live;
   if (arm.view.phase === "idle" || arm.view.phase === "failed") return "ask.need.arm";
   // an arm is there, and the window has no complete reading of it (not yet, or the arm was never calibrated)
@@ -1155,6 +1166,12 @@ interface StationView {
   home: HomeResult | null;
   /** The numbers of the last timing self-check before enabling. */
   timing: TimingCheck | null;
+  /** The real arm whose line the station has or takes; null on the simulated arm and while the window reads.
+   * `isDisableAsked`: Disable was pressed once and waits for its second press. `refusalsLogged` and
+   * `isLostLogged`: what the log was told of the line already. */
+  real: { port: SerialPortLike; isDisableAsked: boolean; refusalsLogged: number; isLostLogged: boolean } | null;
+  /** Whether the Worker was lost while it had a real arm's line. */
+  isRealLost: boolean;
   /** Whether the page was hidden while the station was enabled. */
   wasHidden: boolean;
   /** The frame the last observation held, as the Worker told it: the JPEG's bytes and a URL of them for the
@@ -1173,6 +1190,8 @@ const stationView: StationView = {
   report: null,
   home: null,
   timing: null,
+  real: null,
+  isRealLost: false,
   wasHidden: false,
   frame: null,
 };
@@ -1187,13 +1206,60 @@ const preflight: { isRunning: boolean; report: PreflightReport | null; reports: 
 
 /** Whether the page's address asks the hand-over check to run on a simulated port that the Worker makes itself
  * (?preflight=sim): the way through it without an arm, for a check of the page. */
-const isPreflightSimulated = new URLSearchParams(location.search).get("preflight") === "sim";
+const preflightParameter = new URLSearchParams(location.search).get("preflight");
+/** The simulated port the address asks the Worker to make in place of a granted one: one that holds the simulated
+ * servos' own settings (?preflight=sim), or one that holds the settings PEAR's enable writes
+ * (?preflight=sim-configured); null: the granted port. */
+const simulatedSource: PortSource | null =
+  preflightParameter === "sim" ? "simulated" : preflightParameter === "sim-configured" ? "simulated-configured" : null;
+const isPreflightSimulated = simulatedSource !== null;
+
+/** Enabling the station on a real arm (the request "enableReal"), as the page follows it. */
+interface ArmingView {
+  /** "reading": the Worker reads the arm. "asking": its report is shown and the Worker waits for the operator's
+   * answer. "opening": the operator confirmed and the robot opens. null: no request runs. */
+  phase: "reading" | "asking" | "opening" | null;
+  /** What the Worker read; `isLineOpen`: it is the event's report, of a line the Worker still has open. */
+  report: PreflightReport | null;
+  isLineOpen: boolean;
+  /** The id of the Worker's request whose report is shown: the operator's answer names it. */
+  requestId: number | null;
+  /** The reasons against enabling: the Worker's and those the page sees in the report itself. */
+  blockers: readonly ArmingBlocker[];
+  /** The operator's answer to the report that is shown. */
+  answer: "confirmed" | "cancelled" | null;
+  /** Whether the operator has ticked the box of the confirmation that is shown. */
+  isTicked: boolean;
+  /** When the confirmation was shown, on the page's clock; the Worker waits ARMING_LIMIT_MS from then. */
+  shownAt: number;
+  /** How the last request ended, said until the next one. */
+  message: { tone: Tone; text: () => string } | null;
+  /** Counts what is shown, which tells the page when to build it again. */
+  shows: number;
+  /** Renders the time left to answer, once a second. */
+  timer: ReturnType<typeof setInterval> | null;
+}
+
+const arming: ArmingView = {
+  phase: null,
+  report: null,
+  isLineOpen: false,
+  requestId: null,
+  blockers: [],
+  answer: null,
+  isTicked: false,
+  shownAt: 0,
+  message: null,
+  shows: 0,
+  timer: null,
+};
 
 const station = new StationClient({
   onEvent: (event) => onStationEvent(event),
   onLost: (reason, detail) => {
     if (stationView.lost?.reason !== reason) log.add(`Station: the Worker ${reason === "died" ? "died" : "does not answer"}: ${detail}`);
     stationView.lost = { reason, detail };
+    if (stationView.real !== null) stationView.isRealLost = true;
     renderStation();
   },
 });
@@ -1229,7 +1295,7 @@ function errorText(error: unknown): string {
 
 /** Why the station cannot be enabled now; null when it can. */
 function stationWhy(): TextKey | null {
-  if (stationView.lost !== null) return "station.why.lost";
+  if (stationView.lost !== null) return stationView.isRealLost ? "station.why.lostReal" : "station.why.lost";
   const view = arm.view;
   if (view.phase === "idle" || view.phase === "failed") return "station.why.noArm";
   if (!view.isSimulated) return "station.why.realArm";
@@ -1243,6 +1309,7 @@ function onStationEvent(event: StationEvent): void {
   if (event.type === "status") {
     stationView.status = event.status;
     if (stationView.lost?.reason === "silent") stationView.lost = null; // it answers again
+    logRealLine(event.status);
   } else if (event.type === "log") {
     log.add(`Station ${event.level} [${event.logger}]: ${event.message}`);
   } else if (event.type === "phase") {
@@ -1257,7 +1324,9 @@ function onStationEvent(event: StationEvent): void {
     const url = URL.createObjectURL(new Blob([event.jpeg as BlobPart], { type: "image/jpeg" }));
     stationView.frame = { bytes: event.jpeg, url, number: event.number, ageMs: event.ageMs };
     log.add(`Station: the observation held frame ${event.number} of the wrist camera: JPEG, ${event.jpeg.length} bytes, ${event.ageMs} ms old`);
-  } else {
+  } else if (event.type === "arming") {
+    onArming(event.requestId, event.report, event.blockers);
+  } else if (event.type === "timing") {
     stationView.timing = event.timing;
     log.add(`Station: timing self-check ${JSON.stringify(event.timing)}`);
   }
@@ -1413,17 +1482,30 @@ async function enableStation(): Promise<void> {
 async function disableStation(): Promise<void> {
   if (stationView.phase !== "on") return;
   stationView.phase = "disabling";
+  const real = stationView.real;
+  if (real !== null) real.isDisableAsked = false;
   syncStationCamera();
   logClock("disable");
   renderArm();
   try {
-    const { positions } = await station.request({ type: "disable" });
+    const { positions, isLineClosed } = await station.request({ type: "disable" });
     station.expectsStatus = false;
     stationView.phase = "off";
     stationView.status = null;
     stationView.action = null;
     stationView.plan = null;
     stationView.problem = null;
+    if (real !== null) {
+      // a real arm: its torque is off, and the window reads the same port again when the Worker has closed it
+      stationView.real = null;
+      log.add(
+        `Station: disabled on the real arm; the Worker ${isLineClosed ? "closed the line" : "did not close the line: it still holds the port"}`,
+      );
+      if (isLineClosed) await readArmAgain(real.port);
+      else stationView.problem = { key: "station.real.disabledNotClosed", error: "" };
+      renderArm();
+      return;
+    }
     log.add(`Station: disabled; the simulated arm stands at ${JSON.stringify(positions)}`);
     if (sim !== null) {
       for (const motor of MOTORS) sim.setPosition(motor, positions[motor] as number);
@@ -1461,7 +1543,7 @@ function preflightOffer(): { port: SerialPortLike; expected: ArmFingerprint } | 
 async function runPreflight(): Promise<void> {
   const offer = preflightOffer();
   if (offer === null) return;
-  const source = isPreflightSimulated ? "simulated" : "granted";
+  const source: PortSource = simulatedSource ?? "granted";
   const usb = usbIdsOf(offer.port);
   preflight.isRunning = true;
   preflight.report = null;
@@ -1510,6 +1592,289 @@ async function runPreflight(): Promise<void> {
       : `Station: the window does not read the arm again on the same port (${arm.view.phase})`,
   );
   renderArm();
+}
+
+/** Why "Enable the station on this arm" is not offered where the hand-over check is; null when it is: PEAR starts
+ * only when a loaded calibration file is equal to what the servos hold. */
+function armingWhy(): TextKey | null {
+  const file = arm.view.file;
+
+  return file !== null && file.verdict !== "equal" ? "station.arming.why.calibration" : null;
+}
+
+/** The window reads `port` again, once the Worker has given the arm's line back. */
+async function readArmAgain(port: SerialPortLike): Promise<void> {
+  pageProblem = null;
+  const isSimulated = sim !== null && port === sim.port;
+  await connectArm(port, { isSimulated, label: isSimulated ? "simulated port" : "Web Serial" });
+  log.add(
+    arm.view.phase === "reading"
+      ? "Station: the window reads the arm again, on the same port"
+      : `Station: the window does not read the arm again on the same port (${arm.view.phase})`,
+  );
+}
+
+/** Begins a request "enableReal" in the page's view of it: nothing is shown of the one before. */
+function beginArming(): void {
+  arming.phase = "reading";
+  arming.requestId = null;
+  arming.report = null;
+  arming.isLineOpen = false;
+  arming.blockers = [];
+  arming.answer = null;
+  arming.isTicked = false;
+  arming.message = null;
+  arming.shows += 1;
+}
+
+/** "Enable the station on this arm": the window closes its session, the Worker reads the arm behind a guard that
+ * lets no write through and tells what it found (the event "arming"), and only the operator's confirmation lets
+ * it open PEAR's robot on the arm. Blocked, refused or failed, the window reads the same port again. */
+async function enableOnArm(): Promise<void> {
+  const offer = preflightOffer();
+  if (offer === null || armingWhy() !== null) return;
+  const source: PortSource = simulatedSource ?? "granted";
+  const usb = usbIdsOf(offer.port);
+  const file = arm.view.file;
+  const calibrationFile = file !== null && file.verdict === "equal" ? file.calibration : null;
+  stationView.phase = "enabling";
+  stationView.real = { port: offer.port, isDisableAsked: false, refusalsLogged: 0, isLostLogged: false };
+  stationView.problem = null;
+  stationView.outcome = null;
+  stationView.report = null;
+  stationView.home = null;
+  stationView.timing = null;
+  stationView.wasHidden = false;
+  dropStationFrame();
+  preflight.report = null;
+  preflight.reports += 1;
+  beginArming();
+  renderArm();
+  await arm.disconnect(); // the Worker can open the port only when the window has closed it
+  log.add(
+    `Station: enabling on the real arm asked, source ${source}; the window closed its session; usb ${JSON.stringify(usb)}, expected ${JSON.stringify(offer.expected)}, calibration file ${calibrationFile === null ? "none" : JSON.stringify(calibrationFile)}`,
+  );
+  let isGivenBack = true;
+  let isEnabled = false;
+  try {
+    station.start();
+    const result = await station.request({
+      type: "enableReal",
+      source,
+      usb,
+      expected: offer.expected,
+      calibrationFile,
+      isHidden: document.hidden,
+    });
+    isGivenBack = result.report.isClosed;
+    arming.isLineOpen = false;
+    if (result.outcome === "enabled") {
+      isEnabled = true;
+      arming.report = null;
+      station.expectsStatus = true;
+      stationCamera.making = { made: 0, totalMs: 0, maxMs: 0, leftOut: 0 };
+      log.add(`Station: enabled on the real arm; the robot opened in ${result.openMs} ms`);
+    } else {
+      arming.report = result.report;
+      arming.blockers = allBlockers(result.report, result.blockers);
+      const answer = arming.answer;
+      if (result.outcome === "refused" && arming.blockers.length === 0) {
+        arming.message = { tone: "warn", text: () => refusedSentence(answer, { t, count, listed }) };
+      }
+      log.add(
+        result.outcome === "blocked"
+          ? `Station: not enabled on the real arm: blocked (${result.blockers.map((blocker) => blocker.code).join(", ")}); nothing was written`
+          : `Station: not enabled on the real arm: refused (${answer === null ? "no answer of the operator" : answer === "cancelled" ? "the operator cancelled" : "the operator's answer came too late"}); nothing was written`,
+      );
+    }
+  } catch (error) {
+    const wasConfirmed = arming.answer === "confirmed";
+    const words = errorText(error);
+    arming.message = {
+      tone: "error",
+      text: () => t(wasConfirmed ? "station.arming.failedAfter" : "station.arming.failed", { error: words }),
+    };
+    log.add(`Station: enabling on the real arm failed${wasConfirmed ? " after the operator confirmed" : ""}: ${words}`);
+  }
+  if (arming.timer !== null) clearInterval(arming.timer);
+  arming.timer = null;
+  arming.phase = null;
+  arming.shows += 1;
+  if (isEnabled) {
+    stationView.phase = "on";
+    syncStationCamera();
+    if (document.hidden) await tellVisibility();
+    renderArm();
+    return;
+  }
+  stationView.phase = "off";
+  stationView.real = null;
+  if (!isGivenBack) {
+    // a port the Worker still holds cannot be opened here; the report's sentence says that reloading frees it
+    log.add("Station: the Worker did not give the line back (isClosed false); the window does not open the port");
+    renderArm();
+    return;
+  }
+  await readArmAgain(offer.port);
+  renderArm();
+}
+
+/** The event "arming": what the Worker read of the real arm before anything is written. With no reason against
+ * enabling, the confirmation is shown and the Worker waits for the operator's answer. */
+function onArming(requestId: number, report: PreflightReport, told: readonly ArmingBlocker[]): void {
+  log.add(`Station: arming report ${JSON.stringify({ report, blockers: told })}`);
+  if (arming.phase !== "reading") {
+    log.add("Station: no request of the page waits for this arming report; it is not shown and not answered");
+    return;
+  }
+  const blockers = allBlockers(report, told);
+  arming.report = report;
+  arming.requestId = requestId;
+  arming.isLineOpen = true;
+  arming.blockers = blockers;
+  arming.shows += 1;
+  if (told.length > 0) return; // the Worker does not wait: it closes the line and answers "blocked"
+  if (blockers.length > 0) {
+    // the Worker waits for an answer, and the page sees a reason in the report itself: it refuses at once
+    log.add(
+      `Station: the page sees reasons against enabling that the Worker did not tell (${blockers.map((blocker) => blocker.code).join(", ")}); it refuses`,
+    );
+    void station.request({ type: "arm", requestId, isConfirmed: false }).catch((error: unknown) => {
+      log.add(`Station: the refusal was not taken: ${errorText(error)}`);
+    });
+    return;
+  }
+  arming.phase = "asking";
+  arming.isTicked = false;
+  arming.shownAt = performance.now();
+  arming.timer = setInterval(renderStation, 1000);
+}
+
+/** The operator's answer to what the Worker read. A confirmation is the one place where the page asks for the
+ * first write to a servo: it is sent only for the operator's own press (`press.isTrusted`) of the button, while
+ * the box of the confirmation that is shown is ticked, no reason stands against enabling and the Worker still
+ * waits. */
+async function answerArming(isConfirmed: boolean, press: Event): Promise<void> {
+  const requestId = arming.requestId;
+  if (arming.phase !== "asking" || arming.answer !== null || requestId === null) return;
+  const waited = performance.now() - arming.shownAt;
+  if (isConfirmed) {
+    const tick = document.getElementById("station-arming-tick") as HTMLInputElement | null;
+    const isTicked = arming.isTicked && tick !== null && tick.checked;
+    if (!press.isTrusted || !isTicked || arming.blockers.length > 0 || waited >= ARMING_LIMIT_MS) return;
+  }
+  arming.answer = isConfirmed ? "confirmed" : "cancelled";
+  if (isConfirmed) arming.phase = "opening";
+  arming.shows += 1;
+  log.add(
+    `Station: the operator ${isConfirmed ? "ticked the box and pressed: switch the torque on" : "cancelled"}, ${Math.round(waited / 1000)} s after the report was shown`,
+  );
+  renderStation();
+  await station.request({ type: "arm", requestId, isConfirmed }).catch((error: unknown) => {
+    log.add(`Station: the operator's answer was not taken: ${errorText(error)}`);
+  });
+}
+
+/** Disable: at once on the simulated arm. On a real arm the first press only asks, because the arm will go limp;
+ * the second press, in the box that then shows, disables. */
+function pressDisable(): void {
+  const real = stationView.real;
+  if (real === null) {
+    void disableStation();
+    return;
+  }
+  if (stationView.phase !== "on") return;
+  real.isDisableAsked = true;
+  renderStation();
+}
+
+/** Tells the log, once each, what a real arm's line reports: every refusal of the guard, and that the port is
+ * lost. */
+function logRealLine(status: StationStatus): void {
+  const real = stationView.real;
+  const line = status.line;
+  if (real === null || line === null) return;
+  for (const words of refusalsSince(line, real.refusalsLogged)) log.add(`Station: the guard refused a packet: ${words}`);
+  if (line.refused > real.refusalsLogged) log.add(`Station: the guard has refused ${line.refused} packets on the real arm's line`);
+  real.refusalsLogged = Math.max(real.refusalsLogged, line.refused);
+  if (line.isLost && !real.isLostLogged) {
+    real.isLostLogged = true;
+    log.add("Station: the real arm's line is lost; the servos keep their torque and hold their last goal until their power is cut");
+  }
+}
+
+/** Returns the confirmation the operator reads before the first write: the list, the tick box, which is new and
+ * unticked whenever it is built, and the two buttons. */
+function confirmationNode(report: PreflightReport): HTMLElement {
+  const node = box("warn", "arming-confirm", t("station.arming.confirm.title"), [t("station.arming.confirm.lead")]);
+  node.append(
+    element(
+      "ul",
+      {},
+      confirmationItems(report, { t, count, listed }).map((item) =>
+        element("li", { text: item.text, data: { kind: item.kind, tone: item.tone } }),
+      ),
+    ),
+  );
+  arming.isTicked = false;
+  const tick = element("input");
+  tick.type = "checkbox";
+  tick.id = "station-arming-tick";
+  tick.autocomplete = "off";
+  tick.addEventListener("change", (event) => {
+    arming.isTicked = event.isTrusted && tick.checked;
+    tick.checked = arming.isTicked;
+    renderStation();
+  });
+  const go = element("button", { text: t("station.arming.confirm.go"), className: "primary" });
+  go.type = "button";
+  go.id = "station-arming-go";
+  go.disabled = true;
+  go.addEventListener("click", (event) => void answerArming(true, event));
+  const cancel = element("button", { text: t("station.arming.confirm.cancel") });
+  cancel.type = "button";
+  cancel.id = "station-arming-cancel";
+  cancel.addEventListener("click", (event) => void answerArming(false, event));
+  const left = element("p", { className: "status" });
+  left.id = "station-arming-left";
+  node.append(
+    element("p", {}, [element("label", { className: "tick" }, [tick, document.createTextNode(` ${t("station.arming.confirm.tick")}`)])]),
+    element("div", { className: "actions" }, [go, cancel]),
+    left,
+  );
+
+  return node;
+}
+
+/** Returns what the page shows of enabling on a real arm: how the last request ended, the reasons against
+ * enabling or the confirmation, and what the Worker read. */
+function armingNodes(): Node[] {
+  const wording = { t, count, listed };
+  const nodes: Node[] = [];
+  if (arming.message !== null) nodes.push(box(arming.message.tone, "arming-outcome", null, [arming.message.text()]));
+  const report = arming.report;
+  if (report === null) return nodes;
+  if (arming.blockers.length > 0) {
+    const blocked = box("error", "arming-blocked", t("station.arming.blocked.title"), []);
+    blocked.append(
+      element(
+        "ul",
+        {},
+        blockerSentences(report, arming.blockers, wording).map((blocker) =>
+          element("li", { text: blocker.detail === null ? blocker.text : `${blocker.text} (${blocker.detail})`, data: { code: blocker.code } }),
+        ),
+      ),
+    );
+    nodes.push(blocked);
+  } else if (arming.phase === "asking") {
+    nodes.push(confirmationNode(report));
+  }
+  nodes.push(
+    element("h4", { text: t("station.arming.reportTitle") }),
+    ...armingReportParts(report, wording, arming.isLineOpen).map(preflightNode),
+  );
+
+  return nodes;
 }
 
 /** Returns one part of the hand-over check's report as the page shows it: a sentence, which is a message box
@@ -1564,6 +1929,7 @@ async function stopStation(): Promise<void> {
 
 /** Runs one action of the model's format, as a turn would, and shows the report the model would read. */
 async function runAction(name: string, action: Record<string, unknown>): Promise<void> {
+  if (stationView.real !== null) return; // no single action on a real arm
   if (stationView.phase !== "on" || stationView.action !== null) return;
   const running: NonNullable<StationView["action"]> = { name, phase: null, endedBy: null };
   stationView.action = running;
@@ -1689,15 +2055,24 @@ function renderStation(): void {
   setText(
     line,
     view.lost !== null
-      ? t(view.lost.reason === "died" ? "station.status.lostDied" : "station.status.lostSilent", { detail: view.lost.detail })
+      ? t(
+          view.lost.reason === "died"
+            ? view.isRealLost
+              ? "station.status.lostDiedReal"
+              : "station.status.lostDied"
+            : view.isRealLost
+              ? "station.status.lostSilentReal"
+              : "station.status.lostSilent",
+          { detail: view.lost.detail },
+        )
       : view.phase === "enabling"
-        ? t("station.status.enabling")
+        ? t(arming.phase !== null ? `station.arming.${arming.phase}` : "station.status.enabling")
         : view.phase === "disabling"
           ? t("station.status.disabling")
           : isOn && status !== null
             ? status.fault !== null
               ? t("station.status.fault", { fault: status.fault })
-              : t("station.status.on", { robot: status.robot, control: status.control ?? DASH })
+              : t(view.real !== null ? "station.status.onReal" : "station.status.on", { robot: status.robot, control: status.control ?? DASH })
             : t("station.status.off"),
   );
 
@@ -1822,6 +2197,27 @@ function renderStation(): void {
   const offer = preflightOffer();
   byId("station-preflight").hidden = offer === null && !preflight.isRunning;
   byId<HTMLButtonElement>("station-preflight-run").disabled = offer === null;
+  const armingReason = armingWhy();
+  byId<HTMLButtonElement>("station-arming-run").disabled = offer === null || armingReason !== null;
+  const armingWhyNode = byId("station-arming-why");
+  armingWhyNode.hidden = armingReason === null;
+  setText(armingWhyNode, armingReason === null ? "" : t(armingReason));
+  // enabling on a real arm: how the last request ended, the reasons against it or the confirmation, the report
+  const armingPart = byId("station-arming");
+  armingPart.hidden = arming.report === null && arming.message === null;
+  armingPart.dataset.phase = arming.phase ?? "";
+  armingPart.dataset.blockers = arming.blockers.map((blocker) => blocker.code).join(" ");
+  renderOnce(byId("station-arming-parts"), String(arming.shows), armingNodes);
+  const go = document.getElementById("station-arming-go") as HTMLButtonElement | null;
+  if (go !== null) {
+    // the button answers only while the box is ticked and the Worker still waits
+    const left = Math.max(0, Math.ceil((ARMING_LIMIT_MS - (performance.now() - arming.shownAt)) / 1000));
+    go.disabled = !(arming.phase === "asking" && arming.isTicked && left > 0);
+    setText(
+      byId("station-arming-left"),
+      t(left > 0 ? "station.arming.confirm.left" : "station.arming.confirm.over", { seconds: count(left) }),
+    );
+  }
   const checking = byId("station-preflight-status");
   checking.dataset.running = String(preflight.isRunning);
   setText(checking, preflight.isRunning ? t("station.preflight.running") : "");
@@ -1836,6 +2232,11 @@ function renderStation(): void {
 
   const messages: HTMLElement[] = [];
   if (view.problem !== null) messages.push(box("error", "station-problem", null, [t(view.problem.key, { error: view.problem.error })]));
+  // a real arm's line: what the guard let through and refused, and the two messages that stay
+  const lineTold = isHeld && status?.line != null ? lineSentences(status.line, { t, count, listed }) : null;
+  setText(byId("station-line"), lineTold?.line ?? "");
+  if (lineTold?.lost != null) messages.push(box("error", "station-line-lost", null, [lineTold.lost]));
+  if (lineTold?.refused != null) messages.push(box("error", "station-guard-refused", null, [lineTold.refused]));
   if (isOn && (view.wasHidden || status?.isHidden === true)) {
     // while the page is hidden no action starts; visible again, the warning speaks of what happened then
     const isHiddenNow = status?.isHidden === true || document.hidden;
@@ -1862,7 +2263,11 @@ function renderStation(): void {
     }),
   );
   for (const button of byId("station-jog").querySelectorAll("button")) button.disabled = !isIdle;
-  byId<HTMLButtonElement>("station-home").disabled = !isIdle;
+  byId<HTMLButtonElement>("station-home").disabled = !isIdle || status?.line?.isLost === true;
+  // a real arm: no single actions, and Disable asks for a second press
+  byId("station-jog-part").hidden = view.real !== null;
+  byId("station-real-note").hidden = view.real === null;
+  byId("station-disable-confirm").hidden = !(isOn && view.real?.isDisableAsked === true);
 
   byId("station-plan").hidden = view.plan === null;
   setText(byId("station-plan-text"), view.plan === null ? "" : JSON.stringify(view.plan, null, 2));
@@ -1899,8 +2304,12 @@ function renderStation(): void {
     typeof failure === "object" &&
     failure !== null &&
     String((failure as Record<string, unknown>)["message"] ?? "").startsWith("Camera unavailable");
-  byId("station-report-camera").hidden = !lacksFrame;
-  setText(byId("station-report-camera"), lacksFrame ? t("station.action.noFrame") : "");
+  // Home observes first, as an action does: when it did not run for want of a fresh frame the page gives the
+  // same advice, although a Home that failed leaves no report whose record could say so
+  const homeLacksFrame =
+    hasEnded && view.outcome?.key === "station.action.failed" && (view.outcome.values["error"] ?? "").includes("Camera unavailable");
+  byId("station-report-camera").hidden = !(lacksFrame || homeLacksFrame);
+  setText(byId("station-report-camera"), lacksFrame || homeLacksFrame ? t("station.action.noFrame") : "");
   byId("station-report-model").hidden = view.report === null;
   setText(byId("station-feedback"), view.report?.feedback ?? "");
   setText(byId("station-record"), view.report === null ? "" : JSON.stringify(view.report.record, null, 2));
@@ -2096,7 +2505,13 @@ function start(): void {
   byId("camera-capture").addEventListener("click", () => void camera.capture());
 
   byId("station-enable").addEventListener("click", () => void enableStation());
-  byId("station-disable").addEventListener("click", () => void disableStation());
+  byId("station-disable").addEventListener("click", () => pressDisable());
+byId("station-disable-go").addEventListener("click", () => void disableStation());
+byId("station-disable-keep").addEventListener("click", () => {
+  if (stationView.real !== null) stationView.real.isDisableAsked = false;
+  renderStation();
+});
+byId("station-arming-run").addEventListener("click", () => void enableOnArm());
   byId("station-preflight-run").addEventListener("click", () => void runPreflight());
   byId("station-home").addEventListener("click", () => void runHome());
   byId("station-approve").addEventListener("click", () => void answerPlan(true));

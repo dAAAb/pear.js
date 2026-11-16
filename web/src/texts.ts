@@ -6,14 +6,14 @@ export const EN = {
   "page.title": "pear.js: PEAR's robot station in the browser",
   "page.tagline": "PEAR's robot station in the browser, for a LeRobot SO-101.",
   "page.notice":
-    "pear.js is an unofficial, experimental port of PEAR's robot station (MIT Han Lab). This version moves only a simulated arm, in a Worker of this page. With a real arm connected it only reads: it shows your arm, your camera and your model service, and it cannot move the real arm.",
+    "pear.js is an unofficial, experimental port of PEAR's robot station (MIT Han Lab). The station runs in a Worker of this page and drives a simulated arm. With a real arm connected the page reads: it shows your arm, your camera and your model service. It writes to the servos only after you press “Enable the station on this arm” and confirm; then it can hold the arm, move it to Home, stop it and release it. No model moves an arm.",
   "page.skip": "Skip to the arm",
   "page.language": "Language",
   "page.noscript": "This page needs JavaScript.",
 
   "arm.title": "Arm",
   "arm.lead":
-    "Plug the SO-101's USB cable into this computer and switch on the servos' power supply. Then press Connect and choose the arm's serial port. The page only reads from the servos, and you can move the arm by hand while it does.",
+    "Plug the SO-101's USB cable into this computer and switch on the servos' power supply. Then press Connect and choose the arm's serial port. Here the page only reads from the servos, and you can move the arm by hand while it does; it writes to them only after “Enable the station on this arm” in step 4 and its confirmation.",
   "arm.connect": "Connect",
   "arm.sim": "Try without an arm",
   "arm.retry": "Try the same port again",
@@ -28,6 +28,8 @@ export const EN = {
   "arm.status.readingSim": "Connected to the simulated arm. The joints are read about ten times a second.",
   "arm.status.driven":
     "The station drives the simulated arm. This section shows what the station's Worker tells of it, about ten times a second. To connect an arm here, disable the station first.",
+  "arm.status.drivenReal":
+    "The station holds the real arm. This section shows what the station's Worker tells of it, about ten times a second. To read the arm here again, disable the station first.",
   "arm.driven.note":
     "While the station drives, the joints, the state and the turn's text here come from the Worker's status. The servos' steps and the marks against the limits are not in that status, so they are not shown.",
   "sim.driven": "The station drives this arm now: the sliders, the fault and the cable are disabled until the station is disabled.",
@@ -293,7 +295,7 @@ export const EN = {
 
   "task.title": "Task",
   "task.notice":
-    "This version moves only a simulated arm, in a Worker of this page. With a real arm connected it only reads and cannot move the real arm. It can ask a model once and show the answer: it does not execute the action the model asks for, and no model drives an arm yet. On the simulated arm you can try the station by hand below: enable it, move it one small step at a time, send it Home and stop it.",
+    "The station below drives a simulated arm, in a Worker of this page. With a real arm connected the page reads; it writes to the servos only after “Enable the station on this arm” and its confirmation, and then it can hold the arm, move it to Home, stop it and release it. It can ask a model once and show the answer: it does not execute the action the model asks for, and no model moves an arm. On the simulated arm you can try the station by hand below: enable it, move it one small step at a time, send it Home and stop it.",
   "task.instruction": "Instruction",
   "task.placeholder": "Put the red block into the box.",
   "task.start": "Start",
@@ -303,6 +305,8 @@ export const EN = {
   "ask.button": "Ask the model once",
   "ask.cancel": "Cancel",
   "ask.need.station": "The station is driving the simulated arm, so this window does not read it. Disable the station first.",
+  "ask.need.stationReal":
+    "The station has the real arm's line, so this window does not read the arm, and no model is asked while a real arm is enabled. Disable the station first.",
   "ask.need.arm": "Missing: an arm this window reads. Start the simulated arm or connect an arm in step 1.",
   "ask.need.reading":
     "Missing: a complete reading of the arm. This window is connected to an arm, but has no complete reading of it yet; step 1 shows what it reads and what it lacks.",
@@ -339,22 +343,24 @@ export const EN = {
   "ask.notSent":
     "Nothing was sent to the arm. This page does not execute the action; the client is closed, and the next ask is a new conversation.",
   "task.stop": "Stop",
-  "task.stopNote": "Stop brakes the arm and holds it where it is. It works whenever the station holds an arm; in this version that is only the simulated arm.",
+  "task.stopNote": "Stop brakes the arm and holds it where it is. It works whenever the station holds an arm, the simulated one or a real one; the torque stays on.",
 
   "station.title": "The station, by hand",
   "station.lead":
-    "PEAR's robot station runs in a Worker of this page: the robot, its control loop at 50 Hz and its driver. Here it drives a simulated arm that the Worker makes itself. Of a real arm the Worker takes the serial line only for the hand-over check, which reads and writes nothing to a servo: nothing here can move a real arm.",
+    "PEAR's robot station runs in a Worker of this page: the robot, its control loop at 50 Hz and its driver. “Enable” drives a simulated arm that the Worker makes itself. Of a real arm the Worker takes the serial line for the hand-over check, which only reads, and for “Enable the station on this arm”, which reads first and writes to the servos only after your confirmation: then the station holds the arm, moves it to Home, stops it and releases it.",
   "station.enable": "Enable",
   "station.disable": "Disable",
   "station.disableNote":
     "Disable closes the station. On a real arm that switches the torque off, and an arm that nothing supports falls: stop with Stop, and use Disable only when the arm is parked or held.",
   "station.why.noArm": "Connect the simulated arm in step 1 first: the station starts from where that arm stands.",
   "station.why.realArm":
-    "A real arm is connected. This version only reads a real arm and never writes to it, so the station cannot be enabled on it. Disconnect it and use the simulated arm to try the station.",
+    "A real arm is connected, and “Enable” here is for the simulated arm. For this arm use “Enable the station on this arm” below: it reads first and writes to the servos only after your confirmation.",
   "station.why.scenario": "The simulated arm is set to a fault ({scenario}). Choose the arm that works in step 1 to try the station.",
   "station.why.busy": "The arm in step 1 is still being read for the first time. Wait until its joints are shown.",
   "station.why.ready": "Enable ends the reading in step 1 and hands the simulated arm, where it stands, to the station.",
   "station.why.lost": "The station's Worker is gone. Reload the page to start again.",
+  "station.why.lostReal":
+    "The station's Worker is gone while it had the real arm's line. If the servos have their torque on, they keep it and the arm keeps holding its last goal. To release the arm, support it and switch the servos' power off. Then reload the page to start again.",
   "station.status.off": "The station is off.",
   "station.status.enabling": "Enabling: checking the timing for three seconds, then opening the robot…",
   "station.timing":
@@ -373,6 +379,11 @@ export const EN = {
   "station.status.fault": "Robot FAULT: {fault}",
   "station.status.lostSilent": "The station's Worker does not answer ({detail}). The page cannot tell what the arm does now. If it stays so, reload the page to start again.",
   "station.status.lostDied": "The station's Worker died ({detail}). Reload the page to start again.",
+  "station.status.lostSilentReal":
+    "The station's Worker does not answer ({detail}). The page cannot tell what the real arm does now and cannot stop it. The servos keep their torque: the arm keeps holding, or ends the move it was making. To stop and release the arm, support it and switch the servos' power off; then reload the page.",
+  "station.status.lostDiedReal":
+    "The station's Worker died ({detail}). The servos hear nothing now: they keep their torque and the arm keeps holding its last goal. To release the arm, support it and switch the servos' power off; then reload the page.",
+  "station.status.onReal": "The station holds the real arm, torque on: robot {robot}, control loop {control}.",
   "station.periods":
     "Control periods in the last second: {count}, mean {mean} ms, longest {max} ms, {over} over 25 ms. Steps since enabling: {steps}.",
   "station.clock":
@@ -402,6 +413,92 @@ export const EN = {
     "The Worker takes the arm's line for a few seconds, reads it and measures the timing. Nothing is written to a servo and the arm does not move. The readings above pause meanwhile.",
   "station.preflight.running": "Checking: the Worker has the arm's line and reads it. This takes a few seconds…",
   "station.preflight.failed": "The hand-over check failed: {error}",
+  "station.arming.run": "Enable the station on this arm…",
+  "station.arming.note":
+    "“Enable the station on this arm” reads the arm first, as the check does, and shows what it found and what enabling does. Nothing is written to a servo until you have confirmed there. This step has so far run on simulated servos only and never on a real arm.",
+  "station.arming.why.calibration":
+    "The station cannot be enabled on this arm while the loaded calibration file is not found equal to what the servos hold: PEAR starts only when they are equal. Load this arm's file, or remove the file; without a file the station uses the calibration the servos hold.",
+  "station.arming.reading":
+    "Reading the arm: the Worker has the arm's line and reads it behind a guard that lets no write through. This takes a few seconds…",
+  "station.arming.asking": "The Worker has read the arm and waits for your answer below. Nothing has been written to a servo.",
+  "station.arming.opening": "Confirmed: the station opens the robot on the arm. The arm is limp for a moment and then holds…",
+  "station.arming.title": "Enabling the station on this arm",
+  "station.arming.reportTitle": "What the Worker read of the arm",
+  "station.arming.line.open": "The Worker still has the arm's line open; the readings in step 1 pause meanwhile.",
+  "station.arming.blocked.title": "The station was not enabled on this arm, and nothing was written to a servo",
+  "station.arming.blocker.stop": "The Worker did not read the arm to its end. {reason}",
+  "station.arming.blocker.timing":
+    "The timing self-check failed on this line ({failures}), so the control loop would not keep its 20 ms here. Close other tabs and programs that keep this computer busy, keep this tab in front, plug the adapter straight into the computer, and try again.",
+  "station.arming.blocker.timing.noNumbers": "the report gives no numbers",
+  "station.arming.blocker.settings":
+    "PEAR's enable would change settings that survive a power cycle ({count}): {rows}. This version changes no setting that survives a power cycle, so the arm must have been run by lerobot once, which writes these values. Run the arm with lerobot, then try again.",
+  "station.arming.setting.row": "{servo} {register} (address {address}): holds {held}, PEAR writes {pear}",
+  "station.arming.blocker.status":
+    "These servos report an error, their Status register is not 0: {servos}. Check the servos' power supply and that nothing blocks or overloads the arm, switch the servos' power off and on again, and try again.",
+  "station.arming.servo.value": "{servo}: {value}",
+  "station.arming.blocker.phase":
+    "Bit 0x10 of the Phase register (address 18) is set on {servos}. PEAR's enable would clear it, and that register survives a power cycle; this version changes no such setting. Run the arm once with lerobot, which clears that bit, then try again.",
+  "station.arming.blocker.uncalibrated":
+    "These servos hold the factory's values (offset 0, range 0 to 4095) in place of a calibration: {servos}. Calibrate the arm with lerobot, which writes the calibration into the servos, then try again.",
+  "station.arming.blocker.calibration":
+    "The loaded calibration file is not equal to what the Worker read of the servos ({detail}). PEAR starts only when they are equal. Load this arm's file or remove the file, and try again; without a file the station uses the calibration the servos hold.",
+  "station.arming.blocker.guard":
+    "The Worker's guard refused packets ({refused}) while the line was only read. Nothing was written, but this is a defect of the page: do not enable the station on this arm with this version, and please copy the log at the bottom of the page and send it.",
+  "station.arming.confirm.untried": "This step has so far run on simulated servos only and never on a real arm.",
+  "station.arming.confirm.title": "Before the torque is switched on",
+  "station.arming.confirm.lead":
+    "The Worker has read the arm and has written nothing yet. This is what happens when you confirm, and afterwards:",
+  "station.arming.confirm.limp":
+    "Enable sets each servo's goal to where it stands, then switches every servo's torque off, writes its settings and switches the torque on again. In between the arm is limp: about {ms} ms on this line (the time of {count} transactions, measured just now). Then it holds where it is.",
+  "station.arming.confirm.limp.unmeasured":
+    "Enable sets each servo's goal to where it stands, then switches every servo's torque off, writes its settings and switches the torque on again. In between the arm is limp for a moment; how long was not measured on this line. Then it holds where it is.",
+  "station.arming.confirm.rest": "So the arm must rest in a pose it keeps without torque, or be supported, when you confirm.",
+  "station.arming.confirm.eeprom":
+    "Enable changes no setting that survives a power cycle: the {count} such registers it writes hold its values on this arm already.",
+  "station.arming.confirm.eeprom.notRead": "What Enable writes of the servos' settings was not read on this arm.",
+  "station.arming.confirm.ram": "It sets these settings anew, which are lost when the servos' power goes off: {rows}.",
+  "station.arming.confirm.factory":
+    "It also writes {rows}; of that register it is not known whether it survives a power cycle.",
+  "station.arming.confirm.row.same": "{register} (address {address}) = {pear}, servos: {servos}, all of which hold it already",
+  "station.arming.confirm.row.changed":
+    "{register} (address {address}) = {pear}, servos: {servos}, of which {changed} hold another value now",
+  "station.arming.confirm.home":
+    "Home opens the gripper, then moves the arm in one straight joint-space move to PEAR's Home pose at a third of the usual speed: at most 19 degrees a second, about 7 s from the folded rest pose. It does not look for obstacles. It shows its plan first and moves only when you approve it.",
+  "station.arming.confirm.stop": "Stop brakes (about 0.15 s) and holds: the torque stays on.",
+  "station.arming.confirm.disable": "Disable switches the torque off: the arm goes limp and falls if nothing holds it.",
+  "station.arming.confirm.lost":
+    "If the cable is pulled, this tab is closed or the browser stops, the servos hear nothing: they keep their torque and hold their last goal until their power is cut.",
+  "station.arming.confirm.warnings": "Warnings in the report below: {count}. Read them before you confirm.",
+  "station.arming.confirm.limit":
+    "No answer within {minutes} minutes counts as refused: the Worker then gives the line back, and nothing is written.",
+  "station.arming.confirm.tick":
+    "The arm's space is clear, the arm rests or is supported, and the switch of the servos' power is within my reach.",
+  "station.arming.confirm.go": "Switch the torque on",
+  "station.arming.confirm.cancel": "Cancel",
+  "station.arming.confirm.left": "Time left to answer: {seconds} s.",
+  "station.arming.confirm.over": "The time to answer is over: the Worker counts it as refused.",
+  "station.arming.refused.cancelled": "Cancelled: the station was not enabled, and nothing was written to a servo.",
+  "station.arming.refused.noAnswer":
+    "No answer within {minutes} minutes: counted as refused. The station was not enabled, and nothing was written to a servo.",
+  "station.arming.refused.late":
+    "Your answer reached the Worker too late: counted as refused. The station was not enabled, and nothing was written to a servo.",
+  "station.arming.failed":
+    "Enabling the station on this arm failed: {error}. No confirmation was sent, and without one the Worker writes nothing to a servo.",
+  "station.arming.failedAfter":
+    "Enabling failed after you confirmed: {error}. The page does not know how far the Worker came: the servos may have their torque on and hold, or be limp. Support the arm. To release it, switch the servos' power off; then reload the page.",
+  "station.real.line": "The arm's line: the guard let through {passed}; it refused {refused}; line errors: {errors}.",
+  "station.real.line.nothing": "nothing yet",
+  "station.real.lost":
+    "The connection to the arm is lost. The servos hear nothing: they keep their torque and hold their last goal. To release the arm, support it and switch the servos' power off. Then reload the page.",
+  "station.real.refused":
+    "The station's guard refused packets ({count}) and did not send them: {words}. The station has stopped and the arm holds where it is. Press Disable while you hold the arm (it goes limp), then copy the log at the bottom of the page and send it.",
+  "station.real.noJog":
+    "On a real arm this version offers Home, Stop and Disable. Single actions are not offered, and no model is asked while a real arm is enabled. Home needs the camera of step 2 started: PEAR's Home takes a frame of the wrist camera first and does not run without a fresh one.",
+  "station.real.disable.ask": "Disable switches the torque off. The arm will go limp: hold it, or make sure it rests, before you press.",
+  "station.real.disable.go": "Switch the torque off: I hold the arm",
+  "station.real.disable.keep": "Keep the torque on",
+  "station.real.disabledNotClosed":
+    "The station is disabled, but the Worker did not close the arm's line: it still holds the port, so the window cannot read the arm. Reload the page: that ends the Worker and frees the port.",
   "station.preflight.title": "What the Worker found on the arm's line",
   "station.preflight.outcome.read":
     "The Worker reached the arm's adapter, opened the line behind the read-only guard and read all six servos.",
@@ -537,14 +634,14 @@ export const ZH_TW: Record<TextKey, string> = {
   "page.title": "pear.js：在瀏覽器裡執行的 PEAR robot station",
   "page.tagline": "在瀏覽器裡執行的 PEAR robot station，搭配 LeRobot SO-101 使用。",
   "page.notice":
-    "pear.js 是 PEAR（MIT Han Lab）robot station 的非官方移植，仍在實驗階段。這個版本只會讓模擬手臂動，而且是在這個頁面的 Worker 裡執行。連接真實的手臂時，它只讀不寫：會顯示手臂、攝影機與模型服務的狀態，但不會讓真實的手臂動。",
+    "pear.js 是 PEAR（MIT Han Lab）robot station 的非官方移植，仍在實驗階段。工作站在這個頁面的 Worker 裡執行，驅動的是模擬手臂。連接真實的手臂時，頁面會讀取：顯示手臂、攝影機與模型服務的狀態。只有在你按下「在這支手臂上啟用工作站」並確認之後，它才會對伺服馬達寫入；之後它可以撐住手臂、讓手臂回到 Home、停止，以及放開手臂。不會有任何模型讓手臂動。",
   "page.skip": "跳到手臂區塊",
   "page.language": "語言",
   "page.noscript": "這個頁面需要 JavaScript 才能運作。",
 
   "arm.title": "手臂",
   "arm.lead":
-    "把 SO-101 的 USB 線接上這台電腦，打開伺服馬達的電源，再按「連線」並選擇手臂的序列埠。本頁只會讀取伺服馬達的資料，讀取的同時可以用手扳動手臂。",
+    "把 SO-101 的 USB 線接上這台電腦，打開伺服馬達的電源，再按「連線」並選擇手臂的序列埠。在這裡本頁只會讀取伺服馬達的資料，讀取的同時可以用手扳動手臂；只有在步驟 4 按下「在這支手臂上啟用工作站」並確認之後，才會對伺服馬達寫入。",
   "arm.connect": "連線",
   "arm.sim": "沒有手臂，先用模擬的試試",
   "arm.retry": "用同一個埠再試一次",
@@ -557,6 +654,7 @@ export const ZH_TW: Record<TextKey, string> = {
   "arm.status.reading": "已連線，每秒大約讀取十次關節位置。",
   "arm.status.readingSim": "已連上模擬手臂，每秒大約讀取十次關節位置。",
   "arm.status.driven": "工作站正在驅動模擬手臂。這個區塊顯示的是工作站的 Worker 回報的狀態，每秒大約十次。要在這裡連接手臂，請先停用工作站。",
+  "arm.status.drivenReal": "工作站正撐住真實的手臂。這個區塊顯示的是工作站的 Worker 回報的狀態，每秒大約十次。要在這裡重新讀取手臂，請先停用工作站。",
   "arm.driven.note":
     "工作站驅動手臂時，這裡的關節、狀態與回合文字都來自 Worker 的狀態回報。伺服馬達的步數和是否在限制範圍內的標記不在這份回報裡，所以不顯示。",
   "sim.driven": "這支手臂現在由工作站驅動：在停用工作站之前，滑桿、故障狀況和接線按鈕都不能用。",
@@ -811,7 +909,7 @@ export const ZH_TW: Record<TextKey, string> = {
 
   "task.title": "任務",
   "task.notice":
-    "這個版本只會讓模擬手臂動，而且是在這個頁面的 Worker 裡執行。連接真實的手臂時，它只讀取，不會讓真實的手臂動。它可以問模型一次並顯示回答，但不會執行模型要求的動作；目前還沒有模型驅動手臂。在模擬手臂上，你可以在下面親手試試工作站：啟用、一次移動一小步、回到 Home，以及停止。",
+    "下面的工作站驅動的是模擬手臂，在這個頁面的 Worker 裡執行。連接真實的手臂時，頁面會讀取；只有在按下「在這支手臂上啟用工作站」並確認之後才會對伺服馬達寫入，之後它可以撐住手臂、讓手臂回到 Home、停止，以及放開手臂。它可以問模型一次並顯示回答，但不會執行模型要求的動作；不會有任何模型讓手臂動。在模擬手臂上，你可以在下面親手試試工作站：啟用、一次移動一小步、回到 Home，以及停止。",
   "task.instruction": "指令",
   "task.placeholder": "把紅色積木放進盒子裡。",
   "task.start": "開始",
@@ -821,6 +919,7 @@ export const ZH_TW: Record<TextKey, string> = {
   "ask.button": "問模型一次",
   "ask.cancel": "取消",
   "ask.need.station": "工作站正在驅動模擬手臂，這個視窗讀不到手臂。請先停用工作站。",
+  "ask.need.stationReal": "工作站正接手真實手臂的線路，這個視窗讀不到手臂；真實的手臂啟用期間也不會詢問模型。請先停用工作站。",
   "ask.need.arm": "還缺：這個視窗讀得到的手臂。請在步驟 1 啟動模擬手臂或連接手臂。",
   "ask.need.reading": "還缺：手臂的完整讀數。這個視窗已連上手臂，但還沒有完整的讀數；步驟 1 會顯示目前讀到什麼、還缺什麼。",
   "ask.need.camera": "還缺：正在運作的攝影機。請在步驟 2 啟動。",
@@ -852,22 +951,24 @@ export const ZH_TW: Record<TextKey, string> = {
     "服務是通的，但瀏覽器不讓本頁讀取回應，也不會說明原因。常見的原因有兩個：金鑰不對（vLLM 伺服器拒絕錯誤的金鑰時，回應裡少了瀏覽器要求的標頭，瀏覽器因此不會把這個拒絕交給網頁），或是服務不允許本頁的來源（{origin}）。請在步驟 3 再檢查一次。PEAR 的原話：",
   "ask.notSent": "沒有送任何東西給手臂。這個頁面不會執行動作；用戶端已關閉，下一次詢問是全新的對話。",
   "task.stop": "停止",
-  "task.stopNote": "停止會讓手臂煞車，並停在原地保持不動。只要工作站握有手臂，停止鈕就能用；這個版本只有模擬手臂。",
+  "task.stopNote": "停止會讓手臂煞車，並停在原地保持不動。只要工作站握有手臂，不論是模擬手臂還是真實的手臂，停止鈕就能用；扭力會維持開啟。",
 
   "station.title": "親手操作工作站",
   "station.lead":
-    "PEAR 的機器人工作站在這個頁面的 Worker 裡執行：機器人、50 Hz 的控制迴圈，以及驅動程式。在這裡它驅動的是 Worker 自己建立的模擬手臂。對真實的手臂，Worker 只會在交接檢查時暫時接手序列線路，而且只讀取、不對伺服馬達寫入任何東西，所以這裡沒有任何東西能讓真實的手臂動。",
+    "PEAR 的機器人工作站在這個頁面的 Worker 裡執行：機器人、50 Hz 的控制迴圈，以及驅動程式。「啟用」驅動的是 Worker 自己建立的模擬手臂。對真實的手臂，Worker 會在兩種情況下接手序列線路：交接檢查，只讀取；以及「在這支手臂上啟用工作站」，先讀取，等你確認之後才對伺服馬達寫入，之後工作站會撐住手臂、讓它回到 Home、停止，以及放開它。",
   "station.enable": "啟用",
   "station.disable": "停用",
   "station.disableNote":
     "停用會關閉工作站。在真實的手臂上，這會關掉扭力，沒有東西撐住的手臂會掉下來：要停下來請按停止，只有在手臂已經收好或有人扶著時才按停用。",
   "station.why.noArm": "請先在步驟 1 連接模擬手臂：工作站會從那支手臂目前的位置開始。",
   "station.why.realArm":
-    "目前連接的是真實的手臂。這個版本只會讀取真實的手臂，絕不寫入，所以不能在它上面啟用工作站。請先中斷連線，改用模擬手臂來試工作站。",
+    "目前連接的是真實的手臂，而這裡的「啟用」是給模擬手臂用的。要用這支手臂，請按下面的「在這支手臂上啟用工作站」：它會先讀取，等你確認之後才對伺服馬達寫入。",
   "station.why.scenario": "模擬手臂目前設定成故障狀況（{scenario}）。請在步驟 1 選擇正常的手臂，再來試工作站。",
   "station.why.busy": "步驟 1 的手臂還在第一次讀取中。請等到關節顯示出來。",
   "station.why.ready": "啟用會結束步驟 1 的讀取，把模擬手臂連同它目前的位置交給工作站。",
   "station.why.lost": "工作站的 Worker 已經不在了。請重新載入頁面再開始。",
+  "station.why.lostReal":
+    "工作站的 Worker 在接手真實手臂的線路時不在了。如果伺服馬達的扭力是開著的，它們會維持扭力，手臂會繼續停在最後的目標位置。要放開手臂，請先扶住它，再關掉伺服馬達的電源。然後重新載入頁面再開始。",
   "station.status.off": "工作站已關閉。",
   "station.status.enabling": "啟用中：先檢查計時三秒，再開啟機器人…",
   "station.timing":
@@ -886,6 +987,11 @@ export const ZH_TW: Record<TextKey, string> = {
   "station.status.fault": "機器人 FAULT：{fault}",
   "station.status.lostSilent": "工作站的 Worker 沒有回應（{detail}）。頁面無法得知手臂現在的狀況。如果一直沒有回應，請重新載入頁面再開始。",
   "station.status.lostDied": "工作站的 Worker 已經停止運作（{detail}）。請重新載入頁面再開始。",
+  "station.status.lostSilentReal":
+    "工作站的 Worker 沒有回應（{detail}）。頁面無法得知真實的手臂現在的狀況，也無法讓它停下來。伺服馬達會維持扭力：手臂會繼續撐住，或把正在進行的動作做完。要讓手臂停下並放開，請先扶住它，再關掉伺服馬達的電源；然後重新載入頁面。",
+  "station.status.lostDiedReal":
+    "工作站的 Worker 已經停止運作（{detail}）。伺服馬達現在收不到任何指令：它們會維持扭力，手臂會繼續停在最後的目標位置。要放開手臂，請先扶住它，再關掉伺服馬達的電源；然後重新載入頁面。",
+  "station.status.onReal": "工作站正撐住真實的手臂，扭力開啟：機器人 {robot}，控制迴圈 {control}。",
   "station.periods": "最近一秒的控制週期：{count} 個，平均 {mean} ms，最長 {max} ms，{over} 個超過 25 ms。啟用以來的步數：{steps}。",
   "station.clock":
     "啟用以來 Worker 的時鐘：睡眠 {sleeps} 次（計時器 {timers} 個，不用計時器的讓出 {yields} 次），忙碌等待共 {spin} ms；睡眠平均晚 {lateMean} ms 結束，最晚 {lateMax} ms；計時器最晚 {timerLate} ms 才觸發；餘裕 {margin} ms。",
@@ -908,6 +1014,84 @@ export const ZH_TW: Record<TextKey, string> = {
     "Worker 會接手手臂的序列線路幾秒鐘，讀取它並量測計時。不會對伺服馬達寫入任何東西，手臂也不會動。這段時間上面的讀數會暫停。",
   "station.preflight.running": "檢查中：Worker 正接手手臂的線路並讀取，需要幾秒鐘…",
   "station.preflight.failed": "交接檢查失敗：{error}",
+  "station.arming.run": "在這支手臂上啟用工作站…",
+  "station.arming.note":
+    "「在這支手臂上啟用工作站」會先像交接檢查一樣讀取手臂，並顯示讀到的內容以及啟用會做的事。在你確認之前，不會對伺服馬達寫入任何東西。這個步驟到目前為止只在模擬的伺服馬達上執行過，還沒有在真實的手臂上執行過。",
+  "station.arming.why.calibration":
+    "載入的校正檔還沒有確認和伺服馬達裡的數值一致，所以不能在這支手臂上啟用工作站：PEAR 只有在兩者一致時才會啟動。請載入這支手臂的校正檔，或移除檔案；沒有檔案時，工作站會使用伺服馬達裡的校正。",
+  "station.arming.reading": "讀取手臂中：Worker 已接手手臂的線路並讀取，保護機制不會放行任何寫入。需要幾秒鐘…",
+  "station.arming.asking": "Worker 已經讀完手臂，正在等你在下面回答。還沒有對伺服馬達寫入任何東西。",
+  "station.arming.opening": "已確認：工作站正在這支手臂上開啟機器人。手臂會鬆軟一下，然後撐住…",
+  "station.arming.title": "在這支手臂上啟用工作站",
+  "station.arming.reportTitle": "Worker 從手臂讀到的內容",
+  "station.arming.line.open": "Worker 還開著手臂的線路；這段時間步驟 1 的讀數會暫停。",
+  "station.arming.blocked.title": "沒有在這支手臂上啟用工作站，也沒有對伺服馬達寫入任何東西",
+  "station.arming.blocker.stop": "Worker 沒有把手臂讀完。{reason}",
+  "station.arming.blocker.timing":
+    "這條線路的計時自我檢查沒有通過（{failures}），控制迴圈在這裡守不住 20 ms 的週期。請關掉其他讓電腦忙碌的分頁和程式，讓這個分頁保持在最前面，把轉接器直接插在電腦上，然後再試一次。",
+  "station.arming.blocker.timing.noNumbers": "報告裡沒有數字",
+  "station.arming.blocker.settings":
+    "PEAR 啟用時會更動 {count} 個斷電重開後仍保留的設定：{rows}。這個版本不會更動任何斷電重開後仍保留的設定，所以這支手臂必須先用 lerobot 執行過一次，lerobot 會寫入這些數值。請先用 lerobot 執行這支手臂，然後再試一次。",
+  "station.arming.setting.row": "{servo} {register}（位址 {address}）：目前是 {held}，PEAR 會寫入 {pear}",
+  "station.arming.blocker.status":
+    "這些伺服馬達回報錯誤，Status 暫存器不是 0：{servos}。請檢查伺服馬達的電源，確認沒有東西卡住手臂或讓它過載，把伺服馬達的電源關掉再打開，然後再試一次。",
+  "station.arming.servo.value": "{servo}：{value}",
+  "station.arming.blocker.phase":
+    "{servos} 的 Phase 暫存器（位址 18）設了 0x10 這個位元。PEAR 啟用時會把它清除，而這個暫存器斷電重開後仍保留；這個版本不會更動這類設定。請先用 lerobot 執行這支手臂一次，lerobot 會清除這個位元，然後再試一次。",
+  "station.arming.blocker.uncalibrated":
+    "這些伺服馬達裡是原廠的數值（偏移 0、範圍 0 到 4095），不是校正值：{servos}。請用 lerobot 校正手臂，lerobot 會把校正寫進伺服馬達，然後再試一次。",
+  "station.arming.blocker.calibration":
+    "載入的校正檔和 Worker 從伺服馬達讀到的不一致（{detail}）。PEAR 只有在兩者一致時才會啟動。請載入這支手臂的校正檔，或移除檔案，然後再試一次；沒有檔案時，工作站會使用伺服馬達裡的校正。",
+  "station.arming.blocker.guard":
+    "在只讀取線路的期間，Worker 的保護機制擋下了 {refused} 個封包。沒有寫入任何東西，但這是頁面的缺陷：請不要用這個版本在這支手臂上啟用工作站，並請複製頁面最下方的紀錄傳回來。",
+  "station.arming.confirm.untried": "這個步驟到目前為止只在模擬的伺服馬達上執行過，還沒有在真實的手臂上執行過。",
+  "station.arming.confirm.title": "打開扭力之前",
+  "station.arming.confirm.lead": "Worker 已經讀完手臂，還沒有寫入任何東西。你確認之後以及接下來會發生的事：",
+  "station.arming.confirm.limp":
+    "啟用會先把每顆伺服馬達的目標位置設成它現在的位置，接著關掉每顆伺服馬達的扭力、寫入設定，再把扭力打開。這中間手臂是鬆軟的：在這條線路上大約 {ms} ms（{count} 次通訊的時間，剛剛量到的）。之後手臂會撐在原地。",
+  "station.arming.confirm.limp.unmeasured":
+    "啟用會先把每顆伺服馬達的目標位置設成它現在的位置，接著關掉每顆伺服馬達的扭力、寫入設定，再把扭力打開。這中間手臂會鬆軟一下；在這條線路上沒有量到會多久。之後手臂會撐在原地。",
+  "station.arming.confirm.rest": "所以在你確認的時候，手臂必須停在沒有扭力也能維持的姿勢，或者有東西撐住。",
+  "station.arming.confirm.eeprom":
+    "啟用不會更動任何斷電重開後仍保留的設定：它會寫入的 {count} 個這類暫存器，在這支手臂上已經是它要的數值。",
+  "station.arming.confirm.eeprom.notRead": "在這支手臂上沒有讀到啟用會寫入哪些伺服馬達設定。",
+  "station.arming.confirm.ram": "它會重新設定這些斷電就消失的設定：{rows}。",
+  "station.arming.confirm.factory": "它還會寫入 {rows}；這個暫存器斷電重開後是否保留，目前不確定。",
+  "station.arming.confirm.row.same": "{register}（位址 {address}）= {pear}，共 {servos} 顆伺服馬達，目前已經是這個數值",
+  "station.arming.confirm.row.changed":
+    "{register}（位址 {address}）= {pear}，共 {servos} 顆伺服馬達，其中 {changed} 顆目前是別的數值",
+  "station.arming.confirm.home":
+    "Home 會先打開夾爪，再以平常速度的三分之一，用一段筆直的關節空間移動，把手臂移到 PEAR 的 Home 姿勢：最快每秒 19 度，從收折的休息姿勢出發大約 7 秒。它不會偵測障礙物。它會先顯示計畫，你核准之後才會動。",
+  "station.arming.confirm.stop": "停止會煞車（大約 0.15 秒）並撐住：扭力維持開啟。",
+  "station.arming.confirm.disable": "停用會關掉扭力：手臂會變得鬆軟，沒有東西撐住就會掉下來。",
+  "station.arming.confirm.lost":
+    "如果線被拔掉、這個分頁被關閉，或瀏覽器停止運作，伺服馬達就收不到任何指令：它們會維持扭力，停在最後的目標位置，直到電源被切斷。",
+  "station.arming.confirm.warnings": "下面的報告裡有警告：{count} 則。確認之前請先讀過。",
+  "station.arming.confirm.limit": "{minutes} 分鐘內沒有回答就視為拒絕：Worker 會把線路交還，不會寫入任何東西。",
+  "station.arming.confirm.tick": "手臂周圍已經淨空，手臂停放穩當或有東西撐住，而且伺服馬達電源的開關就在我伸手可及的地方。",
+  "station.arming.confirm.go": "打開扭力",
+  "station.arming.confirm.cancel": "取消",
+  "station.arming.confirm.left": "剩下的回答時間：{seconds} 秒。",
+  "station.arming.confirm.over": "回答時間已過：Worker 會視為拒絕。",
+  "station.arming.refused.cancelled": "已取消：沒有啟用工作站，也沒有對伺服馬達寫入任何東西。",
+  "station.arming.refused.noAnswer": "{minutes} 分鐘內沒有回答：視為拒絕。沒有啟用工作站，也沒有對伺服馬達寫入任何東西。",
+  "station.arming.refused.late": "你的回答太晚送到 Worker：視為拒絕。沒有啟用工作站，也沒有對伺服馬達寫入任何東西。",
+  "station.arming.failed":
+    "無法在這支手臂上啟用工作站：{error}。頁面沒有送出確認，而沒有確認，Worker 不會對伺服馬達寫入任何東西。",
+  "station.arming.failedAfter":
+    "在你確認之後啟用失敗：{error}。頁面不知道 Worker 做到哪一步：伺服馬達的扭力可能是開著並撐住手臂，也可能是鬆軟的。請扶住手臂。要放開它，請關掉伺服馬達的電源；然後重新載入頁面。",
+  "station.real.line": "手臂的線路：保護機制放行了 {passed}；擋下 {refused} 個；線路錯誤：{errors}。",
+  "station.real.line.nothing": "還沒有任何封包",
+  "station.real.lost":
+    "和手臂的連線中斷了。伺服馬達收不到任何指令：它們會維持扭力，停在最後的目標位置。要放開手臂，請先扶住它，再關掉伺服馬達的電源。然後重新載入頁面。",
+  "station.real.refused":
+    "工作站的保護機制擋下了 {count} 個封包，這些封包沒有送出：{words}。工作站已經停止，手臂撐在原地。請扶住手臂再按停用（手臂會變得鬆軟），然後複製頁面最下方的紀錄傳回來。",
+  "station.real.noJog": "在真實的手臂上，這個版本提供 Home、停止和停用。不提供單步動作；真實的手臂啟用期間也不會詢問模型。Home 需要先在步驟 2 啟動攝影機：PEAR 的 Home 會先取一張手腕攝影機的畫面，沒有新的畫面就不會執行。",
+  "station.real.disable.ask": "停用會關掉扭力。手臂會變得鬆軟：按下之前，請先扶住它，或確認它停放穩當。",
+  "station.real.disable.go": "關掉扭力：我扶住手臂了",
+  "station.real.disable.keep": "維持扭力開啟",
+  "station.real.disabledNotClosed":
+    "工作站已停用，但 Worker 沒有關閉手臂的線路：它還占用著埠，所以視窗無法讀取手臂。請重新載入頁面：這樣會結束 Worker 並釋放埠。",
   "station.preflight.title": "Worker 在手臂線路上讀到的結果",
   "station.preflight.outcome.read": "Worker 找到了手臂的轉接板，在唯讀保護之後開啟線路，並讀完了六顆伺服馬達。",
   "station.preflight.stop.no-serial":

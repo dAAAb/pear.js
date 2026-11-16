@@ -1,9 +1,13 @@
 // The station as the page's Worker runs it: PEAR's robot (the SO-101 with its 50 Hz control loop and its driver)
-// on a simulated arm that this file makes itself. The robot is never handed a port. The one way from here to a
-// real serial line is the request "preflight": it takes the port the page was granted behind the read-only guard
-// (station_port.ts), reads what its report holds and closes the port again, so that nothing here can write to a
-// real servo. station_worker.ts gives it the Worker's messages and the Worker's serial ports; a test may give it
-// its own.
+// on a simulated arm that this file makes itself, or on a real arm's serial line. Two requests lead from here to
+// a real line. "preflight" takes the port the page was granted behind the read-only guard (station_port.ts),
+// reads what its report holds and closes the port again: it can write nothing. "enableReal" takes the port behind
+// the station's guard (station_guard.ts), reads the same while that guard lets no write through, tells what it
+// read and waits for the operator's confirmation (the request "arm"); only then it lets the station's own writes
+// through the guard and opens PEAR's robot on that line, which is PEAR's enable: the first write to a real servo.
+// The robot is given the guard and nothing beneath it, and no setting that survives a power cycle is changed: an
+// arm whose servos do not hold PEAR's values already is not enabled. station_worker.ts gives this file the
+// Worker's messages and the Worker's serial ports; a test may give it its own.
 //
 // A request is started when it arrives and answered when it is done, so that a Stop is taken while an action is
 // under way: nothing here waits for an action before it takes the next message.
@@ -31,6 +35,7 @@ import {
   getAddress,
   OperatingMode,
   protocol,
+  type MotorCalibration,
   type RegisterName,
   type SimServoChain,
   type Transport,
@@ -42,15 +47,28 @@ import { realTimeClock } from "../../src/station/joint/deadline_clock";
 import { MotionStatus, type MotionResult } from "../../src/station/motion/results";
 import type { ControlLoopClass, StationConfig } from "../../src/station/robot";
 import type { DetailedStatus, HomePlan, Observation } from "../../src/station/schemas";
-import { SIM_CALIBRATION, simulatedGrantedPort } from "./sim_port";
-import { type GrantedPort, grantedPorts, openReadOnly, type ReadOnlyLine, type SerialSource, usbIdsOf } from "./station_port";
+import { SIM_CALIBRATION, simulatedConfiguredPort, simulatedGrantedPort } from "./sim_port";
+import { SETTING_ADDRESSES, type StationSetting } from "./station_guard";
+import {
+  type GrantedPort,
+  grantedPorts,
+  openReadOnly,
+  openStation,
+  type ReadOnlyLine,
+  type SerialSource,
+  type StationLine,
+  usbIdsOf,
+} from "./station_port";
 import {
   type ActionReport,
   type ArmFingerprint,
+  ARMING_LIMIT_MS,
+  type ArmingBlocker,
   type CameraNumbers,
   type CameraTelling,
   type ClockNumbers,
   type DisableResult,
+  type EnableRealResult,
   type EnableResult,
   type FromStation,
   type HomeResult,
@@ -60,6 +78,7 @@ import {
   type PreflightServo,
   type PreflightSetting,
   type PreflightStop,
+  type RealLineStatus,
   type ServoPrint,
   STATUS_PERIOD_MS,
   type StationEvent,
@@ -158,6 +177,19 @@ export const STATION_CONFIG: StationConfig<SO101Config> = {
   } as SO101Config,
 };
 
+/** The station's settings on a real arm: the same, with the line named as what it is, the port the page was
+ * granted. PEAR's own check of them (requireCommissioned) asks for a calibration: the Worker answers it as for
+ * the simulated arm, because it opens the robot only with the calibration file the page found equal to the
+ * registers or with what the servos hold, and never on servos that hold the factory's values. */
+export const REAL_STATION_CONFIG: StationConfig<SO101Config> = {
+  control: DEFAULT_CONTROL_SETTINGS,
+  robot: {
+    ...SO101_DEFAULT_CONFIG,
+    hardware: { ...SO101_DEFAULT_CONFIG.hardware, port: "granted" },
+    camera: { ...SO101_DEFAULT_CONFIG.camera, path: "none" },
+  } as SO101Config,
+};
+
 /** The registers PEAR's enable writes to every servo besides Goal_Position, Torque_Enable and Lock, in the order
  * it writes them, each with the value it writes: lerobot's configure_motors() and the follower's configure(). The
  * gains are the library's own; the other numbers are not exported there, and a test holds them to what the
@@ -239,6 +271,93 @@ interface PreflightFindings {
 }
 
 type PreflightRequest = Extract<StationRequest, { type: "preflight" }>;
+type EnableRealRequest = Extract<StationRequest, { type: "enableReal" }>;
+
+/** What reading an arm needs of its line: the guard as a transport, and why the line failed, if it did. Both
+ * the read-only line and the station's line are one. */
+interface ReadableLine {
+  readonly guard: Transport & { readonly failure: unknown };
+}
+
+/** The bit of Phase (18) that PEAR's enable clears by rewriting the register, which is in the EEPROM. */
+const PHASE_REWRITTEN_BIT = 0x10;
+
+/**
+ * Returns the reasons against enabling the station on the arm of `report`, from the report alone, in a fixed
+ * order; none when PEAR's enable would change nothing that survives a power cycle on an arm that was read to its
+ * end. `calibrationFile` is the calibration the person loaded, or null: it must hold what the servos hold, as the
+ * library's own check compares them (the same motors; each one's limits and homing offset).
+ */
+export function armingBlockers(
+  report: PreflightReport,
+  calibrationFile: Readonly<Record<string, MotorCalibration>> | null,
+): ArmingBlocker[] {
+  const blockers: ArmingBlocker[] = [];
+  if (report.stop !== null) blockers.push({ code: "stop", stop: report.stop });
+  if (report.timing !== null && report.timing.failures.length > 0) blockers.push({ code: "timing" });
+  const rows = (report.settings ?? []).filter(({ area, held, pear }) => area === "eeprom" && held !== pear);
+  if (rows.length > 0) blockers.push({ code: "settings", rows });
+  const servos = report.servos ?? [];
+  const idsWhere = (isSo: (servo: PreflightServo) => boolean): number[] => servos.filter(isSo).map(({ id }) => id);
+  const faulty = idsWhere(({ status }) => status !== 0);
+  if (faulty.length > 0) blockers.push({ code: "status", ids: faulty });
+  const rewritten = idsWhere(({ phase }) => (phase & PHASE_REWRITTEN_BIT) !== 0);
+  if (rewritten.length > 0) blockers.push({ code: "phase", ids: rewritten });
+  const uncalibrated = idsWhere(({ homingOffset, rangeMin, rangeMax }) => homingOffset === 0 && rangeMin === 0 && rangeMax === 4095);
+  if (uncalibrated.length > 0) blockers.push({ code: "uncalibrated", ids: uncalibrated });
+  if (calibrationFile !== null && report.servos !== null) {
+    const differences: string[] = [];
+    const names = servos.map(({ name }) => name);
+    for (const name of Object.keys(calibrationFile)) {
+      if (!names.includes(name)) differences.push(`${name}: in the file, not among the servos`);
+    }
+    for (const servo of servos) {
+      if (!Object.hasOwn(calibrationFile, servo.name)) {
+        differences.push(`${servo.name}: not in the file`);
+        continue;
+      }
+      const file = calibrationFile[servo.name] as MotorCalibration;
+      for (const [field, register] of CALIBRATION_FIELDS) {
+        if (file[field] !== servo[field]) differences.push(`${servo.name} ${register}: file ${file[field]}, servo ${servo[field]}`);
+      }
+    }
+    if (differences.length > 0) blockers.push({ code: "calibration", detail: differences.join("; ") });
+  }
+  if (report.guard.refused > 0) blockers.push({ code: "guard", refused: report.guard.refused });
+
+  return blockers;
+}
+
+/** What a calibration and a servo's registers are compared by, with the registers' names as a difference is told. */
+const CALIBRATION_FIELDS = [
+  ["rangeMin", "Min_Position_Limit"],
+  ["rangeMax", "Max_Position_Limit"],
+  ["homingOffset", "Homing_Offset"],
+] as const;
+
+/**
+ * Returns what the station's guard lets PEAR's enable write to each servo of `settings` besides torque, lock and
+ * acceleration: every register of the EEPROM area with the value the servo was read to hold, which is PEAR's on
+ * an arm without a blocker, and Maximum_Acceleration with PEAR's value whatever the servo holds (lerobot's table
+ * puts it into the block "Factory"; a servo may lose it at a power cycle, and PEAR writes it at every enable).
+ */
+export function guardSettings(settings: readonly PreflightSetting[]): Record<number, StationSetting[]> {
+  const allowed: Record<number, StationSetting[]> = {};
+  for (const { id, address, bytes, area, pear, held } of settings) {
+    const list = (allowed[id] ??= []);
+    if (SETTING_ADDRESSES.has(address)) list.push({ address, bytes, value: area === "eeprom" ? held : pear });
+  }
+
+  return allowed;
+}
+
+/** Returns the calibration the servos of `servos` hold, as the library's readCalibration() gives it: a drive mode
+ * is no register, so it is 0 for every motor. */
+export function heldCalibration(servos: readonly PreflightServo[]): Record<string, MotorCalibration> {
+  return Object.fromEntries(
+    servos.map(({ name, id, homingOffset, rangeMin, rangeMax }) => [name, { id, driveMode: 0, homingOffset, rangeMin, rangeMax }]),
+  );
+}
 
 /** When each control period began, by the page's clock, ms: the station's loop tells it here. */
 const stepStamps: number[] = [];
@@ -426,6 +545,16 @@ export class StationHost {
   private isEnabling = false;
   /** Whether a preflight has a real arm's line, or is about to take it. */
   private isPreflighting = false;
+  /** Whether an "enableReal" runs: from its arrival until it is answered. */
+  private isArming = false;
+  /** Whether a stop or a hidden page came while that "enableReal" ran: it then counts as refused. */
+  private isArmingStopped = false;
+  /** Settles the wait of the "enableReal" for the operator's answer; null while none waits. */
+  private arming: ((isConfirmed: boolean) => void) | null = null;
+  /** The id of the "enableReal" that waits for it: the only request an answer may name. */
+  private armingId: number | null = null;
+  /** The real arm's line while the robot holds it; null on the simulated arm and while the robot is off. */
+  private line: StationLine | null = null;
   private statusTimer: ReturnType<typeof setInterval> | null = null;
   /** The frames of the window's camera: what the wrist camera of the robot that is open reads. A station that
    * is enabled anew has been told nothing of the camera yet. */
@@ -433,11 +562,19 @@ export class StationHost {
 
   /** `serial` is where a preflight finds the port the page was granted (station_port.ts); null when the Worker
    * has no serial ports to give. `timingClock` is the clock the timing self-check keeps its periods with: the
-   * loop's own unless a test gives one that does not wait. */
+   * loop's own unless a test gives one that does not wait. `real` is what a test may give for a real arm: the
+   * clock its robot, its line and its guard keep (the page's own without one), how long the operator's answer
+   * is awaited, ms (ARMING_LIMIT_MS without one), and who is shown the line's guard when the line is opened,
+   * to see the guard's state: the guard is all of the line that is ever given out. */
   constructor(
     private readonly post: (message: FromStation) => void,
     private readonly serial: SerialSource | null = null,
     private readonly timingClock: Pick<MonotonicClock, "monotonic" | "sleep"> | null = null,
+    private readonly real: {
+      readonly clock?: MonotonicClock;
+      readonly armingLimitMs?: number;
+      readonly onGuard?: (guard: StationLine["guard"]) => void;
+    } = {},
   ) {}
 
   /** Starts the request of `message`; its reply is posted when it is done. What the window tells of its camera
@@ -478,6 +615,10 @@ export class StationHost {
         return this.setHidden(request.isHidden);
       case "preflight":
         return this.preflight(request);
+      case "enableReal":
+        return this.enableReal(id, request);
+      case "arm":
+        return this.arm(request.requestId, request.isConfirmed);
     }
   }
 
@@ -503,6 +644,7 @@ export class StationHost {
   private async enable(positions: MotorSteps, isHidden: boolean): Promise<EnableResult> {
     if (this.robot !== null || this.isEnabling) throw new RuntimeError("Station already open");
     if (this.isPreflighting) throw new RuntimeError("A preflight of a real arm is under way");
+    if (this.isArming) throw new RuntimeError("The enabling of a real arm is under way");
     this.isHidden = isHidden;
     this.isEnabling = true;
     try {
@@ -609,6 +751,7 @@ export class StationHost {
       throw new RuntimeError("Station already open: a preflight of a real arm needs the station disabled");
     }
     if (this.isPreflighting) throw new RuntimeError("Another preflight of a real arm is under way");
+    if (this.isArming) throw new RuntimeError("The enabling of a real arm is under way: it has the line");
     this.isPreflighting = true;
     this.isHidden = request.isHidden;
     try {
@@ -669,10 +812,15 @@ export class StationHost {
   /** Returns the one port a preflight reads: the simulated port of the Worker's own, or the one port the page
    * was granted (of the adapter `usb`, when the window knows it). Null with the stop in `found` when there is no
    * such port or more than one. */
-  private async preflightPort(request: PreflightRequest, found: PreflightFindings): Promise<GrantedPort | null> {
+  private async preflightPort(
+    request: Pick<PreflightRequest, "source" | "usb">,
+    found: PreflightFindings,
+  ): Promise<GrantedPort | null> {
     let ports: GrantedPort[];
     if (request.source === "simulated") {
       ports = [simulatedGrantedPort()];
+    } else if (request.source === "simulated-configured") {
+      ports = [simulatedConfiguredPort(ENABLE_SETTINGS, GRIPPER_SETTINGS)];
     } else if (this.serial === null) {
       found.stop = "no-serial";
       found.detail = "The Worker's navigator has no serial: this browser gives a Worker no serial ports";
@@ -708,10 +856,11 @@ export class StationHost {
     return candidates[0] as GrantedPort;
   }
 
-  /** Reads the arm on `line`, which is the read-only guard and nothing else: the handshake, whether it is the arm
-   * the window read, what each servo holds, how long the single reads of a limp servo's time take, and the timing
-   * self-check. A stop is told in `found`; an error of the line is thrown. */
-  private async readArm(line: ReadOnlyLine, expected: ArmFingerprint, found: PreflightFindings): Promise<void> {
+  /** Reads the arm on `line`, which is a guard that lets no write through and nothing else (the read-only guard,
+   * or the station's guard in its state "reads"): the handshake, whether it is the arm the window read, what each
+   * servo holds, how long the single reads of a limp servo's time take, and the timing self-check. A stop is told
+   * in `found`; an error of the line is thrown. */
+  private async readArm(line: ReadableLine, expected: ArmFingerprint, found: PreflightFindings): Promise<void> {
     // lerobot's follower as the window's read-only session makes it: without a calibration, never configured, and
     // with a disconnect that would write nothing. It is given the guard, and the guard is all it can reach
     const follower = new SO101Follower(line.guard, null, { disableTorqueOnDisconnect: false }, { port: "worker" });
@@ -825,9 +974,199 @@ export class StationHost {
     found.timing = await this.timingCheck(line.guard, 1000 / STATION_CONFIG.control.rate_hz);
   }
 
+  // ---------------------------------------------------------------- enabling the station on a real arm
+
+  /** The request "enableReal": refused while the robot is open or being opened, and while a preflight or another
+   * "enableReal" has the line. */
+  private async enableReal(requestId: number, request: EnableRealRequest): Promise<EnableRealResult> {
+    if (this.robot !== null || this.isEnabling) {
+      throw new RuntimeError("Station already open: enabling a real arm needs the station disabled");
+    }
+    if (this.isPreflighting) throw new RuntimeError("A preflight of a real arm is under way");
+    if (this.isArming) throw new RuntimeError("Another enabling of a real arm is under way");
+    this.isArming = true;
+    this.isArmingStopped = false;
+    this.isHidden = request.isHidden;
+    try {
+      return await this.enableRealOn(requestId, request);
+    } finally {
+      this.isArming = false;
+      this.arming = null;
+      this.armingId = null;
+    }
+  }
+
+  /** Takes the port behind the station's guard, reads the arm as a preflight does while the guard lets no write
+   * through, tells what it read, and opens the robot on the line only without a blocker and with the operator's
+   * confirmation. However it ends without the robot open, the line is closed, or a warning says that it is not. */
+  private async enableRealOn(requestId: number, request: EnableRealRequest): Promise<EnableRealResult> {
+    const began = performance.now();
+    const found: PreflightFindings = {
+      ports: null,
+      stop: null,
+      detail: "",
+      servos: null,
+      settings: null,
+      singleReads: null,
+      timing: null,
+    };
+    const clock = this.real.clock;
+    let line = null as StationLine | null;
+    /** Returns the report as it stands, with whether the Worker holds no port. */
+    const report = (isClosed: boolean): PreflightReport => {
+      const counts = line?.guard.counts ?? { passed: {}, refused: 0 };
+
+      return {
+        ...found,
+        guard: { passed: counts.passed, refused: counts.refused },
+        lineErrors: line?.lineErrors() ?? 0,
+        isClosed,
+        tookMs: Math.round(performance.now() - began),
+      };
+    };
+    /** Lets no write through any more and closes the port; resolves with whether the Worker holds no port then. */
+    const closeLine = async (): Promise<boolean> => {
+      if (line === null) return true;
+      line.guard.backToReads();
+
+      return line.close();
+    };
+    let isOpening = false;
+    try {
+      // reads only: the guard is in its state "reads" until the operator has confirmed
+      try {
+        const port = await this.preflightPort(request, found);
+        if (port !== null) {
+          try {
+            line = await openStation(port, clock === undefined ? {} : { now: () => clock.monotonic() * 1000 });
+          } catch (error) {
+            found.stop = "open-failed";
+            found.detail = `The port did not open: ${pythonErrorName(error)}: ${pythonErrorMessage(error)}`;
+          }
+        }
+        if (line !== null) {
+          this.real.onGuard?.(line.guard);
+          await this.readArm(line, request.expected, found);
+        }
+      } catch (error) {
+        // an error of the line itself is a stop; any other is the request's error, after the port is closed
+        if (line === null || line.guard.failure === null) throw error;
+        found.stop = "line-lost";
+        found.detail = `The port was lost while it was read: ${pythonErrorName(error)}: ${pythonErrorMessage(error)}`;
+      }
+      const read = report(line === null);
+      const blockers = armingBlockers(read, request.calibrationFile);
+      const { servos, settings } = found;
+      const held = line;
+      if (blockers.length === 0 && (held === null || servos === null || settings === null || found.timing === null)) {
+        throw new RuntimeError("The arm was not read to its end");
+      }
+      this.event({ type: "arming", requestId, report: read, blockers });
+      if (blockers.length > 0 || held === null || servos === null || settings === null) {
+        return { outcome: "blocked", report: report(await closeLine()), blockers, openMs: null };
+      }
+
+      // the operator's answer; a stop or a hidden page since the request came counts as a refusal
+      const isConfirmed = !this.isArmingStopped && !this.isHidden && (await this.confirmation(requestId));
+      if (!isConfirmed) return { outcome: "refused", report: report(await closeLine()), blockers, openMs: null };
+
+      // confirmed: from here on the guard lets the station's own writes through, and nothing else
+      held.guard.enterStation(guardSettings(settings));
+      isOpening = true;
+      const frames = clock === undefined ? new WindowFrames() : new WindowFrames(clock);
+      this.frames = frames;
+      const robot = new StationRobot(REAL_STATION_CONFIG, {
+        ...(clock === undefined ? {} : { clock }),
+        cameras: new CameraFeed(new WristCamera(REAL_STATION_CONFIG.robot, frames, { clock: clock ?? realTimeClock() })),
+        line: {
+          transport: held.guard,
+          calibration: request.calibrationFile ?? heldCalibration(servos),
+          onWarning: (message, error) => this.log("warning", "so101.hardware", message, error),
+          ...(clock === undefined ? {} : { clock }),
+        },
+        log: (logger, level, message, error) => this.log(level, logger, message, error),
+        uuid4,
+        // the calibration is the file the page found equal to the registers, or what the servos hold
+        configOptions: { calibrationExists: () => true },
+      });
+      resetSteps();
+      realTimeClock().resetStats();
+      const opening = performance.now();
+      await robot.open(); // PEAR's enable: the first write to the servos
+      this.robot = robot;
+      this.line = held;
+      this.chain = null;
+      this.feedback = null;
+      isOpening = false;
+      this.statusTimer = setInterval(() => this.tellStatus(), STATUS_PERIOD_MS);
+      this.tellStatus();
+
+      return { outcome: "enabled", report: report(false), blockers, openMs: Math.round(performance.now() - opening) };
+    } catch (error) {
+      // Whatever failed, the Worker does not keep the port. When the robot did not open, PEAR's own failure path
+      // has switched the torque off where it could. The reply is the error and cannot say whether the port
+      // closed: a warning says it
+      const isClosed = await closeLine();
+      if (isOpening) {
+        this.log("warning", "station", `The robot did not open on the real arm; its port ${isClosed ? "is closed" : "did not close"}`, error);
+      } else if (!isClosed) {
+        this.log("warning", "station", "The enabling of a real arm failed and its port did not close", error);
+      }
+      throw error;
+    }
+  }
+
+  /** Waits for the operator's answer to the event "arming": the request "arm"; a stop or a hidden page, which
+   * refuse; or the limit, after which no answer counts as a refusal. */
+  private confirmation(requestId: number): Promise<boolean> {
+    return new Promise<boolean>((resolve) => {
+      const limit = setTimeout(() => this.arming?.(false), this.real.armingLimitMs ?? ARMING_LIMIT_MS);
+      this.armingId = requestId;
+      this.arming = (isConfirmed) => {
+        clearTimeout(limit);
+        this.arming = null;
+        this.armingId = null;
+        resolve(isConfirmed);
+      };
+    });
+  }
+
+  /** The operator's answer. It is taken only when it names the "enableReal" that waits: an answer to an earlier
+   * report, whose request has ended, must not confirm this one. */
+  private async arm(requestId: number, isConfirmed: boolean): Promise<null> {
+    if (this.arming === null) throw new RuntimeError("No enabling of a real arm waits for a confirmation");
+    if (requestId !== this.armingId) {
+      throw new RuntimeError("This answer names another enabling of a real arm than the one that waits");
+    }
+    this.arming(isConfirmed);
+
+    return null;
+  }
+
+  /** Disables the station on a real arm: the robot's close() switches the torque off, then the guard lets no
+   * write through again and the port is closed. Whatever fails, the robot is gone from the host at the end: on a
+   * lost line the torque-off writes fail and the servos keep holding, which the status has told (`isLost`). */
+  private async disableReal(robot: StationRobot, line: StationLine): Promise<DisableResult> {
+    try {
+      await robot.close();
+    } catch (error) {
+      this.log("warning", "station", "The robot did not close as it should on the real arm: its servos may still hold", error);
+    }
+    line.guard.backToReads();
+    const isLineClosed = await line.close();
+    if (this.statusTimer !== null) clearInterval(this.statusTimer);
+    this.statusTimer = null;
+    this.robot = null;
+    this.line = null;
+    this.tellStatus();
+
+    return { positions: {}, isLineClosed };
+  }
+
   private async disable(): Promise<DisableResult> {
     const robot = this.open;
     this.approval?.(false);
+    if (this.line !== null) return this.disableReal(robot, this.line);
     try {
       await robot.close();
     } catch (error) {
@@ -845,13 +1184,16 @@ export class StationHost {
     this.chain = null;
     this.tellStatus();
 
-    return { positions };
+    return { positions, isLineClosed: true };
   }
 
   // ---------------------------------------------------------------- stopping
 
   private async stop(): Promise<null> {
     this.approval?.(false);
+    // an enabling of a real arm that has not been confirmed yet is refused by a stop
+    if (this.isArming) this.isArmingStopped = true;
+    this.arming?.(false);
     await this.robot?.stop();
 
     return null;
@@ -884,6 +1226,10 @@ export class StationHost {
   /** One action in the model's format, as a turn of PEAR's agent loop runs it: the arm at rest, an observation,
    * the action with that observation as its reference; then the report the next turn would give the model. */
   private jog(requestId: number, action: Readonly<Record<string, unknown>>): Promise<ActionReport> {
+    if (this.line !== null) {
+      return Promise.reject(new RuntimeError("Single actions are not offered on a real arm in this version"));
+    }
+
     return this.asAction("jog", requestId, async (robot) => {
       const format = SINGLE_ARM_POSE_FORMAT;
       let result: MotionResult;
@@ -986,11 +1332,15 @@ export class StationHost {
       camera: this.frames.numbers(),
       action: null,
       isHidden: this.isHidden,
+      arm: null,
+      line: null,
     };
     const robot = this.robot;
     if (robot === null) return off;
+    const arm = this.line === null ? "simulated" : "real";
+    const line = this.lineStatus();
     const status = robot.status(true);
-    if (!("arms" in status)) return { ...off, robot: status.status };
+    if (!("arms" in status)) return { ...off, robot: status.status, arm, line };
     const detailed = status as DetailedStatus;
     const joints = [...detailed.arms[ARM]!.position];
     let state: StationStatus["state"] = null;
@@ -1019,6 +1369,23 @@ export class StationHost {
       camera: off.camera,
       action: this.action?.type ?? null,
       isHidden: this.isHidden,
+      arm,
+      line,
+    };
+  }
+
+  /** Returns the real arm's line as the status tells it; null on the simulated arm. */
+  private lineStatus(): RealLineStatus | null {
+    const line = this.line;
+    if (line === null) return null;
+    const guard = line.guard.status();
+
+    return {
+      passed: guard.passed,
+      refused: guard.refusedCount,
+      refusals: guard.refusals.slice(-5).map(({ message }) => message),
+      lineErrors: line.lineErrors(),
+      isLost: line.isLost(),
     };
   }
 

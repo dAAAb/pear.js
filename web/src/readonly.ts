@@ -52,7 +52,7 @@ export interface GuardHooks {
 
 /** Returns the instructions of the packets ``bytes`` are made of; throws unless they are whole instruction
  * packets, one after another, each with its checksum. */
-function instructionsOf(bytes: Uint8Array): number[] {
+export function instructionsOf(bytes: Uint8Array): number[] {
   const instructions: number[] = [];
   let offset = 0;
   if (bytes.length === 0) throw new ReadOnlyViolation("Refused: no bytes are no instruction packet", null);
@@ -103,11 +103,16 @@ export class ReadOnlyTransport implements Transport {
   // the broadcast packet sent last and what came in since: no servo's answer holds a broadcast packet's bytes
   private watched: Uint8Array | null = null;
   private heard: number[] = [];
+  /** The transport that is guarded: a private name of the language itself, so that no code outside this class
+   * can reach it at run time and write past the guard. */
+  readonly #inner: Transport;
 
   constructor(
-    private readonly inner: Transport,
+    inner: Transport,
     private readonly hooks: GuardHooks = {},
-  ) {}
+  ) {
+    this.#inner = inner;
+  }
 
   async write(bytes: Uint8Array): Promise<void> {
     let instructions: number[];
@@ -136,7 +141,7 @@ export class ReadOnlyTransport implements Transport {
     this.watched = bytes[protocol.PKT_ID] === protocol.BROADCAST_ID ? bytes.slice() : null;
     this.heard = [];
     try {
-      await this.inner.write(bytes);
+      await this.#inner.write(bytes);
     } catch (error) {
       this.failure ??= error;
       throw error;
@@ -146,7 +151,7 @@ export class ReadOnlyTransport implements Transport {
   async read(maxLength: number, timeoutMs: number): Promise<Uint8Array> {
     let received: Uint8Array;
     try {
-      received = await this.inner.read(maxLength, timeoutMs);
+      received = await this.#inner.read(maxLength, timeoutMs);
     } catch (error) {
       this.failure ??= error;
       throw error;
@@ -168,7 +173,7 @@ export class ReadOnlyTransport implements Transport {
   }
 
   async close(): Promise<void> {
-    await this.inner.close();
+    await this.#inner.close();
   }
 }
 

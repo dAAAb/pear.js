@@ -164,14 +164,18 @@
           <div id="station-preflight" hidden>
             <div class="actions">
               <button type="button" id="station-preflight-run" data-i18n="station.preflight.run" disabled></button>
+              <button type="button" id="station-arming-run" data-i18n="station.arming.run" disabled></button>
             </div>
             <p class="hint" id="station-preflight-note" data-i18n="station.preflight.note"></p>
+            <p class="hint" id="station-arming-note" data-i18n="station.arming.note"></p>
+            <p class="hint" id="station-arming-why" hidden></p>
             <p class="status" id="station-preflight-status" role="status" aria-live="polite"></p>
           </div>
           <p class="hint" id="station-disable-note" data-i18n="station.disableNote" hidden></p>
           <p class="status" id="station-status" role="status" aria-live="polite"></p>
           <p class="muted small" id="station-timing"></p>
           <p class="muted small" id="station-periods" aria-hidden="true"></p>
+          <p class="muted small" id="station-line"></p>
           <p class="muted small" id="station-clock" aria-hidden="true"></p>
           <p class="muted small" id="station-camera"></p>
           <figure id="station-frame" hidden>
@@ -179,6 +183,17 @@
             <figcaption class="muted small" id="station-frame-caption"></figcaption>
           </figure>
           <div id="station-messages"></div>
+          <div id="station-disable-confirm" class="box warn" hidden>
+            <p data-i18n="station.real.disable.ask"></p>
+            <div class="actions">
+              <button type="button" id="station-disable-go" data-i18n="station.real.disable.go"></button>
+              <button type="button" id="station-disable-keep" data-i18n="station.real.disable.keep"></button>
+            </div>
+          </div>
+          <div id="station-arming" hidden>
+            <h3 data-i18n="station.arming.title"></h3>
+            <div id="station-arming-parts"></div>
+          </div>
           <div id="station-preflight-report" hidden>
             <h3 data-i18n="station.preflight.title"></h3>
             <div id="station-preflight-parts"></div>
@@ -189,9 +204,12 @@
             <p class="muted small" id="station-joints"></p>
             <pre id="station-turn"></pre>
 
-            <h3 data-i18n="station.jogTitle"></h3>
-            <p class="lead" data-i18n="station.jogLead"></p>
-            <div id="station-jog" class="jog"></div>
+            <p class="hint" id="station-real-note" data-i18n="station.real.noJog" hidden></p>
+            <div id="station-jog-part">
+              <h3 data-i18n="station.jogTitle"></h3>
+              <p class="lead" data-i18n="station.jogLead"></p>
+              <div id="station-jog" class="jog"></div>
+            </div>
             <div class="actions">
               <button type="button" id="station-home" data-i18n="station.home"></button>
             </div>

@@ -11,8 +11,10 @@ import {
   DEFAULT_BAUDRATE,
   encodeSignMagnitude,
   ENCODING_TABLE,
+  getAddress,
   type MotorCalibration,
   protocol,
+  type RegisterName,
   type SerialPortLike,
   SimServo,
   SimServoChain,
@@ -124,6 +126,34 @@ export function simulatedGrantedPort(
   arm: SimArm = new SimArm(),
 ): SimSerialPort & { getInfo(): { usbVendorId: number; usbProductId: number } } {
   return Object.assign(arm.port, { getInfo: () => ({ ...SIM_USB_IDS }) });
+}
+
+/** The address of Maximum_Acceleration, which lerobot's table puts into a block of its own ("Factory"). */
+const MAXIMUM_ACCELERATION_ADDRESS = 85;
+
+/** Where a servo's EEPROM area ends: the registers below this address survive a power cycle. */
+const EEPROM_END = 40;
+
+/**
+ * A simulated arm's port as above, of an arm that lerobot has run: its servos hold what PEAR's enable writes to
+ * the EEPROM area and to Maximum_Acceleration, so that an enable would change no setting that survives a power
+ * cycle. `settings` are the registers the enable writes to every servo, each with its value, and
+ * `gripperSettings` those it writes to the gripper's servo besides (the station's own lists); a register of the
+ * RAM among them is left as the simulated servo has it, as a servo has it after its power came back.
+ */
+export function simulatedConfiguredPort(
+  settings: readonly (readonly [RegisterName, number])[],
+  gripperSettings: readonly (readonly [RegisterName, number])[],
+  arm: SimArm = new SimArm(),
+): ReturnType<typeof simulatedGrantedPort> {
+  for (const motor of MOTORS) {
+    for (const [register, value] of [...settings, ...(motor === "gripper" ? gripperSettings : [])]) {
+      const [address] = getAddress(register);
+      if (address < EEPROM_END || address === MAXIMUM_ACCELERATION_ADDRESS) arm.servo(motor).set(register, value);
+    }
+  }
+
+  return simulatedGrantedPort(arm);
 }
 
 /** A Web Serial port's shape on the simulated chain. */

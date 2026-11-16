@@ -12,7 +12,7 @@ default; never a directory of the repository).
 
 Parts: load, stamp, sim, expected, guard, cable, faults, calibration, serial, diagnostics, camera, model,
 privacy, ask, languages, keyboard, layout, folder, subpath, hosted, insecure, log, transport, timing, selftest,
-station, preflight.
+station, preflight, real.
 """
 
 from __future__ import annotations
@@ -601,8 +601,8 @@ def part_load(check: Check, context: BrowserContext, base: str) -> None:
     check.equal("the page starts not connected", phase(page), "idle")
     check.ok("the notice says unofficial and experimental", "unofficial, experimental" in page.locator("#notice").inner_text())
     notice = page.locator("#notice").inner_text()
-    check.ok("the notice says this version moves only a simulated arm, in a Worker of the page", "moves only a simulated arm, in a Worker of this page" in notice, notice)
-    check.ok("the notice says that with a real arm it only reads and cannot move it", "With a real arm connected it only reads" in notice and "cannot move the real arm" in notice, notice)
+    check.ok("the notice says that the station runs in a Worker of the page and drives a simulated arm", "The station runs in a Worker of this page and drives a simulated arm." in notice, notice)
+    check.ok("the notice says that with a real arm the page reads, that it writes to the servos only after \"Enable the station on this arm\" and the confirmation, and that no model moves an arm", "With a real arm connected the page reads" in notice and "It writes to the servos only after you press “Enable the station on this arm” and confirm" in notice and "No model moves an arm." in notice, notice)
     check.ok("the notice no longer says that the page cannot move the arm at all", "cannot move the arm" not in notice and "first version only reads" not in notice, notice)
     links = page.evaluate("[...document.querySelectorAll('a[href]')].map(link => link.getAttribute('href'))")
     outside = sorted({link for link in links if not link.startswith("#")})
@@ -623,11 +623,11 @@ def part_load(check: Check, context: BrowserContext, base: str) -> None:
     check.ok("the instruction can be written", page.locator("#task-instruction").is_enabled())
     check.ok("Ask the model once is not offered before an arm is read", page.locator("#ask-once").is_disabled())
     task_text = page.locator("#task").inner_text()
-    check.ok("the task says this version moves only a simulated arm, in a Worker of the page", "moves only a simulated arm, in a Worker of this page" in task_text, task_text[:300])
-    check.ok("the task says that with a real arm it only reads and cannot move it", "With a real arm connected it only reads and cannot move the real arm" in task_text, task_text[:300])
+    check.ok("the task says that the station drives a simulated arm, in a Worker of the page", "The station below drives a simulated arm, in a Worker of this page." in task_text, task_text[:300])
+    check.ok("the task says that with a real arm the page reads, and writes to the servos only after \"Enable the station on this arm\" and its confirmation", "With a real arm connected the page reads; it writes to the servos only after “Enable the station on this arm” and its confirmation" in task_text, task_text[:300])
     check.ok(
-        "the task says that it can ask a model once, does not execute the action, and that no model drives an arm yet",
-        "It can ask a model once and show the answer: it does not execute the action the model asks for, and no model drives an arm yet. On the simulated arm" in task_text,
+        "the task says that it can ask a model once, does not execute the action, and that no model moves an arm",
+        "It can ask a model once and show the answer: it does not execute the action the model asks for, and no model moves an arm. On the simulated arm" in task_text,
         task_text[:420],
     )
     jog_lead = page.locator("[data-i18n='station.jogLead']").text_content() or ""
@@ -2077,18 +2077,18 @@ def part_languages(check: Check, browser, base: str, service: str) -> None:
     check.ok("the title is Chinese", has_han(page.title()), page.title())
     check.equal("no text is missing at the start (Chinese)", texts_filled(page), [])
     check.ok(
-        "the notice says unofficial, experimental, moves only a simulated arm in a Worker, only reads a real one",
-        all(word in page.locator("#notice").inner_text() for word in ("非官方", "實驗", "只會讓模擬手臂動", "Worker", "連接真實的手臂時，它只讀不寫", "不會讓真實的手臂動")),
+        "the notice says unofficial, experimental, a station in a Worker that drives a simulated arm, and that a real arm is written to only after its Enable and the confirmation",
+        all(word in page.locator("#notice").inner_text() for word in ("非官方", "實驗", "工作站在這個頁面的 Worker 裡執行，驅動的是模擬手臂", "連接真實的手臂時，頁面會讀取", "只有在你按下「在這支手臂上啟用工作站」並確認之後，它才會對伺服馬達寫入", "不會有任何模型讓手臂動")),
         page.locator("#notice").inner_text(),
     )
     check.ok(
         "the task says the same in Chinese",
-        all(word in page.locator("#task").inner_text() for word in ("只會讓模擬手臂動", "Worker", "連接真實的手臂時，它只讀取，不會讓真實的手臂動")),
+        all(word in page.locator("#task").inner_text() for word in ("下面的工作站驅動的是模擬手臂，在這個頁面的 Worker 裡執行", "連接真實的手臂時，頁面會讀取", "只有在按下「在這支手臂上啟用工作站」並確認之後才會對伺服馬達寫入")),
         page.locator("#task").inner_text()[:200],
     )
     check.ok(
-        "the task says in Chinese that it can ask a model once, does not execute the action, and that no model drives an arm yet",
-        all(word in page.locator("#task").inner_text() for word in ("它可以問模型一次並顯示回答", "不會執行模型要求的動作", "目前還沒有模型驅動手臂")),
+        "the task says in Chinese that it can ask a model once, does not execute the action, and that no model moves an arm",
+        all(word in page.locator("#task").inner_text() for word in ("它可以問模型一次並顯示回答", "不會執行模型要求的動作", "不會有任何模型讓手臂動")),
         page.locator("#task").inner_text()[:260],
     )
     jog_lead = page.locator("[data-i18n='station.jogLead']").text_content() or ""
@@ -3257,9 +3257,9 @@ def station_real_arm(check: Check, browser, base: str) -> None:
 
     why = page.locator("#station-why")
     check.equal("a real arm: Enable is disabled, for the reason of a real arm", [page.locator("#station-enable").is_disabled(), why.get_attribute("data-why")], [True, "station.why.realArm"])
-    check.ok("a real arm: the sentence says that a real arm is only read and the station cannot be enabled on it", all(words in why.inner_text() for words in ("A real arm is connected", "only reads a real arm and never writes to it", "the station cannot be enabled on it")), why.inner_text())
+    check.ok("a real arm: the sentence says that this Enable is for the simulated arm, and names the control that enables the station on a real arm after a confirmation", all(words in why.inner_text() for words in ("A real arm is connected", "“Enable” here is for the simulated arm", "use “Enable the station on this arm” below", "writes to the servos only after your confirmation")), why.inner_text())
     page.click("#language-zh")
-    check.ok("a real arm: the same sentence in Chinese", all(words in why.inner_text() for words in ("目前連接的是真實的手臂", "只會讀取真實的手臂，絕不寫入", "不能在它上面啟用工作站")), why.inner_text())
+    check.ok("a real arm: the same sentence in Chinese", all(words in why.inner_text() for words in ("目前連接的是真實的手臂", "這裡的「啟用」是給模擬手臂用的", "請按下面的「在這支手臂上啟用工作站」", "等你確認之後才對伺服馬達寫入")), why.inner_text())
     page.click("#language-en")
     check.ok("a real arm: Stop is disabled", page.locator("#task-stop").is_disabled())
     check.ok("a real arm: no action is offered", page.locator("#station-home").is_disabled() and page.evaluate("[...document.querySelectorAll('#station-jog button')].every(button => button.disabled)"))
@@ -3588,7 +3588,7 @@ def preflight_real_path(check: Check, browser, base: str) -> None:
     check.ok(f"{label}: on a port that is read as a calibrated arm of six servos, not the simulated one, the control is offered", wait_offered(page) and page.evaluate("window.pearjs.arm.view.isSimulated") is False, preflight_shown(page))
     why = page.locator("#station-why")
     check.equal(f"{label}: the station's Enable is still refused on a real arm", enable_refused(page), [True, "station.why.realArm"])
-    check.ok(f"{label}: and its sentence still says that a real arm is only read", "A real arm is connected" in why.inner_text(), why.inner_text())
+    check.ok(f"{label}: and its sentence says that this Enable is for the simulated arm", "“Enable” here is for the simulated arm" in why.inner_text(), why.inner_text())
     check.equal(f"{label}: no Worker runs before the control is pressed", len(page.workers), 0)
     port_log = page.evaluate("window.portLog")
     check.equal(f"{label}: before the hand-over the window has opened the port once, at the servos' baud rate, and not closed it", [[entry["baudRate"] for entry in port_log["opened"]], port_log["closed"]], [[1000000], 0])
@@ -3952,10 +3952,466 @@ def part_preflight(check: Check, browser, base: str, service: str) -> None:
     ModelService.configure()
 
 
+REAL_UNTRIED = "This step has so far run on simulated servos only and never on a real arm."
+REAL_UNTRIED_CHINESE = "這個步驟到目前為止只在模擬的伺服馬達上執行過，還沒有在真實的手臂上執行過。"
+REAL_REPORT = "Station: arming report "
+REAL_READ_AGAIN = "Station: the window reads the arm again, on the same port"
+REAL_BLOCKED = "Station: not enabled on the real arm: blocked"
+# What the window asked the station's Worker, in its order: every request it posted, with what an answer to the
+# arming report says, and the moment the Worker's arming report arrived; beside each the stand-in port's own
+# record at that moment (null where the page has no stand-in port). Kept by a subclass of Worker the check puts
+# into the page, so that it is the truth the page's log and its sentences are held against.
+REAL_ASKED = """window.asked = [];
+window.Worker = class extends Worker {
+    constructor(...parts) {
+        super(...parts);
+        this.addEventListener('message', event => {
+            if (event.data?.kind === 'event' && event.data.event?.type === 'arming') window.askedMoment({ type: 'arming report', id: event.data.event.requestId });
+        });
+    }
+    postMessage(message, ...rest) {
+        const request = message?.request;
+        if (request && typeof request.type === 'string') {
+            window.askedMoment({ type: request.type, id: message.id ?? null, isConfirmed: request.isConfirmed ?? null, requestId: request.requestId ?? null });
+        }
+        return super.postMessage(message, ...rest);
+    }
+};
+window.askedMoment = entry => {
+    const log = window.portLog ?? null;
+    window.asked.push({ ...entry, opened: log === null ? null : log.opened.length, closed: log === null ? null : log.closed, written: log === null ? null : log.written.length });
+};"""
+# What the page shows of "Enable the station on this arm": the control, the part with its phase and its reasons
+# against enabling, and the confirmation: its list (each item with its kind and tone), the tick box and the button.
+REAL_SHOWN = """(() => {
+    const visible = node => node !== null && node.getClientRects().length > 0;
+    const run = document.getElementById('station-arming-run');
+    const part = document.getElementById('station-arming');
+    const tick = document.getElementById('station-arming-tick');
+    const go = document.getElementById('station-arming-go');
+    const list = tick === null ? null : tick.closest('label').parentElement.parentElement.querySelector('ul');
+    return {
+        isOffered: visible(run) && !run.disabled,
+        isPartShown: visible(part), phase: part.dataset.phase, blockers: part.dataset.blockers, text: part.innerText,
+        hasConfirm: visible(tick) && visible(go), isTicked: tick !== null && tick.checked,
+        isGoDisabled: go === null ? null : go.disabled, go: go === null ? null : go.textContent,
+        tick: tick === null ? null : tick.closest('label').textContent.trim(),
+        items: list === null ? [] : [...list.children].map(item => ({ kind: item.dataset.kind, tone: item.dataset.tone, text: item.textContent })),
+    };
+})()"""
+# A script of the page takes the button's disabling away, as far as a script can: the property no longer
+# disables it and the attribute is gone, until REAL_BUTTON_AS_BUILT gives the property back.
+REAL_BUTTON_FORCED = """(() => {
+    const go = document.getElementById('station-arming-go');
+    if (go === null) return;
+    Object.defineProperty(go, 'disabled', { configurable: true, get: () => false, set: () => {} });
+    go.removeAttribute('disabled');
+})()"""
+REAL_BUTTON_AS_BUILT = "(() => { const go = document.getElementById('station-arming-go'); if (go !== null) delete go.disabled; })()"
+
+
+def real_page(check: Check, browser, base: str, query: str, scripts: tuple = ()) -> Page:
+    """Opens the page in a context of its own that records what the window asks the station's Worker."""
+    own = browser.new_context(viewport={"width": 1280, "height": 800}, locale="en-US")
+    check.watch(own)
+    for script in scripts:
+        own.add_init_script(script)
+    own.add_init_script(REAL_ASKED)
+    return open_page(check, own, base, query)
+
+
+def real_shown(page: Page) -> dict:
+    return page.evaluate(REAL_SHOWN)
+
+
+def real_asked(page: Page, kind: "str | None" = None) -> list:
+    """Returns what the window asked the Worker so far, or only the entries of one type."""
+    asked = page.evaluate("window.asked")
+    return asked if kind is None else [entry for entry in asked if entry["type"] == kind]
+
+
+def real_wait(page: Page, expression: str, timeout_ms: int = 20000) -> bool:
+    """Waits until ``expression`` of JavaScript holds; returns whether it did in that time."""
+    try:
+        page.wait_for_function(expression, timeout=timeout_ms)
+        return True
+    except WaitTimeout:
+        return False
+
+
+def real_wait_station(page: Page, condition: str, timeout_ms: int = 20000) -> bool:
+    """Waits as wait_station does; returns whether the condition held in that time."""
+    try:
+        wait_station(page, condition, timeout_ms)
+        return True
+    except WaitTimeout:
+        return False
+
+
+def real_wait_log(page: Page, words: str, timeout_ms: int = 45000) -> bool:
+    """Waits until the page's log holds ``words``; returns whether it did in that time."""
+    try:
+        page.wait_for_function("words => document.getElementById('log-output').value.includes(words)", arg=words, timeout=timeout_ms)
+        return True
+    except WaitTimeout:
+        return False
+
+
+def real_input(action) -> bool:
+    """Gives the page real input through Playwright; returns whether the element took it in time. An element that
+    is gone or disabled is a finding of the check that follows, not the end of the part."""
+    try:
+        action()
+        return True
+    except WaitTimeout:
+        return False
+
+
+def real_offered(page: Page) -> bool:
+    """Waits until "Enable the station on this arm" is shown and can be pressed; returns whether it is."""
+    return real_wait(page, "(() => { const control = document.getElementById('station-arming-run'); return control.getClientRects().length > 0 && !control.disabled; })()", 10000)
+
+
+def real_asking(page: Page) -> bool:
+    """Waits until the confirmation is shown: the Worker has read the arm and waits for the operator's answer."""
+    return real_wait(page, "document.getElementById('station-arming').dataset.phase === 'asking' && document.getElementById('station-arming-go') !== null", 45000)
+
+
+def real_told(page: Page) -> dict:
+    """Returns the last arming report in the page's log, {"report": ..., "blockers": ...}; {} when there is none."""
+    found = [json_or_none(line[len(REAL_REPORT):]) for line in log_lines(page) if line.startswith(REAL_REPORT + "{")]
+    return found[-1] if found and isinstance(found[-1], dict) else {}
+
+
+def real_reads_only(guard: object) -> bool:
+    """Returns whether a guard's counts hold packets, none of them a write, and no refusal."""
+    passed = guard.get("passed") if isinstance(guard, dict) else None
+    return isinstance(passed, dict) and len(passed) > 0 and all("WRITE" not in name.upper() for name in passed) and guard.get("refused") == 0
+
+
+def real_in_order(lines: list, beginnings: list) -> list:
+    """Returns the beginnings that the lines do not hold in this order: [] when each is found after the one before."""
+    at = 0
+    missing = []
+    for beginning in beginnings:
+        found = next((index for index in range(at, len(lines)) if lines[index].startswith(beginning)), None)
+        if found is None:
+            missing.append(beginning)
+        else:
+            at = found + 1
+    return missing
+
+
+def real_home_to_plan(page: Page) -> bool:
+    """Presses Home and waits for its plan; returns whether the plan came."""
+    page.click("#station-home")
+    return real_wait_station(page, "view.plan !== null", 15000)
+
+
+def real_station(check: Check, browser, base: str, service: str) -> None:
+    """With ?preflight=sim-configured the Worker takes a simulated port whose servos hold PEAR's settings, as an arm
+    that lerobot has run: a confirmation that is cancelled; then the whole session: the confirmation, the gates
+    before the first write, Enable, Home without and with the camera, Stop on the way, Home, Disable."""
+    numbers = check.numbers.setdefault("real", {})
+    page = real_page(check, browser, base, "?lang=en&preflight=sim-configured")
+    connect_sim(page)
+    page.wait_for_function("window.pearjs.arm.view.live !== null")
+    check.ok("the control: with ?preflight=sim-configured it is offered on the simulated arm", real_offered(page), real_shown(page))
+    check.equal("the control: a model service with a key is checked, so that the page holds a key and an address", run_model_check(page, f"{service}/v1", MODEL, KEY), "ok")
+    note = page.locator("#station-preflight").inner_text()
+    check.ok("the control: its note says that nothing is written until the confirmation, and that this step has so far run on simulated servos only and never on a real arm", "Nothing is written to a servo until you have confirmed there." in note and REAL_UNTRIED in note, note[-500:])
+    check.equal("the control: before it is pressed no Worker runs and the window has asked nothing", [len(page.workers), real_asked(page)], [0, []])
+    # no camera runs from here until Home has been asked once without it
+    camera_stop = page.locator("#camera-stop")
+    if camera_stop.is_visible() and camera_stop.is_enabled():
+        camera_stop.click()
+    numbers["the camera before the control is pressed"] = page.locator("#camera-status").inner_text()
+
+    # refused: the confirmation in both languages, then Cancel
+    label = "cancelled"
+    lines = len(log_lines(page))
+    page.click("#station-arming-run")
+    check.ok(f"{label}: the Worker's report comes and the confirmation is shown", real_asking(page), real_shown(page))
+    english = real_shown(page)
+    page.check("#station-arming-tick")
+    real_wait(page, "document.getElementById('station-arming-go').disabled === false", 5000)
+    ticked = real_shown(page)
+    page.click("#language-zh")
+    real_wait(page, "document.getElementById('station-arming-go')?.textContent !== 'Switch the torque on'", 5000)
+    chinese = real_shown(page)
+    check.equal("languages: a switch of the language builds the confirmation anew: what was ticked is unticked and the button is disabled", [ticked["isTicked"], ticked["isGoDisabled"], chinese["hasConfirm"], chinese["isTicked"], chinese["isGoDisabled"]], [True, False, True, False, True])
+    check.equal("languages: the confirmation's list has the same items in Chinese", [item["kind"] for item in chinese["items"]], [item["kind"] for item in english["items"]])
+    check.ok("languages: every sentence of the list, the tick box and the button are in Chinese: none is as in English, none is empty", len(chinese["items"]) > 0 and all(item["text"] and item["text"] != other["text"] for item, other in zip(chinese["items"], english["items"])) and chinese["tick"] not in ("", None, english["tick"]) and chinese["go"] not in ("", None, english["go"]), [chinese["tick"], chinese["go"]])
+    check.equal("languages: the list says first, as a warning, in Chinese that this step has run on simulated servos only and never on a real arm", chinese["items"][:1], [{"kind": "untried", "tone": "warn", "text": REAL_UNTRIED_CHINESE}])
+    numbers["the confirmation in Chinese"] = chinese["items"]
+    page.click("#language-en")
+    real_wait(page, "document.getElementById('station-arming-go')?.textContent === 'Switch the torque on'", 5000)
+    page.click("#station-arming-cancel")
+    check.ok(f"{label}: the request ends refused, and the log says that the operator cancelled", real_wait_log(page, "Station: not enabled on the real arm: refused (the operator cancelled"), log_lines(page)[-3:])
+    check.ok(f"{label}: the window reads the arm again", real_wait_log(page, REAL_READ_AGAIN, 10000), log_lines(page)[-3:])
+    gained = log_lines(page)[lines:]
+    asked = real_asked(page)
+    check.equal(f"{label}: the window asked the Worker to enable, got its report, and answered it once: not confirmed, naming that request", [[entry["type"], entry.get("isConfirmed")] for entry in asked] + [len(asked) == 3 and asked[2]["requestId"] == asked[0]["id"] == asked[1]["id"]], [["enableReal", None], ["arming report", None], ["arm", False], True])
+    check.ok(f"{label}: the guard let through reads only and refused nothing", real_reads_only((real_told(page).get("report") or {}).get("guard")), (real_told(page).get("report") or {}).get("guard"))
+    shown = real_shown(page)
+    check.ok(f"{label}: the page says that the station was not enabled and nothing was written, and offers no confirmation any more", "Cancelled: the station was not enabled, and nothing was written to a servo." in shown["text"] and shown["hasConfirm"] is False, shown["text"][:300])
+    check.ok(f"{label}: the log says that the operator cancelled", any(line.startswith("Station: the operator cancelled") for line in gained), gained)
+    check.equal(f"{label}: the station is off, step 1 reads the arm, and the control is offered again", [station_view(page)["phase"], phase(page), real_offered(page)], ["off", "reading", True])
+
+    # the confirmation, and the gates before the first write
+    label = "the confirmation"
+    lines = len(log_lines(page))
+    cancelled = len(real_asked(page))
+    page.click("#station-arming-run")
+    check.ok(f"{label}: pressed again, the Worker's report comes and the confirmation is shown", real_asking(page), real_shown(page))
+    told = real_told(page)
+    report = told.get("report") or {}
+    numbers["the arming report"] = told
+    shown = real_shown(page)
+    check.equal(f"{label}: the Worker read the arm to its end and tells no reason against enabling", [report.get("stop", "absent"), told.get("blockers"), shown["blockers"]], [None, [], ""])
+    check.ok(f"{label}: until the press the report's guard has let through reads only and refused nothing", real_reads_only(report.get("guard")), report.get("guard"))
+    check.equal(f"{label}: the box is unticked and \"Switch the torque on\" is disabled", [shown["hasConfirm"], shown["isTicked"], shown["isGoDisabled"], shown["go"]], [True, False, True, "Switch the torque on"])
+    kinds = [item["kind"] for item in shown["items"]]
+    check.equal(f"{label}: the list, in its order (the warnings' line only when the report has some)", [kind for kind in kinds if kind != "warnings"], ["untried", "limp", "rest", "eeprom", "ram", "factory", "home", "stop", "disable", "lost", "limit"])
+    check.equal(f"{label}: the list says first, as a warning, that this step has so far run on simulated servos only and never on a real arm", shown["items"][:1], [{"kind": "untried", "tone": "warn", "text": REAL_UNTRIED}])
+    texts = {item["kind"]: item["text"] for item in shown["items"]}
+    reads = report.get("singleReads") or {}
+    kept = [setting for setting in report.get("settings") or [] if setting.get("area") == "eeprom"]
+    check.ok(f"{label}: the list has this line's numbers: the limp time measured just now and how many transactions it is the time of", f"about {round(reads.get('totalMs', -1))} ms on this line (the time of {reads.get('count')} transactions" in texts.get("limp", ""), [reads, texts.get("limp")])
+    check.ok(f"{label}: the list says that no setting that survives a power cycle changes, with how many such registers this arm holds", len(kept) > 0 and f"the {len(kept)} such registers it writes hold its values on this arm already" in texts.get("eeprom", ""), [len(kept), texts.get("eeprom")])
+    check.equal(f"{label}: the window has asked the Worker to enable and has got its report: no answer yet", [entry["type"] for entry in real_asked(page)[cancelled:]], ["enableReal", "arming report"])
+
+    def unanswered(name: str) -> None:
+        page.wait_for_timeout(400)
+        check.equal(f"{label}: {name}: the window sends no answer and the confirmation still waits", [[entry["type"] for entry in real_asked(page)[cancelled:]], real_shown(page)["phase"], station_view(page)["phase"]], [["enableReal", "arming report"], "asking", "enabling"])
+
+    page.evaluate("document.getElementById('station-arming-go')?.click()")
+    unanswered("a script's click on the disabled button")
+    page.evaluate(REAL_BUTTON_FORCED)
+    check.ok(f"{label}: a script takes the button's disabling away, and the button is pressed with real input while the box is unticked", real_input(lambda: page.click("#station-arming-go", timeout=5000)))
+    unanswered("a real press without the tick")
+    page.evaluate(REAL_BUTTON_AS_BUILT)
+    check.ok(f"{label}: the page disables the button again", real_wait(page, "document.getElementById('station-arming-go')?.disabled === true", 5000))
+    page.evaluate("(() => { const tick = document.getElementById('station-arming-tick'); if (tick === null) return; tick.checked = true; tick.dispatchEvent(new Event('change', { bubbles: true })); })()")
+    page.wait_for_timeout(300)
+    scripted = real_shown(page)
+    check.equal(f"{label}: a tick that a script sets does not count: the box is unticked again and the button stays disabled", [scripted["isTicked"], scripted["isGoDisabled"]], [False, True])
+    check.ok(f"{label}: ticked with real input, the button can be pressed", real_input(lambda: page.check("#station-arming-tick", timeout=5000)) and real_wait(page, "document.getElementById('station-arming-go')?.disabled === false", 5000), real_shown(page))
+    page.evaluate("document.getElementById('station-arming-go')?.click()")
+    unanswered("a script's click on the button with the box ticked")
+    check.ok(f"{label}: the button is pressed with real input", real_input(lambda: page.click("#station-arming-go", timeout=5000)), real_shown(page))
+
+    # enabled
+    label = "enabled"
+    check.ok(f"{label}: after the tick and a real press the station holds the arm", real_wait_station(page, "view.phase === 'on' && view.status !== null && view.status.robot === 'READY' && view.status.line !== null", 45000), station_view(page)["phase"])
+    answers = real_asked(page, "arm")
+    enables = real_asked(page, "enableReal")
+    check.equal(f"{label}: the window answered that report once: confirmed, naming the request it answers", [[entry["isConfirmed"], entry["requestId"]] for entry in answers[1:]], [[True, enables[-1]["id"]]])
+    view = station_view(page)
+    status = view["status"] or {}
+    line = status.get("line") or {}
+    numbers["the line when enabled"] = line
+    check.equal(f"{label}: the Worker's status says a real arm, ready and holding", [status.get("arm"), status.get("robot"), status.get("control")], ["real", "READY", "HOLD"])
+    status_line = page.locator("#station-status").inner_text()
+    check.ok(f"{label}: the status line says that the station holds the real arm, torque on", status_line.startswith("The station holds the real arm, torque on: robot READY, control loop HOLD."), status_line)
+    check.ok(f"{label}: step 1 says that the station holds the real arm and that it reads here again after Disable", "The station holds the real arm." in page.locator("#arm-status").inner_text(), page.locator("#arm-status").inner_text())
+    passed = line.get("passed") or {}
+    check.ok(f"{label}: the line's counts hold the writes of PEAR's enable: WRITE 40, WRITE 55, SYNC WRITE 42 and the settings", all(passed.get(name, 0) > 0 for name in ("WRITE 40", "WRITE 55", "SYNC WRITE 42")) and len([name for name in passed if name.startswith("WRITE ")]) > 3, passed)
+    check.equal(f"{label}: the guard refused nothing, the line reported no error and is not lost", [line.get("refused"), line.get("lineErrors"), line.get("isLost")], [0, 0, False])
+    check.ok(f"{label}: the page's line about the arm's line says the same", "it refused 0" in page.locator("#station-line").inner_text(), page.locator("#station-line").inner_text())
+    real_note = page.locator("#station-real-note").inner_text()
+    check.equal(f"{label}: no single actions are offered, and the note says what a real arm is offered", [page.locator("#station-jog-part").is_visible(), "On a real arm this version offers Home, Stop and Disable. Single actions are not offered, and no model is asked while a real arm is enabled." in real_note], [False, True])
+    check.equal(f"{label}: \"Ask the model once\" is not offered", page.locator("#ask-once").is_disabled(), True)
+    numbers["why no model is asked"] = page.locator("#ask-missing").inner_text()
+    check.equal(f"{label}: the hand-over check and \"Enable the station on this arm\" are not offered, the simulated Enable is not shown, and Home, Stop and Disable are", [page.locator("#station-preflight-run").is_visible() and page.locator("#station-preflight-run").is_enabled(), real_shown(page)["isOffered"], page.locator("#station-enable").is_visible(), page.locator("#station-home").is_enabled(), page.locator("#task-stop").is_enabled(), page.locator("#station-disable").is_enabled()], [False, False, False, True, True, True])
+    page.click("#language-zh")
+    real_wait(page, "!document.getElementById('station-status').textContent.startsWith('The station')", 5000)
+    numbers["the real arm's panel in Chinese"] = [page.locator(f"#{name}").inner_text() for name in ("station-status", "station-real-note", "station-line")]
+    check.ok("languages: the real arm's status, its note and its line's counts are in Chinese", "Home 需要先在步驟 2 啟動攝影機" in page.locator("#station-real-note").inner_text() and not any(words in page.locator(f"#{name}").inner_text() for name in ("station-status", "station-real-note", "station-line") for words in ("The station", "On a real arm", "The arm's line")), numbers["the real arm's panel in Chinese"])
+    page.click("#language-en")
+    real_wait(page, "document.getElementById('station-status').textContent.startsWith('The station')", 5000)
+
+    # Home needs the wrist camera's frames: without the camera of step 2 it does not run, and the page says so
+    label = "Home without the camera"
+    check.ok(f"{label}: before the press the real arm's note says that Home needs the camera of step 2 started", "Home needs the camera of step 2 started" in real_note, real_note)
+    camera_line = page.locator("#station-camera").inner_text()
+    check.ok(f"{label}: and the camera's line says that no frames arrive because the camera in step 2 does not run, and to start it", "no frames arrive, because the camera in step 2 does not run" in camera_line and "start the camera in step 2" in camera_line, camera_line)
+    page.click("#station-home")
+    real_wait_station(page, "view.action === null && view.outcome !== null", 20000)
+    outcome = station_view(page)["outcome"] or {"key": None, "values": {}}
+    check.ok(f"{label}: Home does not run, with PEAR's words", outcome["key"] == "station.action.failed" and "Camera unavailable" in str(outcome["values"].get("error")), outcome)
+    advice = page.locator("#station-report-camera")
+    advice_text = advice.inner_text() if advice.is_visible() else ""
+    check.ok(f"{label}: with the failure the page says that there was no fresh frame of the wrist camera and to start the camera in step 2", "it had no fresh frame of the wrist camera" in advice_text and "If the camera in step 2 does not run, start it" in advice_text, advice_text)
+    check.equal(f"{label}: the station still holds the arm", [station_view(page)["phase"], station_view(page)["status"]["robot"]], ["on", "READY"])
+
+    # with the camera's test picture: Home, the plan, approve, Stop on the way, Home to its end
+    label = "Home"
+    page.click("#camera-start")
+    check.ok(f"{label}: with the camera's test picture started the station gets its frames", real_wait_station(page, "view.status.camera != null && view.status.camera.isRunning === true && view.status.camera.perSecond >= 5", 20000), station_view(page)["status"].get("camera"))
+    start = station_view(page)["status"]["joints"]
+    check.ok(f"{label}: pressed, it shows its plan and waits", real_home_to_plan(page) and page.locator("#station-plan").is_visible(), station_view(page)["plan"])
+    page.wait_for_timeout(500)
+    check.equal(f"{label}: nothing moves before the plan is approved", station_view(page)["status"]["joints"], start)
+    page.click("#station-approve")
+    check.ok(f"{label}: approved, the arm moves", real_wait_station(page, "view.status.control !== 'HOLD'", 15000), station_view(page)["status"].get("control"))
+    page.wait_for_timeout(600)
+    page.click("#task-stop")
+    real_wait_station(page, "view.action === null && view.outcome !== null", 15000)
+    real_wait_station(page, "view.status.robot === 'READY' && view.status.control === 'HOLD'", 15000)
+    view = station_view(page)
+    stopped = view["status"]
+    check.equal("Stop on the way: Home is ended by Stop, and the station still holds the real arm, ready and holding", [(view["outcome"] or {}).get("key"), view["phase"], stopped.get("arm"), stopped.get("robot"), stopped.get("control")], ["station.action.homeStopped", "on", "real", "READY", "HOLD"])
+    check.ok("Stop on the way: the status line says that the torque is on", "torque on" in page.locator("#station-status").inner_text(), page.locator("#station-status").inner_text())
+    session = log_lines(page)[lines:]
+    check.ok("Stop on the way: Stop was pressed while Home moved the arm: the log holds Home's phase homing before Stop, and Home ended by it", real_in_order(session, ["Station: Home plan approved", "Station: phase homing", "Station: Stop", "Station: Home ended by Stop"]) == [] and not any(line.startswith("Station: Home done") for line in session), session[-6:])
+    page.wait_for_timeout(700)
+    check.equal("Stop on the way: after the brake the arm stands still", station_view(page)["status"]["joints"], stopped["joints"])
+    # the Worker's simulated arm stands at Home's pose when it is enabled, so this Home has almost no way to go
+    numbers["Stop on the way: the largest travel of a joint since the plan, in radians"] = max(abs(now - before) for now, before in zip(stopped["joints"], start))
+    check.ok(f"{label}: pressed again, it shows its plan again", real_home_to_plan(page), station_view(page)["plan"])
+    page.click("#station-approve")
+    real_wait_station(page, "view.action === null && view.outcome !== null", 60000)
+    view = station_view(page)
+    check.equal(f"{label}: approved, it runs to its end, and the station holds the arm at Home", [(view["outcome"] or {}).get("key"), view["phase"], view["status"].get("robot")], ["station.action.homed", "on", "READY"])
+    numbers["Home's result"] = page.locator("#station-home-results").inner_text()[:600]
+
+    # Disable behind a second press
+    label = "Disable"
+    real_wait_station(page, "view.status.control === 'HOLD'", 10000)
+    last = station_view(page)["status"].get("line") or {}
+    numbers["the line before Disable"] = last
+    check.equal("the whole session: the guard refused nothing, and the line reported no error and was not lost", [last.get("refused"), last.get("lineErrors"), last.get("isLost")], [0, 0, False])
+    page.click("#station-disable")
+    page.wait_for_timeout(500)
+    confirm = page.locator("#station-disable-confirm")
+    confirm_text = confirm.inner_text() if confirm.is_visible() else ""
+    check.equal(f"{label}: the first press only asks: the page says that the arm will go limp and to hold it, the station still holds the arm, and the Worker was not asked to disable", ["The arm will go limp: hold it" in confirm_text, station_view(page)["phase"], (station_view(page)["status"] or {}).get("robot"), real_asked(page, "disable")], [True, "on", "READY", []])
+    check.ok(f"{label}: the button of the second press is offered and pressed", real_input(lambda: page.click("#station-disable-go", timeout=5000)), confirm_text)
+    check.ok(f"{label}: the second press disables", real_wait_station(page, "view.phase === 'off'", 30000), station_view(page)["phase"])
+    check.equal(f"{label}: the Worker was asked to disable once", len(real_asked(page, "disable")), 1)
+    check.ok(f"{label}: the Worker gives the line back and the window reads the arm again", real_wait_log(page, REAL_READ_AGAIN + "", 10000) and log_lines(page)[lines:].count(REAL_READ_AGAIN) == 1, log_lines(page)[-3:])
+    wait_phase(page, "reading", 10000)
+    check.equal(f"{label}: step 1 reads the arm, and the control is offered again", [phase(page), real_offered(page)], ["reading", True])
+    gained = log_lines(page)[lines:]
+    missing = real_in_order(gained, [
+        "Station: enabling on the real arm asked, source simulated-configured; the window closed its session",
+        REAL_REPORT + "{",
+        "Station: the operator ticked the box and pressed: switch the torque on",
+        "Station: enabled on the real arm; the robot opened in ",
+        "Station: Home asked",
+        "Station: Home did not run: ",
+        "Station: Home asked",
+        "Station: Home plan approved",
+        "Station: Stop",
+        "Station: Home ended by Stop",
+        "Station: Home asked",
+        "Station: Home plan approved",
+        "Station: Home done: ",
+        "Station: disabled on the real arm; the Worker closed the line",
+        REAL_READ_AGAIN,
+    ])
+    check.equal("the log: it holds each step's line, in the order of the session", missing, [])
+    address = service.split("//")[-1]
+    check.equal("the log: the session's lines hold no key and no address, and none says that the guard refused a packet", [line[:120] for line in gained if KEY in line or address in line or "the guard refused" in line or "the guard has refused" in line], [])
+    numbers["the session's log"] = [line[:160] for line in gained if not line.startswith(REAL_REPORT)]
+
+
+def real_blocked(check: Check, browser, base: str) -> None:
+    """With ?preflight=sim the Worker's simulated servos hold their own settings, as an arm lerobot never ran:
+    PEAR's enable would change settings that survive a power cycle, so nothing is offered and nothing written."""
+    label = "blocked"
+    page = real_page(check, browser, base, "?lang=en&preflight=sim")
+    connect_sim(page)
+    page.wait_for_function("window.pearjs.arm.view.live !== null")
+    check.ok(f"{label}: with ?preflight=sim the control is offered on the simulated arm", real_offered(page), real_shown(page))
+    lines = len(log_lines(page))
+    page.click("#station-arming-run")
+    check.ok(f"{label}: the request ends blocked, and the log says for which reason and that nothing was written", real_wait_log(page, REAL_BLOCKED + " (settings); nothing was written"), log_lines(page)[-3:])
+    check.ok(f"{label}: the window reads the arm again", real_wait_log(page, REAL_READ_AGAIN, 10000), log_lines(page)[-3:])
+    told = real_told(page)
+    report = told.get("report") or {}
+    blockers = told.get("blockers") or []
+    rows = (blockers[0].get("rows") or []) if blockers else []
+    check.numbers.setdefault("real", {})["blocked: the reasons"] = blockers
+    check.ok(f"{label}: the Worker tells one reason, settings, with the rows PEAR's enable would change: registers that survive a power cycle and hold another value", len(blockers) == 1 and blockers[0].get("code") == "settings" and len(rows) > 0 and all(row.get("area") == "eeprom" and row.get("held") != row.get("pear") for row in rows), blockers)
+    check.ok(f"{label}: the guard let through reads only and refused nothing", real_reads_only(report.get("guard")), report.get("guard"))
+    check.equal(f"{label}: the window asked the Worker to enable, got its report, and sent no answer", [entry["type"] for entry in real_asked(page)], ["enableReal", "arming report"])
+    shown = real_shown(page)
+    check.equal(f"{label}: the page shows the reason and offers no confirmation", [shown["isPartShown"], shown["blockers"], shown["hasConfirm"]], [True, "settings", False])
+    check.ok(f"{label}: the page says in sentences that nothing was written, which settings would change and how many, and what to do", all(words in shown["text"] for words in ("The station was not enabled on this arm, and nothing was written to a servo", f"PEAR's enable would change settings that survive a power cycle ({len(rows)}): ", "Run the arm with lerobot, then try again.")), shown["text"][:700])
+    check.ok(f"{label}: the report under it says that the Worker does not hold the line any more", "The Worker does not hold the arm's line any more, so the window can read the arm again." in shown["text"], shown["text"][-600:])
+    page.click("#language-zh")
+    real_wait(page, "!document.getElementById('station-arming').innerText.includes('The station was not enabled')", 5000)
+    chinese = real_shown(page)["text"]
+    check.numbers["real"]["blocked: the page in Chinese"] = chinese[:500]
+    check.ok("languages: the reason and its sentences are in Chinese", "lerobot" in chinese and not any(words in chinese for words in ("The station was not enabled", "PEAR's enable would change", "Run the arm")), chinese[:400])
+    page.click("#language-en")
+    check.equal(f"{label}: the station is off, step 1 reads the arm, and the control is offered again", [station_view(page)["phase"], phase(page), real_offered(page)], ["off", "reading", True])
+
+
+def real_real_path(check: Check, browser, base: str) -> None:
+    """Without ?preflight=..., on a stand-in of a browser's port that answers as a calibrated arm of six servos: the
+    control is offered and the request runs as on a real arm, up to where a headless browser ends it. The Worker's
+    own getPorts() gives no port (the stand-in lives in the window), so the request ends blocked at "no-port"; the
+    port's own record tells what the window did around it."""
+    label = "the real path"
+    page = real_page(check, browser, base, "?lang=en", (scripted_port(USB_ADAPTER, SIX_CALIBRATED),))
+    page.click("#arm-connect")
+    wait_phase(page, "reading")
+    page.wait_for_function("window.pearjs.arm.view.live !== null")
+    check.ok(f"{label}: on a port that is read as a calibrated arm of six servos, not the simulated one, the control is offered", real_offered(page) and page.evaluate("window.pearjs.arm.view.isSimulated") is False, real_shown(page))
+    port_log = page.evaluate("window.portLog")
+    check.equal(f"{label}: before it is pressed the window has opened the port once, at the servos' baud rate, and not closed it, and no Worker runs", [[entry["baudRate"] for entry in port_log["opened"]], port_log["closed"], len(page.workers)], [[1000000], 0, 0])
+    lines = len(log_lines(page))
+    page.click("#station-arming-run")
+    check.ok(f"{label}: the request ends blocked, and the log says at the stop and that nothing was written", real_wait_log(page, REAL_BLOCKED + " (stop); nothing was written"), log_lines(page)[-3:])
+    check.ok(f"{label}: the log says that the window reads the arm again, on the same port", real_wait_log(page, REAL_READ_AGAIN, 10000), log_lines(page)[-3:])
+    gained = log_lines(page)[lines:]
+    told = real_told(page)
+    report = told.get("report") or {}
+    check.numbers.setdefault("real", {})["the real path: the arming report"] = told
+    check.equal(
+        f"{label}: the Worker's own getPorts() gave no port: the report stops at no-port, nothing was read, the guard was given no packet and no line is held",
+        {name: report.get(name, "absent") for name in ("stop", "ports", "servos", "settings", "guard", "isClosed")},
+        {"stop": "no-port", "ports": [], "servos": None, "settings": None, "guard": {"passed": {}, "refused": 0}, "isClosed": True},
+    )
+    check.equal(f"{label}: the Worker tells one reason against enabling: the stop no-port", told.get("blockers"), [{"code": "stop", "stop": "no-port"}])
+    check.ok(f"{label}: the log says what the Worker was asked: a granted port, and that the window closed its session", any(line.startswith("Station: enabling on the real arm asked, source granted; the window closed its session") for line in gained), gained[:2])
+    shown = real_shown(page)
+    check.equal(f"{label}: the page shows the reason and offers no confirmation", [shown["isPartShown"], shown["blockers"], shown["hasConfirm"]], [True, "stop", False])
+    check.ok(f"{label}: the page says in sentences that nothing was written, that the Worker did not read the arm to its end, and that it was given no port of this adapter", all(words in shown["text"] for words in ("The station was not enabled on this arm, and nothing was written to a servo", "The Worker did not read the arm to its end.", "The Worker was given no port of this adapter")), shown["text"][:700])
+    asked = real_asked(page)
+    check.equal(f"{label}: the window asked the Worker to enable, got its report, and sent no answer", [entry["type"] for entry in asked], ["enableReal", "arming report"])
+    check.equal(
+        f"{label}: by the port's own record the window had closed the port when the request went to the Worker and had not opened it again when the report came, and nothing was written in between",
+        [[entry["opened"], entry["closed"]] for entry in asked] + [len(asked) == 2 and asked[1]["written"] - asked[0]["written"]],
+        [[1, 1], [1, 1], 0],
+    )
+    written = len(page.evaluate("window.portLog")["written"])
+    again = wait_read_again(page, "window.portLog.written.length", written)
+    port_log = page.evaluate("window.portLog")
+    check.equal(f"{label}: after it the window opened the same port again, at the servos' baud rate, and it is not closed again", [[entry["baudRate"] for entry in port_log["opened"]], port_log["closed"]], [[1000000, 1000000], 1])
+    check.ok(f"{label}: the window reads the arm again: the port is given packets after the report", len(asked) == 2 and again > written >= asked[1]["written"], [asked[-1], written, again])
+    check.ok(f"{label}: every packet the port was ever given is a PING, a READ or a SYNC READ", set(reads_only(port_log)) <= {1, 2, 0x82} and len(port_log["written"]) > 0, reads_only(port_log))
+    check.equal(f"{label}: the station is off, step 1 reads the arm, the window's guard refused nothing, and the control is offered again", [station_view(page)["phase"], phase(page), page.locator("#guard-line").get_attribute("data-refused"), real_offered(page)], ["off", "reading", "0", True])
+
+
+def part_real(check: Check, browser, base: str, service: str) -> None:
+    """The station on a real arm (the requests "enableReal" and "arm"): the page asks for the first write only
+    after the tick and a real press; Enable, Home, Stop and Disable on the Worker's simulated port that holds
+    PEAR's settings; an arm whose settings PEAR's enable would change; and the real path as far as a headless
+    browser goes. Every way out ends with the arm's line given back and the window reading again."""
+    real_station(check, browser, base, service)
+    real_blocked(check, browser, base)
+    real_real_path(check, browser, base)
+    ModelService.configure()
+
+
 PARTS = [
     "load", "stamp", "sim", "expected", "guard", "cable", "faults", "calibration", "serial", "diagnostics", "camera",
     "model", "privacy", "ask", "languages", "keyboard", "layout", "folder", "subpath", "hosted", "insecure", "log",
-    "transport", "timing", "selftest", "station", "preflight",
+    "transport", "timing", "selftest", "station", "preflight", "real",
 ]
 
 
@@ -4044,6 +4500,7 @@ def main() -> int:
             run("selftest", lambda: part_selftest(check, browser))
             run("station", lambda: part_station(check, browser, context, base, dist))
             run("preflight", lambda: part_preflight(check, browser, base, service))
+            run("real", lambda: part_real(check, browser, base, service))
 
             check.part = "whole run"
             check.equal("no uncaught error in any page", check.page_errors, [])

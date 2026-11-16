@@ -7,6 +7,7 @@
 // The camera stays in the window (a Worker cannot open one). What the window tells of it carries no id and is
 // never answered: whether the camera runs, and its frames, each the JPEG a turn would send.
 
+import type { MotorCalibration } from "../../src/feetech/index";
 import type { ModelState } from "../../src/so101/kinematics/index";
 
 /** Where each servo of the simulated arm stands, steps, by the motor's name. */
@@ -17,6 +18,12 @@ export interface UsbIds {
   readonly vendorId: number;
   readonly productId: number;
 }
+
+/** Where the Worker takes a real arm's port from. "granted": the one port the page was granted, by the Worker's own
+ * `navigator.serial`. The other two are the browser check's way through the same code, a simulated port the Worker
+ * makes itself in place of a granted one: "simulated" holds the simulated servos' own settings, as an arm that
+ * lerobot has never run; "simulated-configured" holds the settings PEAR's enable writes, as an arm lerobot has run. */
+export type PortSource = "granted" | "simulated" | "simulated-configured";
 
 /** What tells one arm from another on the line: what one servo holds of the calibration. */
 export interface ServoPrint {
@@ -56,11 +63,33 @@ export type StationRequest =
    * simulated port of its own in place of a granted one: the browser check's way through the same code. */
   | {
       readonly type: "preflight";
-      readonly source: "granted" | "simulated";
+      readonly source: PortSource;
       readonly usb: UsbIds | null;
       readonly expected: ArmFingerprint;
       readonly isHidden: boolean;
-    };
+    }
+  /** Enables the station on a real arm: the one request after which the page writes to a servo. The Worker takes
+   * the line as a preflight does and reads all a preflight reads, behind a guard that lets no write through
+   * (station_guard.ts in its state "reads"). It tells what it found as the event "arming". With a reason against
+   * enabling among the event's `blockers` it closes the line and answers "blocked". Without one it waits for the
+   * request "arm": refused, or not answered within ARMING_LIMIT_MS, it closes the line and answers "refused";
+   * confirmed, it lets the station's own writes through the guard and opens the robot, which is PEAR's enable,
+   * and answers "enabled". The window must have closed its own use of the port first. `source`, `usb`, `expected`
+   * and `isHidden` are a preflight's. `calibrationFile` is the lerobot calibration file the person loaded, when
+   * the page found it equal to the registers; null when none is loaded: the robot is then given the calibration
+   * the servos hold, with lerobot's drive mode 0 for every motor. */
+  | {
+      readonly type: "enableReal";
+      readonly source: PortSource;
+      readonly usb: UsbIds | null;
+      readonly expected: ArmFingerprint;
+      readonly calibrationFile: Readonly<Record<string, MotorCalibration>> | null;
+      readonly isHidden: boolean;
+    }
+  /** The operator's answer to the event "arming" of the request "enableReal" that waits for it. `requestId` is
+   * that event's: an answer that names another request than the one that waits is refused with an error, so that
+   * a confirmation shown for an earlier request cannot arm a later one. */
+  | { readonly type: "arm"; readonly requestId: number; readonly isConfirmed: boolean };
 
 export type StationRequestType = StationRequest["type"];
 
@@ -166,6 +195,28 @@ export interface StationStatus {
   readonly action: "jog" | "home" | null;
   /** Whether the page is hidden: actions are refused. */
   readonly isHidden: boolean;
+  /** Which arm the robot holds: the Worker's simulated one or a real one on its line; null while the robot is
+   * off. */
+  readonly arm: "simulated" | "real" | null;
+  /** A real arm's line; null on the simulated arm and while the robot is off. */
+  readonly line: RealLineStatus | null;
+}
+
+/** A real arm's line as the station has it: what its guard let through and refused, and whether it is there. */
+export interface RealLineStatus {
+  /** What the guard let through since the line was opened, counted by the instruction and, for a write, the
+   * register's address: "PING", "READ", "SYNC READ", "WRITE 40", "SYNC WRITE 42". */
+  readonly passed: Readonly<Record<string, number>>;
+  /** How many packets the guard refused. A refused write was not sent: the control loop faults and the servos
+   * keep the last goal that passed. Any number above 0 is a defect of the page or a servo that jumped. */
+  readonly refused: number;
+  /** The last refusals in words (English, as an error says them), the newest last; five at most. */
+  readonly refusals: readonly string[];
+  /** The line's errors since it was opened. */
+  readonly lineErrors: number;
+  /** Whether the port is lost (the cable, the adapter, the servos' supply to the adapter): the station cannot
+   * reach the servos then, which keep their torque and hold their last goal until their power is cut. */
+  readonly isLost: boolean;
 }
 
 /** One reason the timing self-check refuses to enable: which limit, what was measured, and the limit. */
@@ -278,6 +329,43 @@ export interface PreflightReport {
   readonly tookMs: number;
 }
 
+/** A reason the station is not enabled on a real arm, found by reads before anything was written. */
+export type ArmingBlocker =
+  /** The line was not read to its end: the report's `stop` and `detail` say where and why. */
+  | { readonly code: "stop"; readonly stop: PreflightStop }
+  /** The timing self-check failed on this line: the report's `timing.failures` say why. */
+  | { readonly code: "timing" }
+  /** PEAR's enable would change settings that survive a power cycle: `rows` are the report's settings whose area
+   * is "eeprom" and whose `held` is not `pear`. This version changes no such setting: the servos have to hold
+   * PEAR's values already, as they do after lerobot has run the arm. */
+  | { readonly code: "settings"; readonly rows: readonly PreflightSetting[] }
+  /** Servos whose Status is not 0. */
+  | { readonly code: "status"; readonly ids: readonly number[] }
+  /** Servos whose Phase has the bit 0x10 set: PEAR's enable would rewrite that register, which is in the EEPROM. */
+  | { readonly code: "phase"; readonly ids: readonly number[] }
+  /** Servos that hold the factory's values (offset 0, range 0 to 4095) in place of a calibration. */
+  | { readonly code: "uncalibrated"; readonly ids: readonly number[] }
+  /** The loaded calibration file is not equal to what the Worker read of the servos: `detail` names the
+   * differences. */
+  | { readonly code: "calibration"; readonly detail: string }
+  /** The guard refused packets while the line was only read: a defect of the page. */
+  | { readonly code: "guard"; readonly refused: number };
+
+/** How the request "enableReal" ended. */
+export interface EnableRealResult {
+  /** "enabled": the robot is open and holds the arm. "blocked": a reason among `blockers`; nothing was written.
+   * "refused": the operator refused or did not answer; nothing was written. */
+  readonly outcome: "enabled" | "blocked" | "refused";
+  /** What was read before anything was written. Its `isClosed` says whether the Worker closed the port again:
+   * false while the station holds the arm ("enabled"); after "blocked" and "refused" only true lets the window
+   * read the port. */
+  readonly report: PreflightReport;
+  readonly blockers: readonly ArmingBlocker[];
+  /** How long the robot took to open, ms: PEAR's enable, in which each servo is without torque for a moment;
+   * null when it was not opened. */
+  readonly openMs: number | null;
+}
+
 export interface EnableResult {
   readonly timing: TimingCheck;
   /** How long the robot took to open, ms. */
@@ -285,8 +373,11 @@ export interface EnableResult {
 }
 
 export interface DisableResult {
-  /** Where the simulated arm stands at the end, steps. */
+  /** Where the simulated arm stands at the end, steps; empty for a real arm, which the window reads again. */
   readonly positions: MotorSteps;
+  /** Whether the Worker holds no port now: true for the simulated arm; for a real arm whether its port closed.
+   * Only then can the window read the port. */
+  readonly isLineClosed: boolean;
 }
 
 /** What an action did: PEAR's record of its result and what the next turn would tell the model of it. */
@@ -314,6 +405,8 @@ export interface StationResults {
   approve: null;
   visibility: null;
   preflight: PreflightReport;
+  enableReal: EnableRealResult;
+  arm: null;
 }
 
 export type StationEvent =
@@ -326,6 +419,15 @@ export type StationEvent =
   | { readonly type: "plan"; readonly requestId: number; readonly plan: Readonly<Record<string, unknown>> }
   /** The timing self-check's numbers, when it has run. */
   | { readonly type: "timing"; readonly timing: TimingCheck }
+  /** What the Worker read of a real arm for the request `requestId` ("enableReal"), before anything is written:
+   * a preflight's report, whose `isClosed` is false because the line is still open, and the reasons against
+   * enabling. With no reason the Worker now waits for the request "arm"; with one it does not wait. */
+  | {
+      readonly type: "arming";
+      readonly requestId: number;
+      readonly report: PreflightReport;
+      readonly blockers: readonly ArmingBlocker[];
+    }
   /** The frame the observation of the request `requestId` held, told once: the JPEG's bytes as the observation
    * holds them, the frame's number among those the wrist camera has seen, and how old it was then, ms. */
   | { readonly type: "frame"; readonly requestId: number; readonly jpeg: Uint8Array; readonly number: number; readonly ageMs: number };
@@ -369,7 +471,13 @@ export const REQUEST_LIMIT_MS: Readonly<Record<StationRequestType, number>> = {
   approve: 3_000,
   visibility: 3_000,
   preflight: 30_000,
+  // the reads of a preflight, the operator's answer (ARMING_LIMIT_MS) and the robot's opening
+  enableReal: 180_000,
+  arm: 3_000,
 };
+
+/** How long the Worker waits for the operator's answer to the event "arming", ms; no answer counts as refused. */
+export const ARMING_LIMIT_MS = 120_000;
 
 /** How often the Worker tells its status, ms. */
 export const STATUS_PERIOD_MS = 100;
