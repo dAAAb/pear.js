@@ -7,7 +7,8 @@ import { type SerialPortLike } from "../../src/feetech/index";
 import { JOINTS, MOTORS, type MotorName, servoFaults } from "../../src/so101/hardware/index";
 import { SO101Kinematics } from "../../src/so101/kinematics/index";
 import { type ArmFailure, ArmSession, type BoundsMark, usbIdsOf } from "./arm";
-import { Ask, type AskResult, renderAsk } from "./ask";
+import { Ask, type AskResult, type AskSource, renderAsk } from "./ask";
+import { type ExecuteFacts, executeOffer, executeRow, largeParts } from "./execute_view";
 import {
   CameraSession,
   DEFAULT_CAMERA_ID,
@@ -171,6 +172,16 @@ let isAskStarting = false;
 /** Whether the last click on Ask got no frame of the running camera, so that no request was made. */
 let isAskWithoutFrame = false;
 let askResult: AskResult | null = null;
+/** How many actions have started on the station: steps by hand, Homes and a model's actions. An answer is executed
+ * only while this is what it was when its ask read the arm. */
+let actionsStarted = 0;
+/** How many times the station gave up an arm or was lost. An answer is executed only by the station that held the
+ * arm when the model was asked: between two holds the arm is limp and may be moved. */
+let stationReleases = 0;
+/** What the last ask read the arm from, and the two counts at that moment; null before the first ask. */
+let askOrigin: { source: AskSource; actions: number; releases: number } | null = null;
+/** Whether "Execute this action" was pressed on a real arm and waits for its second press. */
+let isExecuteAsked = false;
 let timingState: { kind: "idle" | "needsArm" | "done" } | { kind: "running"; step: string } = { kind: "idle" };
 
 interface SerialLike {
@@ -1074,16 +1085,26 @@ async function runModelCheck(): Promise<void> {
 
 // ---------------------------------------------------------------- ask the model once
 //
-// One turn, as the first of a task, built by the library from what this window read and sent with the library's
-// client (./ask.ts). Nothing here reaches the arm: the answer's action is shown, not executed.
+// One turn, as the first of a task, built by the library from the arm's state (this window's reading, or the
+// station's measurement while it holds the arm) and sent with the library's client (./ask.ts). Asking reaches no
+// arm. The answer's one action goes to the station only at the operator's press of "Execute this action"
+// (./execute_view.ts): on a real arm at a second press, and only while no action has started since the ask.
 
 /** What an ask still lacks, as a text's key; null when the model can be asked. */
 function askMissing(): TextKey | null {
-  if (stationView.phase !== "off") return stationView.real !== null ? "ask.need.stationReal" : "ask.need.station";
-  const live = arm.view.live;
-  if (arm.view.phase === "idle" || arm.view.phase === "failed") return "ask.need.arm";
-  // an arm is there, and the window has no complete reading of it (not yet, or the arm was never calibrated)
-  if (arm.view.phase !== "reading" || live?.joints == null || live.state === null) return "ask.need.reading";
+  if (stationView.phase !== "off") {
+    // the station has the arm: the state is the station's, told in a status that saw no action under way
+    const status = stationView.status;
+    if (stationView.phase !== "on" || stationView.lost !== null || status?.joints == null || status.state === null) {
+      return "ask.need.stationState";
+    }
+    if (stationView.action !== null || status.action !== null) return "ask.need.stationIdle";
+  } else {
+    const live = arm.view.live;
+    if (arm.view.phase === "idle" || arm.view.phase === "failed") return "ask.need.arm";
+    // an arm is there, and the window has no complete reading of it (not yet, or the arm was never calibrated)
+    if (arm.view.phase !== "reading" || live?.joints == null || live.state === null) return "ask.need.reading";
+  }
   if (camera.view.phase !== "live") return "ask.need.camera";
   if (checkedService === null) return "ask.need.model";
   if (byId<HTMLTextAreaElement>("task-instruction").value.trim() === "") return "ask.need.instruction";
@@ -1102,15 +1123,22 @@ function renderAskPanel(): void {
   note.dataset.frame = isAskWithoutFrame ? "none" : "";
   setText(note, ask !== null ? "" : missing !== null ? t(missing) : isAskWithoutFrame ? t("ask.noFrame") : "");
   renderAsk(ask, askResult);
+  renderExecute();
 }
 
 async function runAsk(): Promise<void> {
-  const live = arm.view.live;
   const service = checkedService;
-  if (ask !== null || isAskStarting || askMissing() !== null) return;
-  if (service === null || live?.joints == null || live.state === null) return;
+  if (ask !== null || isAskStarting || askMissing() !== null || service === null) return;
+  // the arm as the model will see it: the station's measurement while it holds the arm, else this window's reading
+  const source: AskSource = stationView.phase === "on" ? "station" : "window";
+  const seen = source === "station" ? stationView.status : arm.view.live;
+  const joints = seen?.joints ?? null;
+  const state = seen?.state ?? null;
+  if (joints === null || state === null) return;
   const instruction = byId<HTMLTextAreaElement>("task-instruction").value;
-  const { joints, state } = live;
+  // the model sees the arm as it is now: any action that starts from here on spends the answer
+  askOrigin = { source, actions: actionsStarted, releases: stationReleases };
+  isExecuteAsked = false;
   isAskStarting = true;
   isAskWithoutFrame = false;
   askResult = null;
@@ -1126,7 +1154,7 @@ async function runAsk(): Promise<void> {
       return;
     }
     const running = new Ask(
-      { ...service, instruction, joints, state, jpeg, frameMonotonicS: monotonic() },
+      { ...service, instruction, source, joints, state, jpeg, frameMonotonicS: monotonic() },
       renderAskPanel,
       (message) => log.add(redact(message, service.apiKey)),
     );
@@ -1141,6 +1169,82 @@ async function runAsk(): Promise<void> {
     isAskStarting = false;
     renderAskPanel();
   }
+}
+
+/** What "Execute this action" is decided on (./execute_view.ts): the last answer, where its ask read the arm, and
+ * what the station is and has done since. */
+function executeFacts(): ExecuteFacts {
+  const status = stationView.status;
+  const isOn = stationView.phase === "on";
+
+  return {
+    hasAction: ask === null && askResult?.outcome.kind === "action",
+    source: askOrigin?.source ?? "window",
+    isEnabled: isOn,
+    isSameHold: askOrigin !== null && askOrigin.releases === stationReleases,
+    isSpent: askOrigin === null || askOrigin.actions !== actionsStarted,
+    isIdle:
+      isOn &&
+      stationView.action === null &&
+      stationView.lost === null &&
+      status !== null &&
+      status.action === null &&
+      !status.isHidden &&
+      status.line?.isLost !== true,
+  };
+}
+
+/** Shows "Execute this action" under an answer that ends in an action: the control, why it is not offered, and on
+ * a real arm the row of the second press, with the action in words and the warning of a large one. */
+function renderExecute(): void {
+  const outcome = ask === null ? (askResult?.outcome ?? null) : null;
+  const action = outcome?.kind === "action" ? outcome.action : null;
+  const offer = executeOffer(executeFacts());
+  const isReal = stationView.real !== null;
+  // a row that waits for its second press goes with the offer: an answer that is spent is not asked about
+  if (!offer.isOffered || !isReal) isExecuteAsked = false;
+  const part = byId("ask-execute");
+  part.hidden = !offer.isShown;
+  part.dataset.offered = String(offer.isOffered);
+  part.dataset.why = offer.why ?? "";
+  part.dataset.arm = stationView.phase !== "on" ? "" : isReal ? "real" : "simulated";
+  part.dataset.asked = String(isExecuteAsked);
+  byId<HTMLButtonElement>("ask-execute-run").disabled = !offer.isOffered || isExecuteAsked;
+  setText(byId("ask-execute-why"), offer.why === null ? "" : t(offer.why));
+  const row = isExecuteAsked && action !== null ? executeRow(action, { t, count, listed }) : null;
+  byId("ask-execute-confirm").hidden = row === null;
+  setText(byId("ask-execute-ask"), row?.ask ?? "");
+  const large = byId("ask-execute-large");
+  large.hidden = row === null || row.warning === null;
+  large.dataset.large = row === null || action === null ? "" : largeParts(action).map((item) => item.name).join(" ");
+  setText(large, row?.warning ?? "");
+}
+
+/** "Execute this action", for the operator's own press only (`press.isTrusted`): on the simulated arm the press
+ * executes; on a real arm it only asks, in the row that then shows, and the press there executes. */
+function pressExecute(press: Event): void {
+  if (!press.isTrusted || !executeOffer(executeFacts()).isOffered) return;
+  if (stationView.real === null) {
+    void executeAsked();
+    return;
+  }
+  isExecuteAsked = true;
+  renderExecute();
+}
+
+/** The second press on a real arm, "Execute on the arm": the operator's own press, of a row that is shown. */
+function pressExecuteGo(press: Event): void {
+  if (!press.isTrusted || stationView.real === null || !isExecuteAsked) return;
+  void executeAsked();
+}
+
+/** Sends the station the one action the format read of the last answer, as it was parsed and nothing else, when
+ * the offer still holds at this moment. Only the two presses above call this. */
+async function executeAsked(): Promise<void> {
+  const outcome = ask === null ? (askResult?.outcome ?? null) : null;
+  if (outcome?.kind !== "action" || !executeOffer(executeFacts()).isOffered) return;
+  isExecuteAsked = false;
+  await runAction(t("execute.name"), outcome.action as unknown as Record<string, unknown>, "model");
 }
 
 // ---------------------------------------------------------------- the station
@@ -1262,6 +1366,7 @@ const station = new StationClient({
   onLost: (reason, detail) => {
     if (stationView.lost?.reason !== reason) log.add(`Station: the Worker ${reason === "died" ? "died" : "does not answer"}: ${detail}`);
     stationView.lost = { reason, detail };
+    stationReleases += 1; // what the arm does now is unknown: no answer asked before this is executed
     if (stationView.real !== null) stationView.isRealLost = true;
     renderStation();
   },
@@ -1311,6 +1416,8 @@ function stationWhy(): TextKey | null {
 function onStationEvent(event: StationEvent): void {
   if (event.type === "status") {
     stationView.status = event.status;
+    // an action the station runs that no control of this page started also moves the arm: it spends an answer too
+    if (event.status.action !== null && stationView.action === null) actionsStarted += 1;
     if (stationView.lost?.reason === "silent") stationView.lost = null; // it answers again
     logRealLine(event.status);
   } else if (event.type === "log") {
@@ -1407,7 +1514,7 @@ async function sendStationFrame(): Promise<void> {
 /** Writes one line of JSON to the log, for a measurement that is read back from the log: the Worker's clock and
  * the control periods since enabling, as the last status told them (at most about a tenth of a second old), and
  * the numbers of the timing self-check before enabling. `at` is what the page did then. */
-function logClock(at: "stop" | "disable" | "hidden"): void {
+function logClock(at: "stop" | "disable" | "hidden" | "visible"): void {
   const status = stationView.status;
   if (status === null) return;
   const timing = stationView.timing;
@@ -1485,6 +1592,7 @@ async function enableStation(): Promise<void> {
 async function disableStation(): Promise<void> {
   if (stationView.phase !== "on") return;
   stationView.phase = "disabling";
+  stationReleases += 1; // the arm goes limp and may be moved: no answer asked before this is executed
   const real = stationView.real;
   if (real !== null) real.isDisableAsked = false;
   syncStationCamera();
@@ -1926,6 +2034,12 @@ function preflightNode(part: PreflightPart): Node {
   ]);
 }
 
+/** Whether a press may start what moves or releases a real arm: on a real arm only the operator's own press,
+ * which the browser calls trusted, and never a script's click. On the simulated arm any click counts. */
+function isOperatorsPress(press: Event): boolean {
+  return stationView.real === null || press.isTrusted;
+}
+
 /** The stop bar's button: the robot's `stop()`, which brakes and holds. It never closes the station. */
 async function stopStation(): Promise<void> {
   if (stationView.phase !== "on" && stationView.phase !== "disabling") return;
@@ -1942,16 +2056,24 @@ async function stopStation(): Promise<void> {
   renderStation();
 }
 
-/** Runs one action of the model's format, as a turn would, and shows the report the model would read. */
-async function runAction(name: string, action: Record<string, unknown>): Promise<void> {
-  if (stationView.real !== null) return; // no single action on a real arm
+/** Runs one action of the model's format, as a turn would, and shows the report the model would read. `asker`:
+ * whose action it is, a step by hand or the one action a model asked for. Every caller is a press of the
+ * operator's for this action; on a real arm the callers take only a press the browser calls trusted. */
+async function runAction(name: string, action: Record<string, unknown>, asker: "hand" | "model" = "hand"): Promise<void> {
   if (stationView.phase !== "on" || stationView.action !== null) return;
   const running: NonNullable<StationView["action"]> = { name, phase: null, endedBy: null };
   stationView.action = running;
+  // the arm is no longer as a model saw it: an answer asked before this action is spent
+  actionsStarted += 1;
+  isExecuteAsked = false;
   stationView.outcome = null;
   stationView.problem = null;
   dropStationFrame();
-  log.add(`Station: action ${JSON.stringify(action)}`);
+  log.add(
+    asker === "model"
+      ? `Station: Execute ${JSON.stringify(action)} (the model asked for this action)`
+      : `Station: action ${JSON.stringify(action)}`,
+  );
   renderStation();
   try {
     const report = await station.request({ type: "jog", action });
@@ -1986,6 +2108,9 @@ async function runHome(): Promise<void> {
   const name = t("station.home");
   const running: NonNullable<StationView["action"]> = { name, phase: null, endedBy: null };
   stationView.action = running;
+  // Home moves the arm: an answer asked before it is spent
+  actionsStarted += 1;
+  isExecuteAsked = false;
   dropStationFrame();
   stationView.outcome = null;
   stationView.problem = null;
@@ -2041,6 +2166,8 @@ async function tellVisibility(): Promise<void> {
   await station.request({ type: "visibility", isHidden }).catch((error: unknown) => {
     log.add(`Station: the Worker was not told: ${errorText(error)}`);
   });
+  // what the loop did while the page was hidden: the periods since enabling, read after the Worker's answer
+  if (!isHidden) logClock("visible");
   renderStation();
 }
 
@@ -2265,7 +2392,9 @@ function renderStation(): void {
     JOGS.map((jog) => {
       const button = element("button", { text: jogLabel(jog), data: { jog: jog.id } });
       button.type = "button";
-      button.addEventListener("click", () => {
+      button.addEventListener("click", (press) => {
+        // a real arm moves at once at this press: only the operator's own press counts
+        if (stationView.real !== null && !press.isTrusted) return;
         const action = {
           type: "single_arm_delta",
           arm: { x: 0, y: 0, z: 0, pitch: 0, roll: 0, ...jog.arm },
@@ -2277,10 +2406,11 @@ function renderStation(): void {
       return button;
     }),
   );
-  for (const button of byId("station-jog").querySelectorAll("button")) button.disabled = !isIdle;
-  byId<HTMLButtonElement>("station-home").disabled = !isIdle || status?.line?.isLost === true;
-  // a real arm: no single actions, and Disable asks for a second press
-  byId("station-jog-part").hidden = view.real !== null;
+  const isLineLost = status?.line?.isLost === true;
+  for (const button of byId("station-jog").querySelectorAll("button")) button.disabled = !isIdle || isLineLost;
+  byId<HTMLButtonElement>("station-home").disabled = !isIdle || isLineLost;
+  // a real arm: the note that each step moves it at once, and Disable asks for a second press
+  byId("station-jog-part").dataset.arm = view.real !== null ? "real" : "simulated";
   byId("station-real-note").hidden = view.real === null;
   byId("station-disable-confirm").hidden = !(isOn && view.real?.isDisableAsked === true);
 
@@ -2335,6 +2465,8 @@ function renderStation(): void {
   );
 
   byId<HTMLButtonElement>("task-stop").disabled = !isHeld;
+  // what the station is decides whether the model can be asked and whether its action can be executed
+  renderAskPanel();
 }
 
 // ---------------------------------------------------------------- timing
@@ -2420,7 +2552,29 @@ function renderAll(): void {
   renderModel();
 }
 
-/** What a check, or a curious person at the console, may reach: every byte to the servos still passes the guard. */
+/** The station's client as the debug hook gives it. A script in the page is not the operator: while the station
+ * holds a real arm or a real arm's enabling runs, and for the port the page was granted, the hook sends nothing
+ * but Stop. (This closes the hook only. A script that runs in the page could still open the granted port itself
+ * once the page has let go of it: the browser's permission for the port is the origin's.) */
+const hookClient = {
+  get worker(): Worker | null {
+    return station.worker;
+  },
+  start: (): void => station.start(),
+  tell: (telling: Parameters<StationClient["tell"]>[0]): void => station.tell(telling),
+  request: ((request: Parameters<StationClient["request"]>[0], limitMs?: number) => {
+    const isGranted = "source" in request && request.source === "granted";
+    if ((stationView.real !== null || isGranted) && request.type !== "stop") {
+      return Promise.reject(
+        new Error(`The page's hook sends nothing but Stop to the station of a real arm: "${request.type}" was not sent`),
+      );
+    }
+    return station.request(request, limitMs);
+  }) as StationClient["request"],
+};
+
+/** What a check, or a curious person at the console, may reach: every byte to the servos still passes the guard,
+ * and on a real arm the hook moves, enables and releases nothing (`hookClient`, `jog`). */
 const debug: {
   arm: ArmSession;
   camera: CameraSession;
@@ -2429,7 +2583,7 @@ const debug: {
   /** The station: what the page shows of it, its Worker's client, and one action of the model's format run as a
    * button's is. */
   station: () => StationView;
-  stationClient: StationClient;
+  stationClient: typeof hookClient;
   jog: (action: Record<string, unknown>) => Promise<void>;
   selfTest: () => GuardSelfTest | null;
   timing: TimingReport | null;
@@ -2444,8 +2598,9 @@ const debug: {
   log,
   sim: () => sim,
   station: () => stationView,
-  stationClient: station,
-  jog: (action) => runAction("action", action),
+  stationClient: hookClient,
+  // a check's way to an action without a button: on the simulated arm only, never on a real arm
+  jog: (action) => (stationView.real !== null ? Promise.resolve() : runAction("action", action)),
   selfTest: () => selfTest,
   timing: null,
   build: __PEARJS_BUILD__,
@@ -2521,22 +2676,44 @@ function start(): void {
 
   byId("station-enable").addEventListener("click", () => void enableStation());
   byId("station-disable").addEventListener("click", () => pressDisable());
-byId("station-disable-go").addEventListener("click", () => void disableStation());
+  byId("station-disable-go").addEventListener("click", (press) => {
+    if (isOperatorsPress(press)) void disableStation();
+  });
 byId("station-disable-keep").addEventListener("click", () => {
   if (stationView.real !== null) stationView.real.isDisableAsked = false;
   renderStation();
 });
 byId("station-arming-run").addEventListener("click", () => void enableOnArm());
   byId("station-preflight-run").addEventListener("click", () => void runPreflight());
-  byId("station-home").addEventListener("click", () => void runHome());
-  byId("station-approve").addEventListener("click", () => void answerPlan(true));
+  byId("station-home").addEventListener("click", (press) => {
+    if (isOperatorsPress(press)) void runHome();
+  });
+  byId("station-approve").addEventListener("click", (press) => {
+    if (isOperatorsPress(press)) void answerPlan(true);
+  });
   byId("station-refuse").addEventListener("click", () => void answerPlan(false));
   byId("task-stop").addEventListener("click", () => void stopStation());
   document.addEventListener("visibilitychange", () => void tellVisibility());
+  // a key held down presses a button once: the repeats of a held Enter would else press a step again and again
+  document.addEventListener(
+    "keydown",
+    (event) => {
+      if (event.repeat && (event.key === "Enter" || event.key === " ") && event.target instanceof HTMLButtonElement) {
+        event.preventDefault();
+      }
+    },
+    true,
+  );
 
   byId("model-check").addEventListener("click", () => void runModelCheck());
   byId("ask-once").addEventListener("click", () => void runAsk());
   byId("ask-cancel").addEventListener("click", () => ask?.cancel());
+  byId("ask-execute-run").addEventListener("click", pressExecute);
+  byId("ask-execute-go").addEventListener("click", pressExecuteGo);
+  byId("ask-execute-keep").addEventListener("click", () => {
+    isExecuteAsked = false;
+    renderExecute();
+  });
   byId("task-instruction").addEventListener("input", renderAskPanel);
   // a service that was checked is the one that is asked: a change of what names it needs a new check
   for (const id of ["model-url", "model-name", "model-key"]) {

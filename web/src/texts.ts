@@ -6,7 +6,7 @@ export const EN = {
   "page.title": "pear.js: PEAR's robot station in the browser",
   "page.tagline": "PEAR's robot station in the browser, for a LeRobot SO-101.",
   "page.notice":
-    "pear.js is an unofficial, experimental port of PEAR's robot station (MIT Han Lab). The station runs in a Worker of this page and drives a simulated arm. With a real arm connected the page reads: it shows your arm, your camera and your model service. It writes to the servos only after you press “Enable the station on this arm” and confirm; then it can hold the arm, move it to Home, stop it and release it. No model moves an arm.",
+    "pear.js is an unofficial, experimental port of PEAR's robot station (MIT Han Lab). The station runs in a Worker of this page and drives a simulated arm. With a real arm connected the page reads: it shows your arm, your camera and your model service. It writes to the servos only after you press “Enable the station on this arm” and confirm; then it can hold the arm, move it one small step at a time, move it to Home, stop it and release it. It executes a model's action only one at a time, each when you press “Execute this action” for that action. Nothing runs by itself.",
   "page.skip": "Skip to the arm",
   "page.language": "Language",
   "page.noscript": "This page needs JavaScript.",
@@ -295,18 +295,20 @@ export const EN = {
 
   "task.title": "Task",
   "task.notice":
-    "The station below drives a simulated arm, in a Worker of this page. With a real arm connected the page reads; it writes to the servos only after “Enable the station on this arm” and its confirmation, and then it can hold the arm, move it to Home, stop it and release it. It can ask a model once and show the answer: it does not execute the action the model asks for, and no model moves an arm. On the simulated arm you can try the station by hand below: enable it, move it one small step at a time, send it Home and stop it.",
+    "The station below drives a simulated arm, in a Worker of this page. With a real arm connected the page reads; it writes to the servos only after “Enable the station on this arm” and its confirmation, and then it can hold the arm, move it one small step at a time, move it to Home, stop it and release it. It can ask a model once and show the answer. It executes a model's action only one at a time, each when you press “Execute this action” for that action, and on a real arm only after a second press. Nothing runs by itself. On the simulated arm you can try all of this without an arm.",
   "task.instruction": "Instruction",
   "task.placeholder": "Put the red block into the box.",
   "task.start": "Start",
+  "task.startNote":
+    "“Start”, a task the model runs by itself, is not in this version. This version offers one ask and one action at a time: “Ask the model once” above, then “Execute this action” for the action it answered with.",
   "ask.title": "Ask the model once",
   "ask.lead":
-    "Sends the model what the first turn of a task would send: PEAR's system prompt with the instruction above, the arm's state as step 1 shows it, and the camera's frame of this moment. The answer is shown as it arrives. The action the model asks for is shown and not executed: nothing is sent to the arm.",
+    "Sends the model what the first turn of a task would send: PEAR's system prompt with the instruction above, the arm's state, and the camera's frame of this moment. The state is this window's reading (step 1) or, while the station holds the arm, what the station measures. The answer is shown as it arrives, and the action the model asks for is shown in words. Asking sends nothing to the arm: an action is executed only when you press “Execute this action” for it, and that is offered for an answer asked while the station holds the arm.",
   "ask.button": "Ask the model once",
   "ask.cancel": "Cancel",
-  "ask.need.station": "The station is driving the simulated arm, so this window does not read it. Disable the station first.",
-  "ask.need.stationReal":
-    "The station has the real arm's line, so this window does not read the arm, and no model is asked while a real arm is enabled. Disable the station first.",
+  "ask.need.stationState":
+    "The station is taking or giving up the arm, or does not answer, so it tells no state of the arm now. The model can be asked once the station holds the arm.",
+  "ask.need.stationIdle": "An action is under way. The model is asked about an arm at rest: wait until the action has ended.",
   "ask.need.arm": "Missing: an arm this window reads. Start the simulated arm or connect an arm in step 1.",
   "ask.need.reading":
     "Missing: a complete reading of the arm. This window is connected to an arm, but has no complete reading of it yet; step 1 shows what it reads and what it lacks.",
@@ -341,7 +343,28 @@ export const EN = {
   "ask.explain.withheld":
     "The service is there, but the browser withheld its answer from this page, and a browser does not say why. There are two usual reasons: the key is wrong (a vLLM server refuses a wrong key without the header a browser needs before it shows a refusal to a page), or the service does not allow this page's origin ({origin}). Check the service again in step 3. PEAR's words:",
   "ask.notSent":
-    "Nothing was sent to the arm. This page does not execute the action; the client is closed, and the next ask is a new conversation.",
+    "Asking sent nothing to the arm. An action is executed only when you press “Execute this action” for it. The client is closed, and the next ask is a new conversation.",
+  "ask.source.window": "The arm's state in this turn is this window's reading of the arm (step 1).",
+  "ask.source.station":
+    "The arm's state in this turn is the station's: the joints it measured on the arm it holds, at the moment of the ask.",
+  "execute.button": "Execute this action",
+  "execute.lead":
+    "Sends the station this one action, exactly as the format read it of the answer, and shows the result as a step's, under the station above. On a real arm a second press is asked for first. Nothing else is executed, and nothing runs by itself.",
+  "execute.name": "The model's action",
+  "execute.real.ask": "Execute this on the real arm? The arm moves as soon as you press “Execute on the arm”. {action}",
+  "execute.real.go": "Execute on the arm",
+  "execute.real.keep": "Don't",
+  "execute.large":
+    "A large action: {parts} (large is over {cm} cm or over {rad} rad). PEAR checks that the target is within the arm's reach and within the joints' limits; it does not look for an obstacle or for the table. Make sure the way is clear.",
+  "execute.large.cm": "{name} {value} cm",
+  "execute.large.rad": "{name} {value} rad",
+  "execute.why.window":
+    "This answer was asked from the window's reading, while no station held the arm, and the arm may have moved since. An action is executed only from an answer asked while the station holds the arm: enable the station and ask again.",
+  "execute.why.released":
+    "The station that held the arm when the model was asked has been disabled or lost since, and the arm may have moved. Ask again while the station holds the arm.",
+  "execute.why.spent":
+    "An action has started since this answer was asked for (a step by hand, Home, or this action itself), so the arm is no longer as the model saw it and the answer is spent. Ask again for an action from where the arm is now.",
+  "execute.why.busy": "The station cannot take an action now: see its status above.",
   "task.stop": "Stop",
   "task.stopNote": "Stop brakes the arm and holds it where it is. It works whenever the station holds an arm, the simulated one or a real one; the torque stays on.",
 
@@ -415,7 +438,7 @@ export const EN = {
   "station.preflight.failed": "The hand-over check failed: {error}",
   "station.arming.run": "Enable the station on this arm…",
   "station.arming.note":
-    "“Enable the station on this arm” reads the arm first, as the check does, and shows what it found and what enabling does. Nothing is written to a servo until you have confirmed there, and a setting that survives a power cycle is changed only when the confirmation has listed it. This step has so far run on simulated servos only and never on a real arm.",
+    "“Enable the station on this arm” reads the arm first, as the check does, and shows what it found and what enabling does. Nothing is written to a servo until you have confirmed there, and a setting that survives a power cycle is changed only when the confirmation has listed it. Enabling, Home and Disable have run on one real arm so far; everything else has run on simulated servos only.",
   "station.arming.why.calibration":
     "The station cannot be enabled on this arm while the loaded calibration file is not found equal to what the servos hold: PEAR starts only when they are equal. Load this arm's file, or remove the file; without a file the station uses the calibration the servos hold.",
   "station.arming.reading":
@@ -442,7 +465,8 @@ export const EN = {
     "The loaded calibration file is not equal to what the Worker read of the servos ({detail}). PEAR starts only when they are equal. Load this arm's file or remove the file, and try again; without a file the station uses the calibration the servos hold.",
   "station.arming.blocker.guard":
     "The Worker's guard refused packets ({refused}) while the line was only read. Nothing was written, but this is a defect of the page: do not enable the station on this arm with this version, and please copy the log at the bottom of the page and send it.",
-  "station.arming.confirm.untried": "This step has so far run on simulated servos only and never on a real arm.",
+  "station.arming.confirm.untried":
+    "Enabling, Home and Disable have run on one real arm so far (an SO-101). Stop during a move, a step by hand and the execution of a model's action have run on simulated servos only and never on a real arm.",
   "station.arming.confirm.title": "Before the torque is switched on",
   "station.arming.confirm.lead":
     "The Worker has read the arm and has written nothing yet. This is what happens when you confirm, and afterwards:",
@@ -464,6 +488,10 @@ export const EN = {
     "{register} (address {address}) = {pear}, servos: {servos}, of which {changed} hold another value now",
   "station.arming.confirm.home":
     "Home opens the gripper, then moves the arm in one straight joint-space move to PEAR's Home pose at a third of the usual speed: at most 19 degrees a second, about 7 s from the folded rest pose. It does not look for obstacles. It shows its plan first and moves only when you approve it.",
+  "station.arming.confirm.steps":
+    "A step by hand moves the arm at once when you press it: by 1 cm, by 0.05 rad or by the gripper's command, at PEAR's usual speed (at most 57 degrees a second, three times that of Home). It shows no plan first and does not look for obstacles.",
+  "station.arming.confirm.execute":
+    "A model's action is executed only when you press “Execute this action” for it and then “Execute on the arm”: one action each time, at PEAR's usual speed, and as large as the model asked. Read its numbers before the second press. Nothing runs by itself.",
   "station.arming.confirm.stop": "Stop brakes (about 0.15 s) and holds: the torque stays on.",
   "station.arming.confirm.disable": "Disable switches the torque off: the arm goes limp and falls if nothing holds it.",
   "station.arming.confirm.lost":
@@ -493,8 +521,8 @@ export const EN = {
     "The connection to the arm is lost. The servos hear nothing: they keep their torque and hold their last goal. To release the arm, support it and switch the servos' power off. Then reload the page.",
   "station.real.refused":
     "The station's guard refused packets ({count}) and did not send them: {words}. The station has stopped and the arm holds where it is. Press Disable while you hold the arm (it goes limp), then copy the log at the bottom of the page and send it.",
-  "station.real.noJog":
-    "On a real arm this version offers Home, Stop and Disable. Single actions are not offered, and no model is asked while a real arm is enabled. Home needs the camera of step 2 started: PEAR's Home takes a frame of the wrist camera first and does not run without a fresh one.",
+  "station.real.steps":
+    "On a real arm every press of a step below moves the real arm at once by that step: 1 cm, 0.05 rad, or the gripper's command. Keep the stop bar in reach. An action needs the camera of step 2 started: PEAR observes first, and takes a frame of the wrist camera for it; without a fresh frame neither a step nor Home runs.",
   "station.real.disable.ask": "Disable switches the torque off. The arm will go limp: hold it, or make sure it rests, before you press.",
   "station.real.disable.go": "Switch the torque off: I hold the arm",
   "station.real.disable.keep": "Keep the torque on",
@@ -635,7 +663,7 @@ export const ZH_TW: Record<TextKey, string> = {
   "page.title": "pear.js：在瀏覽器裡執行的 PEAR robot station",
   "page.tagline": "在瀏覽器裡執行的 PEAR robot station，搭配 LeRobot SO-101 使用。",
   "page.notice":
-    "pear.js 是 PEAR（MIT Han Lab）robot station 的非官方移植，仍在實驗階段。工作站在這個頁面的 Worker 裡執行，驅動的是模擬手臂。連接真實的手臂時，頁面會讀取：顯示手臂、攝影機與模型服務的狀態。只有在你按下「在這支手臂上啟用工作站」並確認之後，它才會對伺服馬達寫入；之後它可以撐住手臂、讓手臂回到 Home、停止，以及放開手臂。不會有任何模型讓手臂動。",
+    "pear.js 是 PEAR（MIT Han Lab）robot station 的非官方移植，仍在實驗階段。工作站在這個頁面的 Worker 裡執行，驅動的是模擬手臂。連接真實的手臂時，頁面會讀取：顯示手臂、攝影機與模型服務的狀態。只有在你按下「在這支手臂上啟用工作站」並確認之後，它才會對伺服馬達寫入；之後它可以撐住手臂、一次移動一小步、讓手臂回到 Home、停止，以及放開手臂。模型要求的動作一次只執行一個，而且每一個都要你為它按下「執行這個動作」才會執行。不會有任何動作自行執行。",
   "page.skip": "跳到手臂區塊",
   "page.language": "語言",
   "page.noscript": "這個頁面需要 JavaScript 才能運作。",
@@ -910,17 +938,19 @@ export const ZH_TW: Record<TextKey, string> = {
 
   "task.title": "任務",
   "task.notice":
-    "下面的工作站驅動的是模擬手臂，在這個頁面的 Worker 裡執行。連接真實的手臂時，頁面會讀取；只有在按下「在這支手臂上啟用工作站」並確認之後才會對伺服馬達寫入，之後它可以撐住手臂、讓手臂回到 Home、停止，以及放開手臂。它可以問模型一次並顯示回答，但不會執行模型要求的動作；不會有任何模型讓手臂動。在模擬手臂上，你可以在下面親手試試工作站：啟用、一次移動一小步、回到 Home，以及停止。",
+    "下面的工作站驅動的是模擬手臂，在這個頁面的 Worker 裡執行。連接真實的手臂時，頁面會讀取；只有在按下「在這支手臂上啟用工作站」並確認之後才會對伺服馬達寫入，之後它可以撐住手臂、一次移動一小步、讓手臂回到 Home、停止，以及放開手臂。它可以問模型一次並顯示回答。模型要求的動作一次只執行一個，而且每一個都要你為它按下「執行這個動作」才會執行，在真實的手臂上還要再按一次確認。不會有任何動作自行執行。這些在模擬手臂上都可以先試，不需要手臂。",
   "task.instruction": "指令",
   "task.placeholder": "把紅色積木放進盒子裡。",
   "task.start": "開始",
+  "task.startNote":
+    "「開始」是讓模型自行執行整個任務，這個版本還沒有。這個版本提供的是一次問一次、一次執行一個動作：先按上面的「問模型一次」，再為它回答的那個動作按下「執行這個動作」。",
   "ask.title": "問模型一次",
   "ask.lead":
-    "把任務第一回合會送出的內容送給模型：帶有上面指令的 PEAR 系統提示、步驟 1 顯示的手臂狀態，以及攝影機此刻的畫面。回答會邊收邊顯示。模型要求的動作只會顯示，不會執行：不會送任何東西給手臂。",
+    "把任務第一回合會送出的內容送給模型：帶有上面指令的 PEAR 系統提示、手臂的狀態，以及攝影機此刻的畫面。狀態來自這個視窗的讀數（步驟 1）；工作站接手手臂期間，則來自工作站的量測。回答會邊收邊顯示，模型要求的動作也會用白話顯示。詢問不會送任何東西給手臂：只有你為某個動作按下「執行這個動作」，它才會執行，而只有工作站接手手臂期間問到的回答才會提供這個按鈕。",
   "ask.button": "問模型一次",
   "ask.cancel": "取消",
-  "ask.need.station": "工作站正在驅動模擬手臂，這個視窗讀不到手臂。請先停用工作站。",
-  "ask.need.stationReal": "工作站正接手真實手臂的線路，這個視窗讀不到手臂；真實的手臂啟用期間也不會詢問模型。請先停用工作站。",
+  "ask.need.stationState": "工作站正在接手或放開手臂，或是沒有回應，現在無法提供手臂的狀態。等工作站接手手臂之後，就可以詢問模型。",
+  "ask.need.stationIdle": "有動作正在執行。詢問模型時手臂必須靜止：請等動作結束。",
   "ask.need.arm": "還缺：這個視窗讀得到的手臂。請在步驟 1 啟動模擬手臂或連接手臂。",
   "ask.need.reading": "還缺：手臂的完整讀數。這個視窗已連上手臂，但還沒有完整的讀數；步驟 1 會顯示目前讀到什麼、還缺什麼。",
   "ask.need.camera": "還缺：正在運作的攝影機。請在步驟 2 啟動。",
@@ -950,7 +980,26 @@ export const ZH_TW: Record<TextKey, string> = {
   "ask.explain.failed": "模型服務沒有給出回答。PEAR 的原話：",
   "ask.explain.withheld":
     "服務是通的，但瀏覽器不讓本頁讀取回應，也不會說明原因。常見的原因有兩個：金鑰不對（vLLM 伺服器拒絕錯誤的金鑰時，回應裡少了瀏覽器要求的標頭，瀏覽器因此不會把這個拒絕交給網頁），或是服務不允許本頁的來源（{origin}）。請在步驟 3 再檢查一次。PEAR 的原話：",
-  "ask.notSent": "沒有送任何東西給手臂。這個頁面不會執行動作；用戶端已關閉，下一次詢問是全新的對話。",
+  "ask.notSent": "詢問沒有送任何東西給手臂。只有你為某個動作按下「執行這個動作」，它才會執行。用戶端已關閉，下一次詢問是全新的對話。",
+  "ask.source.window": "這個回合裡的手臂狀態，是這個視窗對手臂的讀數（步驟 1）。",
+  "ask.source.station": "這個回合裡的手臂狀態來自工作站：詢問的當下，它在自己接手的手臂上量到的關節角度。",
+  "execute.button": "執行這個動作",
+  "execute.lead":
+    "把這一個動作送給工作站，內容和格式從回答裡讀出的完全相同；結果會像單步動作一樣，顯示在上面的工作站區塊。在真實的手臂上會先要求再按一次。除此之外不會執行任何東西，也不會有任何動作自行執行。",
+  "execute.name": "模型的動作",
+  "execute.real.ask": "要在真實的手臂上執行這個動作嗎？一按下「在手臂上執行」，手臂就會動。{action}",
+  "execute.real.go": "在手臂上執行",
+  "execute.real.keep": "不要",
+  "execute.large":
+    "這是大動作：{parts}（超過 {cm} 公分或超過 {rad} 弧度就算大）。PEAR 會檢查目標是否在手臂構得到的範圍內、是否在關節的極限內；它不會偵測障礙物，也不會偵測桌面。請確認路徑上沒有東西。",
+  "execute.large.cm": "{name} {value} 公分",
+  "execute.large.rad": "{name} {value} 弧度",
+  "execute.why.window":
+    "這個回答是用視窗的讀數問來的，當時工作站沒有接手手臂，手臂之後可能動過。只有工作站接手手臂期間問到的回答，才會執行其中的動作：請啟用工作站，再問一次。",
+  "execute.why.released": "詢問模型時接手手臂的工作站，之後已經停用或失去連線，手臂可能動過。請在工作站接手手臂時再問一次。",
+  "execute.why.spent":
+    "提出這次詢問之後，已經有動作開始執行（單步動作、Home，或這個動作本身），手臂已經不是模型看到的樣子，這個回答不能再用。請再問一次，取得從手臂目前位置出發的動作。",
+  "execute.why.busy": "工作站現在無法接受動作：請看上面的工作站狀態。",
   "task.stop": "停止",
   "task.stopNote": "停止會讓手臂煞車，並停在原地保持不動。只要工作站握有手臂，不論是模擬手臂還是真實的手臂，停止鈕就能用；扭力會維持開啟。",
 
@@ -1017,7 +1066,7 @@ export const ZH_TW: Record<TextKey, string> = {
   "station.preflight.failed": "交接檢查失敗：{error}",
   "station.arming.run": "在這支手臂上啟用工作站…",
   "station.arming.note":
-    "「在這支手臂上啟用工作站」會先像交接檢查一樣讀取手臂，並顯示讀到的內容以及啟用會做的事。在你確認之前，不會對伺服馬達寫入任何東西；斷電重開後仍保留的設定，只有確認清單裡列出來的才會被更動。這個步驟到目前為止只在模擬的伺服馬達上執行過，還沒有在真實的手臂上執行過。",
+    "「在這支手臂上啟用工作站」會先像交接檢查一樣讀取手臂，並顯示讀到的內容以及啟用會做的事。在你確認之前，不會對伺服馬達寫入任何東西；斷電重開後仍保留的設定，只有確認清單裡列出來的才會被更動。到目前為止，啟用、Home 和停用只在一支真實的手臂上執行過；其餘的都只在模擬的伺服馬達上執行過。",
   "station.arming.why.calibration":
     "載入的校正檔還沒有確認和伺服馬達裡的數值一致，所以不能在這支手臂上啟用工作站：PEAR 只有在兩者一致時才會啟動。請載入這支手臂的校正檔，或移除檔案；沒有檔案時，工作站會使用伺服馬達裡的校正。",
   "station.arming.reading": "讀取手臂中：Worker 已接手手臂的線路並讀取，保護機制不會放行任何寫入。需要幾秒鐘…",
@@ -1043,7 +1092,8 @@ export const ZH_TW: Record<TextKey, string> = {
     "載入的校正檔和 Worker 從伺服馬達讀到的不一致（{detail}）。PEAR 只有在兩者一致時才會啟動。請載入這支手臂的校正檔，或移除檔案，然後再試一次；沒有檔案時，工作站會使用伺服馬達裡的校正。",
   "station.arming.blocker.guard":
     "在只讀取線路的期間，Worker 的保護機制擋下了 {refused} 個封包。沒有寫入任何東西，但這是頁面的缺陷：請不要用這個版本在這支手臂上啟用工作站，並請複製頁面最下方的紀錄傳回來。",
-  "station.arming.confirm.untried": "這個步驟到目前為止只在模擬的伺服馬達上執行過，還沒有在真實的手臂上執行過。",
+  "station.arming.confirm.untried":
+    "到目前為止，啟用、Home 和停用只在一支真實的手臂（SO-101）上執行過。移動中的停止、單步動作，以及執行模型的動作，都只在模擬的伺服馬達上執行過，還沒有在真實的手臂上執行過。",
   "station.arming.confirm.title": "打開扭力之前",
   "station.arming.confirm.lead": "Worker 已經讀完手臂，還沒有寫入任何東西。你確認之後以及接下來會發生的事：",
   "station.arming.confirm.limp":
@@ -1063,6 +1113,10 @@ export const ZH_TW: Record<TextKey, string> = {
     "{register}（位址 {address}）= {pear}，共 {servos} 顆伺服馬達，其中 {changed} 顆目前是別的數值",
   "station.arming.confirm.home":
     "Home 會先打開夾爪，再以平常速度的三分之一，用一段筆直的關節空間移動，把手臂移到 PEAR 的 Home 姿勢：最快每秒 19 度，從收折的休息姿勢出發大約 7 秒。它不會偵測障礙物。它會先顯示計畫，你核准之後才會動。",
+  "station.arming.confirm.steps":
+    "單步動作在你按下的當下就會讓手臂移動：1 公分、0.05 弧度，或夾爪的指令，用的是 PEAR 平常的速度（最快每秒 57 度，是 Home 的三倍）。它不會先顯示計畫，也不會偵測障礙物。",
+  "station.arming.confirm.execute":
+    "模型要求的動作，只有在你為它按下「執行這個動作」、再按下「在手臂上執行」之後才會執行：一次一個，用 PEAR 平常的速度，幅度就是模型要求的大小。按第二次之前，請先看清楚數字。不會有任何動作自行執行。",
   "station.arming.confirm.stop": "停止會煞車（大約 0.15 秒）並撐住：扭力維持開啟。",
   "station.arming.confirm.disable": "停用會關掉扭力：手臂會變得鬆軟，沒有東西撐住就會掉下來。",
   "station.arming.confirm.lost":
@@ -1088,7 +1142,8 @@ export const ZH_TW: Record<TextKey, string> = {
     "和手臂的連線中斷了。伺服馬達收不到任何指令：它們會維持扭力，停在最後的目標位置。要放開手臂，請先扶住它，再關掉伺服馬達的電源。然後重新載入頁面。",
   "station.real.refused":
     "工作站的保護機制擋下了 {count} 個封包，這些封包沒有送出：{words}。工作站已經停止，手臂撐在原地。請扶住手臂再按停用（手臂會變得鬆軟），然後複製頁面最下方的紀錄傳回來。",
-  "station.real.noJog": "在真實的手臂上，這個版本提供 Home、停止和停用。不提供單步動作；真實的手臂啟用期間也不會詢問模型。Home 需要先在步驟 2 啟動攝影機：PEAR 的 Home 會先取一張手腕攝影機的畫面，沒有新的畫面就不會執行。",
+  "station.real.steps":
+    "在真實的手臂上，每按一次下面的單步按鈕，真實的手臂就會立刻移動那一步：1 公分、0.05 弧度，或夾爪的指令。請讓停止列隨時按得到。動作需要先在步驟 2 啟動攝影機：PEAR 會先觀測，為此取一張手腕攝影機的畫面；沒有新的畫面，單步動作和 Home 都不會執行。",
   "station.real.disable.ask": "停用會關掉扭力。手臂會變得鬆軟：按下之前，請先扶住它，或確認它停放穩當。",
   "station.real.disable.go": "關掉扭力：我扶住手臂了",
   "station.real.disable.keep": "維持扭力開啟",

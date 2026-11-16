@@ -153,7 +153,8 @@ describe.each(LANGUAGES)("enabling on a real arm, in %s", (language) => {
   it("lists what the operator confirms, with this line's numbers", () => {
     const items = confirmationItems(reportOf(), wordingOf(language));
     expect(items.map((item) => item.kind)).toEqual([
-      "untried", "limp", "rest", "eeprom", "ram", "factory", "home", "stop", "disable", "lost", "warnings", "limit",
+      "untried", "limp", "rest", "eeprom", "ram", "factory", "home", "steps", "execute", "stop", "disable", "lost",
+      "warnings", "limit",
     ]);
     // the list says first, as a warning, that this step has not yet run on a real arm
     expect(items[0]?.tone).toBe("warn");

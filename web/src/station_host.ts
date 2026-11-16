@@ -1224,13 +1224,10 @@ export class StationHost {
     }
   }
 
-  /** One action in the model's format, as a turn of PEAR's agent loop runs it: the arm at rest, an observation,
+  /** One action in the model's format, on the simulated arm or on a real arm's line, as a turn of PEAR's agent
+   * loop runs it: the arm at rest, an observation,
    * the action with that observation as its reference; then the report the next turn would give the model. */
   private jog(requestId: number, action: Readonly<Record<string, unknown>>): Promise<ActionReport> {
-    if (this.line !== null) {
-      return Promise.reject(new RuntimeError("Single actions are not offered on a real arm in this version"));
-    }
-
     return this.asAction("jog", requestId, async (robot) => {
       const format = SINGLE_ARM_POSE_FORMAT;
       let result: MotionResult;

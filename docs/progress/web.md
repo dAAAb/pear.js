@@ -4,21 +4,25 @@ The page a person opens to use pear.js with their own SO-101 (`web/`). With a re
 the arm over Web Serial, shows that it is the arm PEAR expects, reads it live, shows the wrist camera and the
 frame a turn would send, and checks the model service. It writes to a servo only after the person has pressed
 "Enable the station on this arm..." and confirmed what the page then shows ("The station on a real arm" below);
-until then every byte to the port passes a guard that lets only reads through. A simulated arm lets anyone try
+until then every byte to the port passes a guard that lets only reads through. With the station holding the arm
+the person can move it one step at a time, ask a model once and execute that one action, each at their own press
+("Steps by hand and one action of a model" below); nothing runs by itself. A simulated arm lets anyone try
 it, and a machine test it, without hardware; on that simulated arm the second version's stage A runs PEAR's
 station in a Worker of the page, driven by hand ("The station in a Worker, on a simulated arm" below).
 
 State: published. The first, read-only version on 2026-11-15; the second version's stage A on 2026-11-16, and on
 the same day stage B's first two parts (the camera's frames reach the station; ask the model once), the
 read-only hand-over of a real arm's line to the Worker, and the station on a real arm behind a confirmation
-(Enable, Home, Stop, Disable). Of that stage the reading has run on a real arm; the enabling itself has run on
-simulated servos only.
+(Enable, Home, Stop, Disable), which ran on a real arm the same day ("What the third try showed"); and steps by
+hand and one action of a model at the operator's press, which have run on simulated servos only.
 
 Checked on 2026-11-16, on the files as published: `npm run typecheck` passes; `npm run build:web` gives three
-files; 1,699 browser checks pass in 28 parts, 0 failed; `npx vitest run` passes (89 files, 9,411 tests).
+files; 1,845 browser checks pass in 28 parts, 0 failed; `npx vitest run` passes (90 files, 9,434 tests).
 The read-only part met a real adapter, real servos, a real camera, a browser with a visible window and macOS
 once, on 2026-11-16 ("What the first try showed" below), and on the same day the station's Worker took a real
-arm's line and read it ("What the second try showed"). **Nothing that writes to a servo has met a real arm.** A
+arm's line and read it ("What the second try showed"); then the page enabled the station on that arm and sent it
+Home, twice each ("What the third try showed"). **A step by hand and the execution of a model's action have met
+no real arm.** A
 real model service has answered the published page with the simulated arm ("The first answer of a real model")
 and with a real arm's state and its camera's frame ("What the second try showed").
 
@@ -604,9 +608,11 @@ What no test shows:
 
 ### The station on a real arm: Enable behind a confirmation and a second guard, Home, Stop, Disable (2026-11-16)
 
-The first stage in which the page writes to a real servo; the arm's owner asked for it after the first try. **It
-has run on simulated servos only: no real arm and no real serial port has been part of it.** The page says so
-beside the control and as the first item of the confirmation, until it has run on an arm.
+The first stage in which the page writes to a real servo; the arm's owner asked for it after the first try. It
+ran on his arm on the day it was published ("What the third try showed"): Enable twice, Home twice, Disable once.
+**Stop during a move, a fault, a lost line and the writing of a setting that differs from PEAR's have run on
+simulated servos only.** The page says what has run on an arm beside the control and as the first item of the
+confirmation.
 
 What it is:
 
@@ -646,7 +652,8 @@ What it is:
   (what the guard let through by instruction and register, what it refused, the line's errors). Home has PEAR's
   plan and the person's approval, and needs the camera of step 2 as on the simulated arm (PEAR's Home takes a
   frame first). The Stop bar is the robot's `stop()`. Disable waits for a second press that says the arm will go
-  limp. Single actions and "Ask the model once" are not offered. A lost line and a refusal of the guard each
+  limp. Single actions and "Ask the model once" were not offered in this stage; the next one offers them ("Steps
+  by hand and one action of a model" below). A lost line and a refusal of the guard each
   show a message that stays, with what to do.
 - However a request ends without the robot open, the Worker closes the port or says that it did not, and the
   window reads the arm again.
@@ -712,20 +719,20 @@ the page's own log.
 - The whole session (`?preflight=sim-configured`, the page's simulated arm; the Worker takes a simulated port of
   its own whose servos hold PEAR's settings, as an arm that lerobot has run). Before the control is pressed no
   Worker runs and nothing was asked; its note says that nothing is written until the confirmation, that a
-  setting that survives a power cycle is changed only when the confirmation has listed it, and that this step
-  has so far run on simulated servos only and never on a real arm. Pressed, the Worker's report comes with
+  setting that survives a power cycle is changed only when the confirmation has listed it, and what has run on a
+  real arm so far. Pressed, the Worker's report comes with
   no stop and no reason against enabling, its guard having let through reads only (PING, READ, SYNC READ) and
-  refused nothing; the confirmation shows its list in its order, first and as a warning the sentence about
-  simulated servos, the limp time and the count of transactions measured on this line, and how many registers
+  refused nothing; the confirmation shows its list in its order, first and as a warning the sentence about what
+  has run on a real arm and what on simulated servos only, the limp time and the count of transactions measured on this line, and how many registers
   that survive a power cycle hold PEAR's values already; the box is unticked and "Switch the torque on" disabled.
   Four attempts send nothing to the Worker and leave the confirmation waiting: a script's click on the disabled
   button; a real press after a script took the button's disabling away, the box unticked; a tick set by a script
   (the page unticks it); a script's click with the box ticked by real input. After the tick and a real press the
   window sends one answer, confirmed, that names the request it answers. Then the status says a real arm, ready
   and holding, torque on; the line's counts hold `WRITE 40`, `WRITE 55`, `SYNC WRITE 42` and the settings'
-  writes, 0 refused, no line error; no single actions and no "Ask the model once" are offered, nor the
-  hand-over check, the control itself or the simulated Enable. Without the camera of step 2 the real arm's note
-  and the camera's line say before the press that Home needs it; Home then does not run ("Camera unavailable"),
+  writes, 0 refused, no line error; the hand-over check, the control itself and the simulated Enable are not
+  offered. Without the camera of step 2 the real arm's note
+  and the camera's line say before the press that an action needs it; Home then does not run ("Camera unavailable"),
   and the page says with the failure to start the camera. With the test picture: Home shows its plan, nothing
   moves before it is approved, Stop during Home's phase "homing" ends it and the station still holds the arm
   with the torque on; Home again runs to its end. Disable's first press only asks (the arm will go limp: hold
@@ -771,9 +778,10 @@ press are input the browser calls trusted because automation made it: whatever c
 
 What no test shows, besides everything a real arm does:
 
-- The first write on a port of a browser. In a headless browser `getPorts()` gives none; on the owner's arm the
-  Worker opened the granted port, read it and passed the timing self-check ("What the second try showed"), and
-  that version stopped there. The confirmation and everything after it have run on simulated servos only.
+- The first write on a port of a browser, when this stage was published. In a headless browser `getPorts()`
+  gives none; on the owner's arm the Worker had opened the granted port, read it and passed the timing self-check
+  ("What the second try showed"). The confirmation, Enable, Home and Disable then ran on that arm ("What the
+  third try showed"); Stop during a move, a fault and a lost line have run on simulated servos only.
 - What a servo does when its torque comes on, and how far an arm sags in the limp time. The values another
   program left in Goal_Velocity and Torque_Limit, which PEAR's station never writes, are shown in the report and
   not judged.
@@ -809,6 +817,99 @@ torque, its space is clear, and the switch of the servos' power is within reach 
 7. Home, approve, and Stop after a second: the arm starts gently, brakes and holds. The power switch when it
    does not brake.
 8. Home to its end; then Disable.
+
+### Steps by hand and one action of a model, each at the operator's press (2026-11-16)
+
+The owner enabled the station on his arm, sent it Home, wrote an instruction and found that Start cannot be
+pressed ("What the third try showed"). The task that a model drives by itself is not built. This stage is what
+can be used at an arm until then: with the station holding the arm, the operator moves it a step at a time, or
+asks a model once and executes the one action it answered. **It has run on simulated servos only.**
+
+What it is:
+
+- **Steps by hand on a real arm.** The twelve steps of the simulated arm (x, y and z by 1 cm either way, pitch
+  and roll by 0.05 rad either way, the gripper open and closed) are offered while the station holds a real arm,
+  is idle and has its line. Each is one action in the model's format, run as a turn runs it (the Worker's `jog`):
+  PEAR observes first, which takes a fresh frame of the wrist camera, checks reach and bounds and moves at its
+  usual speed. A press moves the arm at once; there is no plan and no second press.
+- **Ask the model once from the station's state.** While the station holds an arm, simulated or real, and no
+  action is under way, the ask is built from the joints and the gripper the station last told (about ten
+  statuses a second; only a status that says no action is under way is taken) and from the camera's frame taken
+  at the press. The panel says where the state came from. Everything else of an ask is as before: one
+  conversation, a task's first turn, the client closed afterwards.
+- **Execute this action.** When an answer ends in an action and was asked from the station's state, the panel
+  offers "Execute this action". On the simulated arm one press runs it. On a real arm the press shows a row with
+  the action in words, a warning when a part of it is over 5 cm or 0.5 rad, and "Execute on the arm" and
+  "Don't"; the second press runs it. What is sent is the parsed action the panel shows, through the same `jog`.
+- **An answer is executed only on the arm as the model saw it.** The page counts the actions that start and the
+  times the station is released. An answer is spent when any action has started since its ask (a step, Home, a
+  model's action, also one that failed or was refused), and when the station was disabled or lost since. An
+  answer asked from the window's reading, with no station holding the arm, is never offered: the arm was limp
+  then, and the enabling came between. The panel says each reason.
+- **Only the operator's press.** On a real arm the steps, Home, the approval of its plan, the second press of
+  Disable and both presses of Execute take only a press the browser calls trusted (`isTrusted`): a script's click
+  starts nothing. Execute asks for it on the simulated arm too. A key held down presses a button once: the
+  repeats of Enter and Space on a button are cancelled. The page's debug hook (`window.pearjs`) sends nothing but
+  Stop to the station while it holds a real arm or a real arm's enabling runs, and nothing for the granted port.
+- **The confirmation of Enable tells of both** in two new items (a step moves the arm at once; a model's action
+  runs at two presses and is as large as the model asked), and its first item now says what has run on a real
+  arm and what has not.
+- **The Worker** lets `jog` through on a real arm's line; nothing else of it changed, and the second guard is as
+  it was.
+- **The log** has `Ask the model once: asked from the station's state...`,
+  `Station: Execute {the action} (the model asked for this action)` and, when the page is visible again, the
+  clock's line.
+
+What holds, by the Worker's tests of a real arm's code over simulated servos (`tests/web/station_real.test.ts`,
+six tests): beneath the guard a single action writes goals only (SYNC WRITE of register 42); the largest step
+between two goals of one servo is 14 steps at PEAR's full speed (15 for the gripper) against the guard's limit of
+40, and the guard refused nothing; rejected and failed actions write nothing; without a fresh frame no action
+starts (the camera never told, told without a frame, a stale frame, a stopped camera); Stop brakes over a dozen
+periods and holds, the arm running on at most 91 steps (the elbow, about 8 degrees) from full speed; a hidden
+page starts none.
+
+What does not hold, and what to know at an arm:
+
+- **PEAR sets no limit to an action's length.** Its checks are reach and bounds. In the tests an action of z
+  -15 cm from Home ran in full, at full speed, down to z 5.9 cm. A model can ask for as much. The page warns when
+  a part is over 5 cm or 0.5 rad (each part by itself: x 4, y 4 and z 4 together get no warning), and the
+  operator decides at the second press.
+- **Nothing looks for the table or for an obstacle.**
+- **An action under way runs to its end when the camera stops.** The frame is asked for once, before the move.
+  PEAR's console has a watchdog for the camera; the page runs none yet.
+- **A late period can end a fast move with a fault.** At full speed PEAR asks 14 steps a period; a period later
+  than about 57 ms would ask more than the guard's 40 and be refused, which stops the arm with its torque on. On
+  the real line the longest of 8,625 periods was 21.4 ms ("What the third try showed"). Not tested.
+- **A model does not remember.** Every ask is a new conversation: it sees the instruction, the state and one
+  frame.
+- **A script in the page is not kept out altogether.** The browser's permission for the port is the origin's: a
+  script that runs in the page's own world could open the granted port itself once the page has let go of it.
+  The trusted presses and the narrowed hook close the page's own controls, not that.
+- After Stop the station brakes for a moment; an action asked in that moment fails with PEAR's "Station requires
+  valid HOLD", and it spends the answer.
+- The state of an ask and its frame are not of one instant (a status at most a tenth of a second old, the frame
+  right after the press); the arm is at rest then.
+- Not tried: a real arm; a gripper that closes on an object; a lost line or a servo's error during a single
+  action.
+
+How it was verified. `npx vitest run` passes (90 files, 9,434 tests; new are 17 for the offer of Execute in
+`tests/web/execute_view.test.ts` and six for single actions on a real arm's line). The browser check passes
+whole: 1,845 checks in 28 parts, 146 of them new. In `ask` (62 new), on the simulated arm: an ask from the
+station's state; a script's click on "Execute this action" starts nothing, and a person's press runs the action
+whose JSON the panel shows, by which the arm's tip moves; the answer is spent after its own action, after a step
+by hand and after Home, and released by Disable; an answer from the window's reading is never offered. In
+`languages` 40 are new, in `station` one (no ask while an action is under way). In `real` (43 new), on a real
+arm's code over simulated servos: the twelve steps; a script's click on a step, on Home, on the approval, on
+Disable's second press and on both presses of Execute starts nothing, and the person's press does; through the
+hook seven requests are rejected and Stop is answered; the row of the second press with the action in words,
+"Don't", and the warning of a large action; a held Enter gives one step; the clock's line when the page is
+visible again; the confirmation's two new items in both languages.
+
+The checks can fail, as far as one run shows: with the trusted presses, the hook's rule, `window.pearjs.jog`'s
+rule and the held key's rule taken out of the page together (seven places), `ask` fails 4 checks and `real` 4,
+among them the script's click on Execute, on Home and on the approval, and the hook's refusal for the granted
+port. Both parts stop early in that run, so the checks after that point (the steps, the hook while an arm is
+held, Disable's second press, Execute on a real arm, the held key) were not reached in it.
 
 ## What the camera hands to a turn, in PEAR
 
@@ -964,6 +1065,13 @@ and the servos' answer time are the real cost: `docs/progress/sim-bridge.md`), m
 17. **The confirmations.** PEAR's page enables at a press and asks one confirmation before it disables. This
     page asks for a tick and a press before the first write, after it has shown what it read of the arm, and
     for a second press before Disable.
+18. **One action of a model at the operator's press.** PEAR's console runs a task: the model's actions follow one
+    another without a press. Until that is built here, the page executes one action of one answer when the
+    operator presses for it, on a real arm at a second press after the action was shown in words, and it spends
+    an answer once any action has started since its ask.
+19. **Only a trusted press moves a real arm.** On a real arm the page's controls that move or release the arm
+    take only a press the browser calls trusted, a held key presses a button once, and the page's debug hook
+    sends nothing but Stop. PEAR's page has no such rule.
 
 ## Found
 
@@ -1140,8 +1248,50 @@ From the page's log and two screenshots:
   thirds of the frame's width and moved it towards PEAR's reference at 80 %. It also called the gripper's width
   of 3.3 odd ("Found", 11).
 
-Not tried in it: the hand-over check by itself, the enabling (nothing has written to a real servo yet), a tab
-that is hidden, pulling the cable.
+Not tried in it: the hand-over check by itself, the enabling (nothing had written to a real servo then; the
+third try did), a tab that is hidden, pulling the cable.
+
+### What the third try showed (2026-11-16): the first Enable and the first Home on a real arm
+
+The owner's third session at the arm, on the published page of the stage "The station on a real arm" (Brave 157
+on macOS 27.2.1, arm64; the adapter 1a86:55d3 at 1,000,000 baud), after lerobot had run the arm once, so that all
+45 settings PEAR's enable writes already held PEAR's values. It is the first time the page wrote to a servo. He
+sent the page's log; every number below is from it.
+
+- **The hand-over check, twice more:** torque off and Lock 0 on all six servos, every one of the 45 settings
+  equal to PEAR's; 150 periods with a mean of 20.0 ms and a longest of 22.2 and 20.1 ms, none over 25 ms; the
+  longest read 1.6 and 1.8 ms; 63 single reads in 25.0 and 23.6 ms; the guard let through reads only and refused
+  nothing; no line error.
+- **Enable, twice.** The report before each confirmation gave no reason against enabling: 63 single reads in
+  23.7 and 24.0 ms (the time PEAR's enable leaves each servo without torque on this line), the timing self-check
+  with a longest period of 20.9 and 20.1 ms. He ticked the box and pressed 7 s and 3 s after the report was
+  shown, and the robot opened in 573 ms both times.
+- **Goal registers far from the pose.** Before the second Enable the arm lay in its rest pose again, and three
+  goal registers still held the pose of Home: 646 steps (shoulder_lift), 1,041 steps (elbow_flex) and 1,494 steps
+  (gripper) away from the present positions. PEAR's enable writes the present position as the goal before the
+  torque comes on. The second guard lets through no goal further than 40 steps from the present position: the
+  enabling succeeded, so it refused nothing, and the next plan of Home began at the pose that was read.
+- **Home, twice.** PEAR's plan: 6.88 and 6.89 s of trajectory, 10.29 and 10.30 s with the gripper's opening.
+  From the approval the opening took 2.92 s both times and the move 7.40 and 7.38 s. Both ended
+  `reached: true, gripper_open: true` with no violation. The errors at the end, in rad, were
+  [-0.005, -0.006, 0.041, -0.005, 0.007, -0.013] and [-0.005, -0.008, 0.043, -0.005, 0.006, -0.013], against
+  PEAR's tolerances [0.035, 0.06, 0.06, 0.06, 0.035, 0.02]. The elbow's 0.041 to 0.043 rad (2.4 degrees) is the
+  largest and the same both times; that fits the steady error of a position loop with P 16 and no integral term
+  under gravity, which is a reading of the numbers and was not measured.
+- **The control loop on the real line with the torque on:** 3,250 periods (65 s) with a mean of 20.0 ms and a
+  longest of 21.4 ms, then 5,375 periods (107.5 s) with a mean of 20.0 ms and a longest of 20.5 ms; none over
+  25 ms in either. The Worker's clock woke at most 1.5 ms late.
+- **The camera's frames to the station:** 1,191 frames in the first 65 s, the longest gap 245 ms, three gaps
+  over 200 ms; 2,101 frames in the 107.5 s, the longest gap 185 ms. Both Homes found a fresh frame.
+- **Disable, once:** the Worker closed the line, and the window read the arm again on the same port.
+- **A hidden page.** He then changed to another window for 7 min 17 s. The page told the Worker; the station
+  stopped and took no action, and the arm stood at Home with its torque on. That version's log says nothing of
+  the loop while the page was hidden; the next one logs the clock when the page is visible again.
+- **Ask the model once** with the station disabled, from the real arm's state and its camera's frame: answered
+  after 17.2 s (99 characters of answer, 13,418 of reasoning). Nothing was sent to the arm.
+
+Not shown by this try: Stop during a move, a fault, a lost line, the writing of a setting that differs from
+PEAR's (lerobot had written them before), a pulled cable. One arm, one adapter, one browser, one afternoon.
 
 ## Requests
 
@@ -1164,12 +1314,20 @@ For the coordinator's files:
   first.
 - Stage B: the wrist camera and the model in the Worker, so that a turn of PEAR's agent loop drives the
   simulated arm.
-- A real arm: the hand-over check on one (the log's line `Station: real-arm preflight`), then the stage that
-  writes, in the order "The station on a real arm" gives, with the person beside the arm. After its first run on
-  an arm: take the sentence about simulated servos out of the control's note and of the confirmation.
+- A real arm: steps by hand and "Execute this action" on one, with the person beside the arm (the log is what to
+  send back). On an arm so far: the hand-over check, Enable, Home, Disable ("What the third try showed"). Not yet
+  on an arm: Stop during a move, the writing of a setting that differs, a fault, a lost line.
 - The station on a real arm: a question before the page is closed while an arm is held; a time limit for the
-  port's close and for the robot's open and close in the Worker; a Recover control; then single actions and
-  the model.
+  port's close and for the robot's open and close in the Worker; a Recover control; a watchdog for the camera
+  while an action runs; whether the guard's limit of 40 steps should grow with a late period; then the task that
+  a model drives (Start, Pause, Resume, Clear), on the simulated arm first.
+- Seen once in the browser check and not looked into: on a page of the simulated arm that had been through many
+  states (shoulder_pan moved to the lower end of its range, the cable pulled and the arm started again, three
+  calibration files loaded, one ask answered), a press of Enable did not bring the station up within 20 s. What
+  the page said then was not read; it may be PEAR's refusal of a joint at its limit.
+- The breaks of this stage's browser checks one rule at a time (the steps, the hook while an arm is held,
+  Disable's second press, Execute on a real arm, the held key): the one run with all rules out stopped before
+  them.
 - `web/tests/build_check.mjs`: on the second version only its comparison of names was run, in a checkout
   without the installed packages (1,316 references; the one it did not find is a file of an installed
   package). Its clean build was not run; the job's steps (install, type check, tests, build) were run on

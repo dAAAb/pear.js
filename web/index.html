@@ -204,7 +204,7 @@
             <p class="muted small" id="station-joints"></p>
             <pre id="station-turn"></pre>
 
-            <p class="hint" id="station-real-note" data-i18n="station.real.noJog" hidden></p>
+            <p class="hint" id="station-real-note" data-i18n="station.real.steps" hidden></p>
             <div id="station-jog-part">
               <h3 data-i18n="station.jogTitle"></h3>
               <p class="lead" data-i18n="station.jogLead"></p>
@@ -258,6 +258,7 @@
           <p id="ask-missing" class="muted" role="status"></p>
           <div id="ask-result" hidden>
             <p id="ask-status" role="status"></p>
+            <p id="ask-source" class="muted small" hidden></p>
             <details id="ask-sent">
               <summary data-i18n="ask.sent"></summary>
               <p id="ask-sent-sizes"></p>
@@ -282,12 +283,28 @@
             <p id="ask-explain" hidden></p>
             <pre id="ask-pear" hidden></pre>
             <p id="ask-not-sent" class="box info" hidden></p>
+            <div id="ask-execute" hidden>
+              <p class="lead" data-i18n="execute.lead"></p>
+              <div class="actions">
+                <button type="button" id="ask-execute-run" class="primary" data-i18n="execute.button" disabled></button>
+              </div>
+              <p id="ask-execute-why" class="muted" role="status"></p>
+              <div id="ask-execute-confirm" class="box warn" hidden>
+                <p id="ask-execute-ask"></p>
+                <p id="ask-execute-large" class="execute-large" hidden></p>
+                <div class="actions">
+                  <button type="button" id="ask-execute-go" data-i18n="execute.real.go"></button>
+                  <button type="button" id="ask-execute-keep" data-i18n="execute.real.keep"></button>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
 
         <div class="actions">
           <button type="button" id="task-start" class="primary" data-i18n="task.start" disabled></button>
         </div>
+        <p class="hint" id="task-start-note" data-i18n="task.startNote"></p>
       </section>
 
       <section id="log" aria-labelledby="log-title">

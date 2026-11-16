@@ -1,7 +1,9 @@
 // "Ask the model once": the first turn of a task as PEAR's turn loop would send it, and nothing more. The turn is
-// made by the library from what the window read (the joints, the model's state, the camera's frame), sent with the
-// library's own client, and its answer is shown. The action the format reads of the answer is shown too and is NOT
-// executed: this module holds no robot, no station and no bus, so it has nothing to send an action to.
+// made by the library from the arm's state (the joints and the model's state, as the window read them or as the
+// station that holds the arm measured them) and the camera's frame, sent with the library's own client, and its
+// answer is shown. The action the format reads of the answer is shown too. This module executes nothing: it holds
+// no robot, no station and no bus. The page sends that one action to the station only at the operator's press
+// for it (main.ts, execute_view.ts).
 //
 // What the loop does around the request (src/agent/agent_loop.ts: observe, askModel) is reproduced for one turn:
 // the observation, ObservationMessage.build, the phase "Thinking", client.infer, then the format's parseAction.
@@ -29,17 +31,20 @@ import {
   VLLMClient,
 } from "../../src/agent/index";
 import { ActionParseError, systemPrompt } from "../../src/protocol/index";
-import { DECIMALS } from "../../src/protocol/types";
 import type { ModelState } from "../../src/so101/kinematics/index";
 import { jpegHeader } from "./camera";
-import { t } from "./i18n";
+import { actionSentence } from "./execute_view";
+import { count, listed, t } from "./i18n";
 import { redact } from "./log";
 import { isReachable } from "./model";
 
 /** The action of the model's format. */
 export type AskedAction = ReturnType<typeof SINGLE_ARM_POSE_FORMAT.parseAction>;
 
-/** What the page gives an ask: the service as step 3 found it, the instruction, and what the window read. */
+/** Where an ask's state of the arm came from: this window's reading, or the station that holds the arm. */
+export type AskSource = "window" | "station";
+
+/** What the page gives an ask: the service as step 3 found it, the instruction, and the arm's state. */
 export interface AskInput {
   baseUrl: string;
   /** The name the service serves the model under. */
@@ -47,7 +52,9 @@ export interface AskInput {
   /** The service's key; empty for a service that asks for none. It goes into the request and nowhere else. */
   apiKey: string;
   instruction: string;
-  /** PEAR's joint vector as the window read it. */
+  /** Where the joints and the state came from. */
+  source: AskSource;
+  /** PEAR's joint vector as the window read it, or as the station measured it. */
   joints: readonly number[];
   /** The state a model is shown for these joints. */
   state: ModelState;
@@ -99,6 +106,8 @@ export interface AskSent {
 
 export interface AskResult {
   outcome: AskOutcome;
+  /** Where the ask's state of the arm came from. */
+  source: AskSource;
   sent: AskSent | null;
   seconds: number;
   /** The client's last report of the request's timings; null when it made none. */
@@ -126,6 +135,11 @@ export class Ask {
 
   private readonly cancellation = new AbortController();
   private client: ModelClient | null = null;
+
+  /** Where this ask's state of the arm came from. */
+  get source(): AskSource {
+    return this.input.source;
+  }
 
   /**
    * ``onChange`` is called when the progress changed; ``log`` gets what happened and never what was said: no key,
@@ -162,7 +176,7 @@ export class Ask {
       const client = offered.newClient(prompt);
       this.client = client;
 
-      // the observation the loop would hold: what the window read, and when
+      // the observation the loop would hold: the arm's state as the page gave it, the frame, and when
       const observation: Observation = {
         observationId: uuid4(),
         sessionId: uuid4(),
@@ -185,7 +199,8 @@ export class Ask {
         messagesJsonBytes: null,
       };
       this.log(
-        `Ask the model once: asked. System prompt ${prompt.length} characters, turn text ${modelInput.text.length} ` +
+        `Ask the model once: asked${input.source === "station" ? " from the station's state" : ""}. ` +
+          `System prompt ${prompt.length} characters, turn text ${modelInput.text.length} ` +
           `characters, ${modelInput.images.length} image (JPEG ${this.sent.imageSize}, ${input.jpeg.length} bytes).`,
       );
 
@@ -242,7 +257,14 @@ export class Ask {
       }
     }
 
-    return { outcome, sent: this.sent, seconds: seconds(), performance: this.progress.performance, isClosed };
+    return {
+      outcome,
+      source: input.source,
+      sent: this.sent,
+      seconds: seconds(),
+      performance: this.progress.performance,
+      isClosed,
+    };
   }
 
   /** Takes one report of the client, as PEAR's console would. */
@@ -291,10 +313,6 @@ function fields(record: EventData | null): string | null {
     .join(", ");
 }
 
-function signed(value: number, decimals: number): string {
-  return `${value < 0 ? "−" : "+"}${Math.abs(value).toFixed(decimals)}`;
-}
-
 /** Shows the ask that runs, or what the last one came to; hides the result while there was none. */
 export function renderAsk(running: Ask | null, result: AskResult | null): void {
   const box = node("ask-result");
@@ -332,6 +350,10 @@ export function renderAsk(running: Ask | null, result: AskResult | null): void {
         }),
   );
   node("ask-sent").hidden = sent === null;
+  // where the arm's state in the turn came from: this window's reading, or the station that holds the arm
+  const source = running?.source ?? result?.source ?? null;
+  node("ask-source").dataset.source = source ?? "";
+  show("ask-source", source === null ? null : t(source === "station" ? "ask.source.station" : "ask.source.window"));
 
   const output = outcome !== null && "output" in outcome ? outcome.output : null;
   show("ask-phase", progress?.phase ?? null);
@@ -353,18 +375,7 @@ export function renderAsk(running: Ask | null, result: AskResult | null): void {
   show("ask-action-json", outcome?.kind === "action" ? outcome.written : null);
   show(
     "ask-action-sentence",
-    action === null
-      ? null
-      : t("ask.sentence", {
-          x: signed(action.arm.x, DECIMALS.x),
-          y: signed(action.arm.y, DECIMALS.y),
-          z: signed(action.arm.z, DECIMALS.z),
-          pitch: signed(action.arm.pitch, DECIMALS.pitch),
-          roll: signed(action.arm.roll, DECIMALS.roll),
-          // PEAR's prompt: "gripper.width commands: +1=open, -1=close, 0=hold; magnitude sets neither gap nor force"
-          gripper: t(action.gripper.width > 0 ? "ask.gripper.open" : action.gripper.width < 0 ? "ask.gripper.close" : "ask.gripper.hold"),
-          width: signed(action.gripper.width, DECIMALS.width),
-        }),
+    action === null ? null : actionSentence(action, { t, count, listed }),
   );
 
   const error = outcome !== null && outcome.kind !== "action" ? outcome.error : null;
