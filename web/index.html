@@ -166,6 +166,11 @@
           <p class="muted small" id="station-timing"></p>
           <p class="muted small" id="station-periods" aria-hidden="true"></p>
           <p class="muted small" id="station-clock" aria-hidden="true"></p>
+          <p class="muted small" id="station-camera"></p>
+          <figure id="station-frame" hidden>
+            <img id="station-frame-image" alt="" width="160" height="120" />
+            <figcaption class="muted small" id="station-frame-caption"></figcaption>
+          </figure>
           <div id="station-messages"></div>
 
           <div id="station-controls" hidden>
@@ -192,6 +197,7 @@
             <div id="station-report" hidden>
               <h3 data-i18n="station.reportTitle"></h3>
               <p class="status" id="station-report-line"></p>
+              <p class="status" id="station-report-camera" hidden></p>
               <div id="station-report-model">
                 <p class="lead" data-i18n="station.reportLead"></p>
                 <pre id="station-feedback"></pre>
@@ -210,8 +216,46 @@
 
         <div class="field">
           <label for="task-instruction" data-i18n="task.instruction"></label>
-          <textarea id="task-instruction" rows="2" disabled data-i18n-placeholder="task.placeholder"></textarea>
+          <textarea id="task-instruction" rows="2" data-i18n-placeholder="task.placeholder"></textarea>
         </div>
+
+        <div id="ask" class="panel">
+          <h3 data-i18n="ask.title"></h3>
+          <p class="lead" data-i18n="ask.lead"></p>
+          <div class="actions">
+            <button type="button" id="ask-once" class="primary" data-i18n="ask.button" disabled></button>
+            <button type="button" id="ask-cancel" data-i18n="ask.cancel" disabled></button>
+          </div>
+          <p id="ask-missing" class="muted" role="status"></p>
+          <div id="ask-result" hidden>
+            <p id="ask-status" role="status"></p>
+            <details id="ask-sent">
+              <summary data-i18n="ask.sent"></summary>
+              <p id="ask-sent-sizes"></p>
+              <pre id="ask-sent-text"></pre>
+            </details>
+            <p id="ask-phase-part"><span data-i18n="ask.phase"></span> <span id="ask-phase"></span></p>
+            <details id="ask-reasoning-part" open>
+              <summary data-i18n="ask.reasoning"></summary>
+              <pre id="ask-reasoning"></pre>
+            </details>
+            <div id="ask-answer-part">
+              <h4 data-i18n="ask.answer"></h4>
+              <pre id="ask-answer"></pre>
+            </div>
+            <p id="ask-usage-part"><span data-i18n="ask.usage"></span> <span id="ask-usage"></span></p>
+            <p id="ask-performance-part"><span data-i18n="ask.performance"></span> <span id="ask-performance"></span></p>
+            <div id="ask-action" hidden>
+              <h4 data-i18n="ask.action"></h4>
+              <pre id="ask-action-json"></pre>
+              <p id="ask-action-sentence"></p>
+            </div>
+            <p id="ask-explain" hidden></p>
+            <pre id="ask-pear" hidden></pre>
+            <p id="ask-not-sent" class="box info" hidden></p>
+          </div>
+        </div>
+
         <div class="actions">
           <button type="button" id="task-start" class="primary" data-i18n="task.start" disabled></button>
         </div>

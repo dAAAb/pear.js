@@ -2,10 +2,12 @@
 // What it shows of the arm, the camera's frame and the model service comes from arm.ts, camera.ts and model.ts,
 // which call the library; this file only renders it.
 
+import { monotonic } from "../../src/agent/index";
 import { type SerialPortLike } from "../../src/feetech/index";
 import { JOINTS, MOTORS, type MotorName, servoFaults } from "../../src/so101/hardware/index";
 import { SO101Kinematics } from "../../src/so101/kinematics/index";
 import { type ArmFailure, ArmSession, type BoundsMark } from "./arm";
+import { Ask, type AskResult, renderAsk } from "./ask";
 import {
   CameraSession,
   DEFAULT_CAMERA_ID,
@@ -123,7 +125,10 @@ function fixed(value: number, decimals: number): string {
 const log = new PageLog(byId<HTMLTextAreaElement>("log-output"));
 const arm = new ArmSession({ onChange: () => renderArm(), log: (message) => log.add(message) });
 const camera = new CameraSession(byId<HTMLVideoElement>("camera-video"), {
-  onChange: () => renderCamera(),
+  onChange: () => {
+    renderCamera();
+    syncStationCamera(); // the station is told when the camera starts and when it stops
+  },
   log: (message) => log.add(message),
 });
 
@@ -134,6 +139,15 @@ let selfTest: GuardSelfTest | null = null;
 /** Why the file last chosen is no calibration; null when it is one or none was chosen. */
 let fileProblem: string | null = null;
 let modelCheck: ModelCheck | "checking" | null = null;
+/** The service as step 3 last found it connected: what "Ask the model once" is sent to. The key stays in the
+ * page's memory and goes only into the requests to that service. */
+let checkedService: { baseUrl: string; model: string; apiKey: string } | null = null;
+/** The ask that runs, whether one is about to, and what the last one came to. */
+let ask: Ask | null = null;
+let isAskStarting = false;
+/** Whether the last click on Ask got no frame of the running camera, so that no request was made. */
+let isAskWithoutFrame = false;
+let askResult: AskResult | null = null;
 let timingState: { kind: "idle" | "needsArm" | "done" } | { kind: "running"; step: string } = { kind: "idle" };
 
 interface SerialLike {
@@ -626,6 +640,7 @@ function renderArm(): void {
   const turnText = driven !== null ? driven.turnText : (view.live?.turnText ?? null);
   byId("turn-details").hidden = turnText == null;
   setText(byId("turn-text"), turnText ?? "");
+  renderAskPanel();
 
   renderGuard();
   renderSim();
@@ -832,6 +847,7 @@ function cameraMessages(): HTMLElement[] {
 }
 
 function renderCamera(): void {
+  renderAskPanel();
   const view = camera.view;
   const select = byId<HTMLSelectElement>("camera-select");
   renderOnce(select, JSON.stringify(view.devices), () => {
@@ -994,6 +1010,7 @@ function modelResult(): Node[] {
 }
 
 function renderModel(): void {
+  renderAskPanel();
   const button = byId<HTMLButtonElement>("model-check");
   button.disabled = modelCheck === "checking";
   const result = byId<HTMLElement>("model-result");
@@ -1005,16 +1022,21 @@ function renderModel(): void {
 async function runModelCheck(): Promise<void> {
   if (modelCheck === "checking") return;
   const key = byId<HTMLInputElement>("model-key").value;
+  const baseUrl = byId<HTMLInputElement>("model-url").value;
   modelCheck = "checking";
+  checkedService = null;
   renderModel();
   try {
     const check = await checkModel(
-      { baseUrl: byId<HTMLInputElement>("model-url").value, model: byId<HTMLInputElement>("model-name").value, apiKey: key },
+      { baseUrl, model: byId<HTMLInputElement>("model-name").value, apiKey: key },
       (message) => log.add(redact(message, key)),
     );
     // a service may repeat a key in its refusal: it is not shown
     modelCheck = { ...check, message: redact(check.message, key) };
-    if (check.outcome.kind === "ok") byId<HTMLInputElement>("model-name").value = check.outcome.model;
+    if (check.outcome.kind === "ok") {
+      byId<HTMLInputElement>("model-name").value = check.outcome.model;
+      checkedService = { baseUrl, model: check.outcome.model, apiKey: key };
+    }
   } catch (error) {
     modelCheck = {
       outcome: { kind: "refused" },
@@ -1024,6 +1046,77 @@ async function runModelCheck(): Promise<void> {
     };
   }
   renderModel();
+}
+
+// ---------------------------------------------------------------- ask the model once
+//
+// One turn, as the first of a task, built by the library from what this window read and sent with the library's
+// client (./ask.ts). Nothing here reaches the arm: the answer's action is shown, not executed.
+
+/** What an ask still lacks, as a text's key; null when the model can be asked. */
+function askMissing(): TextKey | null {
+  if (stationView.phase !== "off") return "ask.need.station";
+  const live = arm.view.live;
+  if (arm.view.phase === "idle" || arm.view.phase === "failed") return "ask.need.arm";
+  // an arm is there, and the window has no complete reading of it (not yet, or the arm was never calibrated)
+  if (arm.view.phase !== "reading" || live?.joints == null || live.state === null) return "ask.need.reading";
+  if (camera.view.phase !== "live") return "ask.need.camera";
+  if (checkedService === null) return "ask.need.model";
+  if (byId<HTMLTextAreaElement>("task-instruction").value.trim() === "") return "ask.need.instruction";
+
+  return null;
+}
+
+function renderAskPanel(): void {
+  const missing = askMissing();
+  // that a click got no frame is told until the next click, or until an ask lacks something else
+  if (missing !== null) isAskWithoutFrame = false;
+  byId<HTMLButtonElement>("ask-once").disabled = ask !== null || isAskStarting || missing !== null;
+  byId<HTMLButtonElement>("ask-cancel").disabled = ask === null;
+  const note = byId("ask-missing");
+  note.dataset.missing = missing ?? "";
+  note.dataset.frame = isAskWithoutFrame ? "none" : "";
+  setText(note, ask !== null ? "" : missing !== null ? t(missing) : isAskWithoutFrame ? t("ask.noFrame") : "");
+  renderAsk(ask, askResult);
+}
+
+async function runAsk(): Promise<void> {
+  const live = arm.view.live;
+  const service = checkedService;
+  if (ask !== null || isAskStarting || askMissing() !== null) return;
+  if (service === null || live?.joints == null || live.state === null) return;
+  const instruction = byId<HTMLTextAreaElement>("task-instruction").value;
+  const { joints, state } = live;
+  isAskStarting = true;
+  isAskWithoutFrame = false;
+  askResult = null;
+  renderAskPanel();
+  try {
+    // the frame of this moment, as a turn sends it
+    const jpeg = await camera.frameBytes();
+    if (jpeg === null) {
+      // no request without a frame: the ask says so itself (renderAskPanel), not the log alone
+      isAskWithoutFrame = true;
+      log.add("Ask the model once: the camera gave no frame; the model was not asked.");
+
+      return;
+    }
+    const running = new Ask(
+      { ...service, instruction, joints, state, jpeg, frameMonotonicS: monotonic() },
+      renderAskPanel,
+      (message) => log.add(redact(message, service.apiKey)),
+    );
+    ask = running;
+    renderAskPanel();
+    try {
+      askResult = await running.run();
+    } finally {
+      ask = null;
+    }
+  } finally {
+    isAskStarting = false;
+    renderAskPanel();
+  }
 }
 
 // ---------------------------------------------------------------- the station
@@ -1054,6 +1147,9 @@ interface StationView {
   timing: TimingCheck | null;
   /** Whether the page was hidden while the station was enabled. */
   wasHidden: boolean;
+  /** The frame the last observation held, as the Worker told it: the JPEG's bytes and a URL of them for the
+   * picture, the frame's number among those the station's camera has seen, and its age at the observation. */
+  frame: { bytes: Uint8Array; url: string; number: number; ageMs: number } | null;
 }
 
 const stationView: StationView = {
@@ -1068,6 +1164,7 @@ const stationView: StationView = {
   home: null,
   timing: null,
   wasHidden: false,
+  frame: null,
 };
 
 const station = new StationClient({
@@ -1132,11 +1229,85 @@ function onStationEvent(event: StationEvent): void {
   } else if (event.type === "plan") {
     stationView.plan = event.plan;
     log.add(`Station: Home plan ${JSON.stringify(event.plan)}`);
+  } else if (event.type === "frame") {
+    // the frame an observation held: shown as a picture; its bytes never go to the log
+    dropStationFrame();
+    const url = URL.createObjectURL(new Blob([event.jpeg as BlobPart], { type: "image/jpeg" }));
+    stationView.frame = { bytes: event.jpeg, url, number: event.number, ageMs: event.ageMs };
+    log.add(`Station: the observation held frame ${event.number} of the wrist camera: JPEG, ${event.jpeg.length} bytes, ${event.ageMs} ms old`);
   } else {
     stationView.timing = event.timing;
     log.add(`Station: timing self-check ${JSON.stringify(event.timing)}`);
   }
   renderArm(); // step 1 shows the driven arm from the status; it renders the station's panel too
+}
+
+/** Forgets the frame of the last observation: the picture is of the last action's observation, or there is none. */
+function dropStationFrame(): void {
+  if (stationView.frame !== null) URL.revokeObjectURL(stationView.frame.url);
+  stationView.frame = null;
+}
+
+/** How often the window sends the station a frame of its camera, ms: about twenty a second. PEAR takes a frame
+ * for fresh up to 0.2 s after it arrived, so three frames in a row must fail before an observation finds none. */
+const FRAME_PERIOD_MS = 50;
+
+/** What the window measures of the frames it makes for the station since the station was enabled: how many it
+ * made, how long making them took in all and at the longest, ms, and how many were left out because the one
+ * before was not ready. */
+interface FrameMaking {
+  made: number;
+  totalMs: number;
+  maxMs: number;
+  leftOut: number;
+}
+
+/** The window's side of the station's wrist camera: whether the frames of step 2's camera go to the Worker, the
+ * timer that sends them, whether a frame is being made now, and the measurement above. */
+const stationCamera: { isOn: boolean; timer: ReturnType<typeof setInterval> | null; isBusy: boolean; making: FrameMaking } = {
+  isOn: false,
+  timer: null,
+  isBusy: false,
+  making: { made: 0, totalMs: 0, maxMs: 0, leftOut: 0 },
+};
+
+/** Tells the station when the camera of step 2 starts and when it stops and, while the station is on and the
+ * camera runs, sends it the camera's frames. Called whenever the camera or the station's phase has changed. */
+function syncStationCamera(): void {
+  const isOn = stationView.phase === "on" && camera.view.phase === "live";
+  if (isOn === stationCamera.isOn) return;
+  stationCamera.isOn = isOn;
+  if (stationCamera.timer !== null) clearInterval(stationCamera.timer);
+  stationCamera.timer = isOn ? setInterval(() => void sendStationFrame(), FRAME_PERIOD_MS) : null;
+  if (stationView.phase !== "on") return; // a station that is closing or off is told nothing
+  station.tell({ kind: "camera", isRunning: isOn });
+  log.add(isOn ? "Station: the camera runs; its frames go to the station" : "Station: the camera stopped; the station gets no frames");
+  if (isOn) void sendStationFrame();
+}
+
+/** Sends the station the frame the camera shows now, as the JPEG a turn would send. Nothing answers a frame;
+ * one that is not ready when the next is due is not waited for: that next one is left out. */
+async function sendStationFrame(): Promise<void> {
+  const making = stationCamera.making;
+  if (stationCamera.isBusy) {
+    making.leftOut += 1;
+
+    return;
+  }
+  stationCamera.isBusy = true;
+  try {
+    const start = performance.now();
+    const jpeg = await camera.frameBytes();
+    const took = performance.now() - start;
+    if (jpeg !== null && stationCamera.isOn) {
+      station.tell({ kind: "frame", jpeg: jpeg.buffer as ArrayBuffer });
+      making.made += 1;
+      making.totalMs += took;
+      making.maxMs = Math.max(making.maxMs, took);
+    }
+  } finally {
+    stationCamera.isBusy = false;
+  }
 }
 
 /** Writes one line of JSON to the log, for a measurement that is read back from the log: the Worker's clock and
@@ -1146,11 +1317,24 @@ function logClock(at: "stop" | "disable" | "hidden"): void {
   const status = stationView.status;
   if (status === null) return;
   const timing = stationView.timing;
+  const making = stationCamera.making;
   const entry = {
     at,
     steps: status.steps,
     periods: status.since,
     clock: status.clock,
+    // the camera's frames since enabling: the Worker's numbers (how many arrived, the longest time between two
+    // while the camera ran, how many such times were over 200 ms) and the window's (making one frame, ms; how
+    // many were left out because the one before was not ready)
+    camera: {
+      frames: status.camera.frames,
+      maxGapMs: status.camera.maxGapMs,
+      gapsOver200: status.camera.gapsOver200,
+      made: making.made,
+      makeMeanMs: making.made === 0 ? null : Math.round((making.totalMs / making.made) * 10) / 10,
+      makeMaxMs: making.made === 0 ? null : Math.round(making.maxMs * 10) / 10,
+      leftOut: making.leftOut,
+    },
     timing:
       timing === null
         ? null
@@ -1177,6 +1361,7 @@ async function enableStation(): Promise<void> {
   stationView.home = null;
   stationView.timing = null;
   stationView.wasHidden = false;
+  dropStationFrame();
   renderArm();
   await arm.disconnect();
   log.add(`Station: enabling on the simulated arm at ${JSON.stringify(positions)}`);
@@ -1185,7 +1370,9 @@ async function enableStation(): Promise<void> {
     const enabled = await station.request({ type: "enable", positions, isHidden: document.hidden });
     station.expectsStatus = true;
     stationView.phase = "on";
+    stationCamera.making = { made: 0, totalMs: 0, maxMs: 0, leftOut: 0 };
     log.add(`Station: enabled; the robot opened in ${enabled.openMs} ms`);
+    syncStationCamera();
     if (document.hidden) await tellVisibility();
   } catch (error) {
     stationView.phase = "off";
@@ -1204,6 +1391,7 @@ async function enableStation(): Promise<void> {
 async function disableStation(): Promise<void> {
   if (stationView.phase !== "on") return;
   stationView.phase = "disabling";
+  syncStationCamera();
   logClock("disable");
   renderArm();
   try {
@@ -1223,6 +1411,7 @@ async function disableStation(): Promise<void> {
     await connectSim();
   } catch (error) {
     stationView.phase = "on"; // as far as the page knows, the station still holds the arm
+    syncStationCamera();
     stationView.problem = { key: "station.disableFailed", error: errorText(error) };
     log.add(`Station: could not be disabled: ${errorText(error)}`);
   }
@@ -1252,6 +1441,7 @@ async function runAction(name: string, action: Record<string, unknown>): Promise
   stationView.action = running;
   stationView.outcome = null;
   stationView.problem = null;
+  dropStationFrame();
   log.add(`Station: action ${JSON.stringify(action)}`);
   renderStation();
   try {
@@ -1287,6 +1477,7 @@ async function runHome(): Promise<void> {
   const name = t("station.home");
   const running: NonNullable<StationView["action"]> = { name, phase: null, endedBy: null };
   stationView.action = running;
+  dropStationFrame();
   stationView.outcome = null;
   stationView.problem = null;
   log.add("Station: Home asked");
@@ -1445,6 +1636,60 @@ function renderStation(): void {
         }),
   );
 
+  // the wrist camera as the station sees it: whether frames arrive, how many a second, how old the last one was
+  const cameraLine = byId("station-camera");
+  const seen = isOn && status !== null ? status.camera : null;
+  const cameraKey: TextKey | null =
+    seen === null
+      ? null
+      : !seen.isRunning
+        ? seen.ageMs === null
+          ? "station.camera.never"
+          : "station.camera.stopped"
+        : seen.perSecond > 0
+          ? "station.camera.arriving"
+          : "station.camera.waiting";
+  cameraLine.dataset.state = cameraKey ?? "";
+  cameraLine.dataset.perSecond = String(seen?.perSecond ?? "");
+  cameraLine.dataset.ageMs = String(seen?.ageMs ?? "");
+  cameraLine.dataset.maxGapMs = String(seen?.maxGapMs ?? "");
+  cameraLine.dataset.gapsOver200 = String(seen?.gapsOver200 ?? "");
+  // with them, once two frames have come: the longest time between two frames and how many were over PEAR's limit
+  const gaps =
+    seen === null || seen.maxGapMs === null
+      ? ""
+      : (language() === "en" ? " " : "") + t("station.camera.gaps", { gap: fixed(seen.maxGapMs, 0), over: count(seen.gapsOver200) });
+  setText(
+    cameraLine,
+    seen === null || cameraKey === null
+      ? ""
+      : t(cameraKey, { rate: count(seen.perSecond), age: count(seen.ageMs ?? 0), seconds: fixed((seen.ageMs ?? 0) / 1000, 1) }) + gaps,
+  );
+
+  // the frame the last action's observation held: the very bytes, as a small picture
+  const frame = isOn ? view.frame : null;
+  const figure = byId("station-frame");
+  const picture = byId<HTMLImageElement>("station-frame-image");
+  figure.hidden = frame === null;
+  if (frame === null) {
+    picture.removeAttribute("src");
+  } else if (picture.src !== frame.url) {
+    picture.src = frame.url;
+  }
+  picture.alt = t("station.frame.alt");
+  setText(
+    byId("station-frame-caption"),
+    frame === null
+      ? ""
+      : t("station.frame.caption", {
+          number: count(frame.number),
+          width: picture.naturalWidth > 0 ? String(picture.naturalWidth) : DASH,
+          height: picture.naturalHeight > 0 ? String(picture.naturalHeight) : DASH,
+          bytes: count(frame.bytes.length),
+          age: count(frame.ageMs),
+        }),
+  );
+
   const messages: HTMLElement[] = [];
   if (view.problem !== null) messages.push(box("error", "station-problem", null, [t(view.problem.key, { error: view.problem.error })]));
   if (isOn && (view.wasHidden || status?.isHidden === true)) {
@@ -1503,6 +1748,15 @@ function renderStation(): void {
   const reportLine = byId("station-report-line");
   reportLine.dataset.outcome = hasEnded && view.outcome !== null ? view.outcome.key : "";
   setText(reportLine, hasEnded && view.outcome !== null ? t(view.outcome.key, view.outcome.values) : "");
+  // an action that was not run for want of a fresh frame: PEAR's result and report stay as they are, and with
+  // them the page says in its own sentence what happened and what to do
+  const failure = view.report?.record["error"];
+  const lacksFrame =
+    typeof failure === "object" &&
+    failure !== null &&
+    String((failure as Record<string, unknown>)["message"] ?? "").startsWith("Camera unavailable");
+  byId("station-report-camera").hidden = !lacksFrame;
+  setText(byId("station-report-camera"), lacksFrame ? t("station.action.noFrame") : "");
   byId("station-report-model").hidden = view.report === null;
   setText(byId("station-feedback"), view.report?.feedback ?? "");
   setText(byId("station-record"), view.report === null ? "" : JSON.stringify(view.report.record, null, 2));
@@ -1706,6 +1960,16 @@ function start(): void {
   document.addEventListener("visibilitychange", () => void tellVisibility());
 
   byId("model-check").addEventListener("click", () => void runModelCheck());
+  byId("ask-once").addEventListener("click", () => void runAsk());
+  byId("ask-cancel").addEventListener("click", () => ask?.cancel());
+  byId("task-instruction").addEventListener("input", renderAskPanel);
+  // a service that was checked is the one that is asked: a change of what names it needs a new check
+  for (const id of ["model-url", "model-name", "model-key"]) {
+    byId(id).addEventListener("input", () => {
+      checkedService = null;
+      renderAskPanel();
+    });
+  }
   for (const id of ["model-url", "model-name", "model-key"]) {
     byId(id).addEventListener("keydown", (event) => {
       if ((event as KeyboardEvent).key === "Enter") void runModelCheck();

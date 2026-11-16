@@ -3,6 +3,9 @@
 //
 // A request carries an id and is answered once, by a reply with that id: a result, or an error with the Python
 // class name and the message as the robot gives them. What the Worker tells unasked is an event.
+//
+// The camera stays in the window (a Worker cannot open one). What the window tells of it carries no id and is
+// never answered: whether the camera runs, and its frames, each the JPEG a turn would send.
 
 import type { ModelState } from "../../src/so101/kinematics/index";
 
@@ -83,6 +86,23 @@ export const CLOCK_NUMBERS = [
   "marginMs",
 ] as const satisfies ReadonlyArray<keyof ClockNumbers>;
 
+/** The wrist camera as the station sees it: the frames the window sent, by the Worker's clock. */
+export interface CameraNumbers {
+  /** Whether the window says its camera runs. */
+  readonly isRunning: boolean;
+  /** How many frames arrived in the last second. */
+  readonly perSecond: number;
+  /** How many frames arrived since the station was enabled. */
+  readonly frames: number;
+  /** How old the last frame was when this status was told, ms; null before the first. */
+  readonly ageMs: number | null;
+  /** The longest time between two frames' arrivals since the station was enabled, ms, counted only between frames
+   * of one spell in which the window said that its camera runs; null before the second such frame. */
+  readonly maxGapMs: number | null;
+  /** How many of those times were over 200 ms: PEAR takes a frame for fresh up to 0.2 s after it arrived. */
+  readonly gapsOver200: number;
+}
+
 /** What the station is and where the arm is, about ten times a second. */
 export interface StationStatus {
   /** The robot's status: OFF, READY, BUSY or FAULT. */
@@ -107,6 +127,8 @@ export interface StationStatus {
   readonly since: PeriodsSince;
   /** What the Worker's clock has done since the station was enabled. */
   readonly clock: ClockNumbers;
+  /** The wrist camera as the station sees it. No frame is in a status. */
+  readonly camera: CameraNumbers;
   /** What is under way: "jog", "home" or nothing. */
   readonly action: "jog" | "home" | null;
   /** Whether the page is hidden: actions are refused. */
@@ -181,13 +203,26 @@ export type StationEvent =
   /** The Home plan of the request `requestId`, which waits for the person's answer. */
   | { readonly type: "plan"; readonly requestId: number; readonly plan: Readonly<Record<string, unknown>> }
   /** The timing self-check's numbers, when it has run. */
-  | { readonly type: "timing"; readonly timing: TimingCheck };
+  | { readonly type: "timing"; readonly timing: TimingCheck }
+  /** The frame the observation of the request `requestId` held, told once: the JPEG's bytes as the observation
+   * holds them, the frame's number among those the wrist camera has seen, and how old it was then, ms. */
+  | { readonly type: "frame"; readonly requestId: number; readonly jpeg: Uint8Array; readonly number: number; readonly ageMs: number };
 
-/** What the window posts to the Worker. */
-export interface ToStation {
+/** A request of the window, which the Worker answers once. */
+export interface StationAsk {
   readonly id: number;
   readonly request: StationRequest;
 }
+
+/** What the window tells of its camera, unasked and unanswered. */
+export type CameraTelling =
+  /** The camera of the page runs, or it stopped. */
+  | { readonly kind: "camera"; readonly isRunning: boolean }
+  /** One frame as the JPEG a turn would send; its bytes are transferred to the Worker, not copied. */
+  | { readonly kind: "frame"; readonly jpeg: ArrayBuffer };
+
+/** What the window posts to the Worker. */
+export type ToStation = StationAsk | CameraTelling;
 
 /** What the Worker posts to the window. */
 export type FromStation =

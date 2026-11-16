@@ -160,7 +160,7 @@ export function describeUrl(url: string): string {
 
 /** Returns whether something answers at ``url``: a request that needs no permission of the service, carries no
  * key and whose answer the page cannot read. */
-async function isReachable(url: string): Promise<boolean> {
+export async function isReachable(url: string): Promise<boolean> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), PROBE_TIMEOUT_MS);
   try {

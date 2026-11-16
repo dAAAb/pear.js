@@ -4,23 +4,31 @@
 //
 // A request is started when it arrives and answered when it is done, so that a Stop is taken while an action is
 // under way: nothing here waits for an action before it takes the next message.
+//
+// The robot's wrist camera is the library's own (CameraFeed over WristCamera); its frame reader is fed by the
+// window, which has the camera: a Worker cannot open one.
 
 import { pythonErrorMessage, pythonErrorName, isValueError, RuntimeError } from "../../src/python/errors";
 import { SO101_DEFAULT_CONFIG, type SO101Config } from "../../src/so101/config";
 import { SINGLE_ARM_POSE_FORMAT } from "../../src/so101/formats";
+import { WristCamera, type WristFrameReader } from "../../src/so101/hardware/cameras";
 import { followerMotors, simulatedArm } from "../../src/so101/hardware/index";
 import { SO101ControlLoop } from "../../src/so101/joint/control_loop";
 import { ARM } from "../../src/so101/layout";
 import { SO101Robot } from "../../src/so101/robot";
 import { protocol, type SimServoChain } from "../../src/feetech/index";
+import { CameraFeed } from "../../src/station/cameras";
+import type { MonotonicClock } from "../../src/station/joint/clock";
 import { DEFAULT_CONTROL_SETTINGS } from "../../src/station/joint/config";
 import { realTimeClock } from "../../src/station/joint/deadline_clock";
 import { MotionStatus, type MotionResult } from "../../src/station/motion/results";
 import type { ControlLoopClass, StationConfig } from "../../src/station/robot";
-import type { DetailedStatus, HomePlan } from "../../src/station/schemas";
+import type { DetailedStatus, HomePlan, Observation } from "../../src/station/schemas";
 import { SIM_CALIBRATION } from "./sim_port";
 import {
   type ActionReport,
+  type CameraNumbers,
+  type CameraTelling,
   type ClockNumbers,
   type DisableResult,
   type EnableResult,
@@ -200,9 +208,77 @@ class StampedControlLoop extends SO101ControlLoop {
   }
 }
 
-/** The SO-101 on the loop above. */
-class StationRobot extends SO101Robot {
+/** The SO-101 on the loop above; a frame of its wrist camera is a JPEG's bytes. */
+class StationRobot extends SO101Robot<Uint8Array> {
   static override readonly CONTROL_LOOP_CLASS: ControlLoopClass = StampedControlLoop;
+}
+
+/**
+ * The wrist camera's frames as the window sends them: the frame reader of the library's WristCamera, which is to
+ * it what lerobot's camera object is to PEAR's. A frame is stamped when it arrives here, on the clock the wrist
+ * camera reads; the window's clock is another one, and its times are never used for a frame's age.
+ */
+export class WindowFrames implements WristFrameReader<Uint8Array> {
+  /** Whether the window says its camera runs. */
+  isReading = false;
+  /** The last JPEG that arrived; null before the first. */
+  latestFrame: Uint8Array | null = null;
+  /** When it arrived, s; null before the first. */
+  latestTimestamp: number | null = null;
+  /** The camera is the window's: there is nothing here to connect or to release. */
+  readonly isConnected = true;
+  /** How many frames arrived. */
+  private count = 0;
+  /** When the frames of about the last second arrived, s. */
+  private arrivals: number[] = [];
+  /** When the last frame arrived since the window last said that its camera runs, s; null before one. */
+  private lastWhileRunning: number | null = null;
+  /** The longest time between two such frames, s; null before the second. */
+  private maxGap: number | null = null;
+  /** How many of those times were longer than a frame stays fresh. */
+  private gapsOver = 0;
+
+  constructor(private readonly clock: Pick<MonotonicClock, "monotonic"> = realTimeClock()) {}
+
+  /** Takes what the window tells of its camera: whether it runs, or one frame. */
+  take(telling: CameraTelling): void {
+    if (telling.kind === "camera") {
+      this.isReading = telling.isRunning;
+      this.lastWhileRunning = null; // the time a camera stood still is not the time between two of its frames
+
+      return;
+    }
+    const now = this.clock.monotonic();
+    this.latestFrame = new Uint8Array(telling.jpeg);
+    this.latestTimestamp = now;
+    this.count += 1;
+    if (this.isReading) {
+      if (this.lastWhileRunning !== null) {
+        const gap = now - this.lastWhileRunning;
+        if (this.maxGap === null || gap > this.maxGap) this.maxGap = gap;
+        if (gap > WristCamera.MAX_AGE_S) this.gapsOver += 1;
+      }
+      this.lastWhileRunning = now;
+    }
+    this.arrivals.push(now);
+    if (this.arrivals.length > 200) this.arrivals.splice(0, this.arrivals.length - 100);
+  }
+
+  /** What the status tells of the camera: no frame is in it. */
+  numbers(): CameraNumbers {
+    const now = this.clock.monotonic();
+
+    return {
+      isRunning: this.isReading,
+      perSecond: this.arrivals.filter((arrival) => arrival > now - 1).length,
+      frames: this.count,
+      ageMs: this.latestTimestamp === null ? null : Math.round((now - this.latestTimestamp) * 1000),
+      maxGapMs: this.maxGap === null ? null : Math.round(this.maxGap * 10000) / 10,
+      gapsOver200: this.gapsOver,
+    };
+  }
+
+  disconnect(): void {}
 }
 
 /** Returns a random UUID as Python's `str(uuid4())` writes one; unlike `crypto.randomUUID` it is there on a page
@@ -241,11 +317,20 @@ export class StationHost {
   private isHidden = false;
   private isEnabling = false;
   private statusTimer: ReturnType<typeof setInterval> | null = null;
+  /** The frames of the window's camera: what the wrist camera of the robot that is open reads. A station that
+   * is enabled anew has been told nothing of the camera yet. */
+  private frames = new WindowFrames();
 
   constructor(private readonly post: (message: FromStation) => void) {}
 
-  /** Starts the request of `message`; its reply is posted when it is done. */
+  /** Starts the request of `message`; its reply is posted when it is done. What the window tells of its camera
+   * is taken at once and never answered. */
   handle(message: ToStation): void {
+    if ("kind" in message) {
+      this.frames.take(message);
+
+      return;
+    }
     void this.run(message.id, message.request).then(
       (result) => this.post({ kind: "reply", id: message.id, isOk: true, result }),
       (error: unknown) =>
@@ -315,8 +400,12 @@ export class StationHost {
       throw new RuntimeError(`The timing self-check failed: ${timing.failures.join("; ")}`);
     }
 
+    // the wrist camera on the frames the window sends: every observation holds the frame a turn would send, and
+    // without a fresh one it fails as PEAR's does
+    const frames = new WindowFrames();
+    this.frames = frames;
     const robot = new StationRobot(STATION_CONFIG, {
-      cameras: null, // no camera in the Worker: an observation holds no frame
+      cameras: new CameraFeed(new WristCamera(STATION_CONFIG.robot, frames, { clock: realTimeClock() })),
       line: {
         transport: chain,
         calibration: SIM_CALIBRATION,
@@ -445,6 +534,7 @@ export class StationHost {
       try {
         await robot.waitStationary(null);
         const observation = await robot.observe();
+        this.tellFrame(requestId, observation);
         result = await robot.execute(action, {
           referenceObservation: observation,
           reportProgress: (phase) => this.event({ type: "phase", requestId, phase }),
@@ -463,6 +553,16 @@ export class StationHost {
 
       return { record: result.toRecord(), feedback, turnText: this.turnText(robot, feedback) };
     });
+  }
+
+  /** Tells the window the frame `observation` held, once: the JPEG's bytes as the observation holds them (the
+   * message takes a copy), its number among the frames the wrist camera has seen, and how old it was then. */
+  private tellFrame(requestId: number, observation: Observation<Uint8Array>): void {
+    for (const [role, jpeg] of Object.entries(observation.images)) {
+      const stamps = observation.camera_timestamps[role] ?? {};
+      const ageS = observation.captured_monotonic_s - Number(stamps["received_monotonic_s"]);
+      this.event({ type: "frame", requestId, jpeg, number: Number(stamps["frame_number"]), ageMs: Math.round(ageS * 1000) });
+    }
   }
 
   private home(requestId: number): Promise<HomeResult> {
@@ -527,6 +627,7 @@ export class StationHost {
       steps: stepCount,
       since: periodsSince(),
       clock: clockNumbers(),
+      camera: this.frames.numbers(),
       action: null,
       isHidden: this.isHidden,
     };
@@ -559,6 +660,7 @@ export class StationHost {
       steps: stepCount,
       since: off.since,
       clock: off.clock,
+      camera: off.camera,
       action: this.action?.type ?? null,
       isHidden: this.isHidden,
     };

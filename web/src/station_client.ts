@@ -5,6 +5,7 @@
 // Worker from the Blob's URL, so the page loads nothing more, from a folder as from a host.
 
 import {
+  type CameraTelling,
   type FromStation,
   REQUEST_LIMIT_MS,
   type StationEvent,
@@ -102,6 +103,13 @@ export class StationClient {
       this.waiting.set(id, { resolve: resolve as (result: unknown) => void, reject, timer });
       worker.postMessage({ id, request });
     });
+  }
+
+  /** Tells the Worker of the page's camera: whether it runs, or one frame, whose bytes are transferred, not
+   * copied (the caller's buffer is empty afterwards). Nothing answers, and nothing waits. */
+  tell(telling: CameraTelling): void {
+    if (telling.kind === "frame") this.worker?.postMessage(telling, [telling.jpeg]);
+    else this.worker?.postMessage(telling);
   }
 
   /** Ends the Worker: whatever it ran is gone, and every request that waits is rejected. */

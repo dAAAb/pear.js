@@ -11,7 +11,7 @@ exits with 0 only if every check passed. Screenshots and report.json go to --out
 default; never a directory of the repository).
 
 Parts: load, stamp, sim, expected, guard, cable, faults, calibration, serial, diagnostics, camera, model,
-privacy, languages, keyboard, layout, folder, subpath, hosted, insecure, log, transport, timing, selftest,
+privacy, ask, languages, keyboard, layout, folder, subpath, hosted, insecure, log, transport, timing, selftest,
 station.
 """
 
@@ -35,7 +35,7 @@ import urllib.request
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from playwright.sync_api import BrowserContext, Page, sync_playwright
+from playwright.sync_api import BrowserContext, Page, TimeoutError as WaitTimeout, sync_playwright
 
 REPOSITORY = Path(__file__).resolve().parents[2]
 MOTORS = ["shoulder_pan", "shoulder_lift", "elbow_flex", "wrist_flex", "wrist_roll", "gripper"]
@@ -84,6 +84,13 @@ class ModelService(http.server.BaseHTTPRequestHandler):
     models: list[str] = [MODEL]
     delay_s = 0.0
     is_other_service = False
+    # the answer to POST /v1/chat/completions: the pieces of the body of a server-sent event stream, the pause
+    # after each, after how many of them the stream stalls until the browser gives up, and whether the service is
+    # gone (it closes the connection without an answer)
+    stream: list[str] = []
+    stream_pause_s = 0.0
+    stream_stalls_after: int | None = None
+    is_gone = False
     seen: list[dict] = []
 
     def log_message(self, *arguments):
@@ -112,10 +119,11 @@ class ModelService(http.server.BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def _record(self) -> None:
-        type(self).seen.append(
-            {"method": self.command, "path": self.path, "headers": {name.lower(): value for name, value in self.headers.items()}}
-        )
+    def _record(self, body: bytes | None = None) -> None:
+        entry = {"method": self.command, "path": self.path, "headers": {name.lower(): value for name, value in self.headers.items()}}
+        if body is not None:
+            entry["body"] = body
+        type(self).seen.append(entry)
 
     def do_OPTIONS(self) -> None:
         self._record()
@@ -135,6 +143,9 @@ class ModelService(http.server.BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:
         self._record()
+        if self.is_gone:  # a service that is gone answers nothing, whatever is asked
+            self.close_connection = True
+            return
         if self.delay_s:
             time.sleep(self.delay_s)
         if self.is_other_service:
@@ -164,6 +175,45 @@ class ModelService(http.server.BaseHTTPRequestHandler):
         else:
             self._send(404, json.dumps({"detail": "Not Found"}).encode(), "application/json", self._cors())
 
+    def do_POST(self) -> None:
+        """Answers a chat completion as a vLLM server answers a request for a stream: the scripted pieces, each as
+        one chunk of the body. What the request carried is kept for the check."""
+        self._record(self.rfile.read(int(self.headers.get("Content-Length") or 0)))
+        self.close_connection = True
+        if self.is_gone:
+            return
+        if self.path.startswith("/v1") and self.keys:
+            scheme, _, token = self.headers.get("Authorization", "").partition(" ")
+            if scheme.lower() != "bearer" or token not in self.keys:
+                body = json.dumps({"error": "Unauthorized"}).encode()
+                self._send(401, body, "application/json", self._cors() if self.refusal_has_cors else {})
+                return
+        if self.path != "/v1/chat/completions":
+            self._send(404, json.dumps({"detail": "Not Found"}).encode(), "application/json", self._cors())
+            return
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+        self.send_header("Cache-Control", "no-cache")
+        self.send_header("Transfer-Encoding", "chunked")
+        for name, value in self._cors().items():
+            self.send_header(name, value)
+        self.end_headers()
+        try:
+            for index, piece in enumerate(self.stream):
+                if self.stream_stalls_after is not None and index >= self.stream_stalls_after:
+                    self.connection.settimeout(30)
+                    while self.rfile.read(1):  # nothing more is sent, until the browser closes the connection
+                        pass
+                    return
+                data = piece.encode()
+                self.wfile.write(f"{len(data):x}\r\n".encode() + data + b"\r\n")
+                self.wfile.flush()
+                if self.stream_pause_s:
+                    time.sleep(self.stream_pause_s)
+            self.wfile.write(b"0\r\n\r\n")
+        except OSError:
+            pass  # the browser gave up on the answer
+
     @classmethod
     def configure(cls, **settings) -> None:
         defaults = {
@@ -173,6 +223,10 @@ class ModelService(http.server.BaseHTTPRequestHandler):
             "models": [MODEL],
             "delay_s": 0.0,
             "is_other_service": False,
+            "stream": [],
+            "stream_pause_s": 0.0,
+            "stream_stalls_after": None,
+            "is_gone": False,
         }
         for name, value in {**defaults, **settings}.items():
             setattr(cls, name, value)
@@ -566,10 +620,22 @@ def part_load(check: Check, context: BrowserContext, base: str) -> None:
     check.ok("Stop is laid out and disabled", page.locator("#task-stop").is_disabled() and page.locator("#task-stop").is_visible())
     check.ok("Stop stays in view at the bottom", page.evaluate("getComputedStyle(document.getElementById('stopbar')).position") == "fixed")
     check.ok("Start is disabled", page.locator("#task-start").is_disabled())
-    check.ok("the instruction is disabled", page.locator("#task-instruction").is_disabled())
+    check.ok("the instruction can be written", page.locator("#task-instruction").is_enabled())
+    check.ok("Ask the model once is not offered before an arm is read", page.locator("#ask-once").is_disabled())
     task_text = page.locator("#task").inner_text()
     check.ok("the task says this version moves only a simulated arm, in a Worker of the page", "moves only a simulated arm, in a Worker of this page" in task_text, task_text[:300])
     check.ok("the task says that with a real arm it only reads and cannot move it", "With a real arm connected it only reads and cannot move the real arm" in task_text, task_text[:300])
+    check.ok(
+        "the task says that it can ask a model once, does not execute the action, and that no model drives an arm yet",
+        "It can ask a model once and show the answer: it does not execute the action the model asks for, and no model drives an arm yet. On the simulated arm" in task_text,
+        task_text[:420],
+    )
+    jog_lead = page.locator("[data-i18n='station.jogLead']").text_content() or ""
+    check.ok(
+        "the station's actions are said to observe the wrist camera's frame, and not to run without a fresh one",
+        "the wrist camera's frame as the station sees it; without a fresh frame the action is not run" in jog_lead and "no camera" not in jog_lead,
+        jog_lead,
+    )
     check.ok("the station cannot be enabled without an arm", page.locator("#station-enable").is_disabled())
     check.equal("the key's field hides what is typed", page.locator("#model-key").get_attribute("type"), "password")
     check.equal("no form that a browser would offer to remember", page.locator("form").count(), 0)
@@ -1634,6 +1700,366 @@ def has_han(text: str) -> bool:
     return re.search(r"[一-鿿]", text) is not None
 
 
+INSTRUCTION = "Put the red block into the box (check 7421)."
+COUNT_WORKERS = (
+    "window.workersStarted = 0;\n"
+    "window.Worker = class extends Worker { constructor(...parts) { super(...parts); window.workersStarted += 1; } };\n"
+)
+# The kinds of packets the guard has counted: the names of its counts above zero.
+GUARD_KINDS = """() => {
+  const kinds = [];
+  const walk = (value, path) => {
+    if (typeof value === 'number') { if (value > 0) kinds.push(path); }
+    else if (value !== null && typeof value === 'object') {
+      for (const [name, inner] of Object.entries(value)) walk(inner, path === '' ? name : `${path}.${name}`);
+    }
+  };
+  walk(window.pearjs.arm.view.guard, '');
+  return kinds.sort();
+}"""
+DECODE_JPEG = """async (data) => {
+  const bytes = Uint8Array.from(atob(data), (letter) => letter.charCodeAt(0));
+  const bitmap = await createImageBitmap(new Blob([bytes], { type: 'image/jpeg' }));
+  return [bitmap.width, bitmap.height];
+}"""
+
+
+def recorded_answer() -> tuple[list[str], dict]:
+    """Returns a complete answer of a vLLM server as the library's fixtures recorded one for PEAR's own client
+    (tests/fixtures/agent/client.json, the first turn of "three turns of one task"): the pieces of the response's
+    body as the recording server sent them, and what PEAR's client returned for them."""
+    recorded = json.loads((REPOSITORY / "tests" / "fixtures" / "agent" / "client.json").read_text(encoding="utf-8"))
+    scenario = next(entry for entry in recorded["scenarios"] if entry["name"] == "three turns of one task")
+    step = next(entry for entry in scenario["steps"] if entry["op"] == "infer")
+    return [piece["data"] for piece in step["responses"][0]["body"]], step["outcome"]["returned"]
+
+
+def wait_asked(page: Page) -> str:
+    page.wait_for_function("!['', 'asking'].includes(document.getElementById('ask-result').dataset.outcome)", timeout=20000)
+    return page.locator("#ask-result").get_attribute("data-outcome") or ""
+
+
+def wait_missing(page: Page, wanted: str) -> str | None:
+    """Waits, at most five seconds, until the page names ``wanted`` as what an ask lacks ("" for nothing) and
+    returns what it names then: a check of the note may not depend on whether the page had rendered it yet."""
+    try:
+        page.wait_for_function("wanted => document.getElementById('ask-missing').dataset.missing === wanted", arg=wanted, timeout=5000)
+    except WaitTimeout:
+        pass
+    return page.locator("#ask-missing").get_attribute("data-missing")
+
+
+# How many packets the guard has counted so far, of every kind, passed or refused: every read of the arm raises it.
+GUARD_PACKETS = """(() => {
+  let total = 0;
+  const walk = (value) => {
+    if (typeof value === 'number') total += value;
+    else if (value !== null && typeof value === 'object') Object.values(value).forEach(walk);
+  };
+  walk(window.pearjs.arm.view.guard);
+  return total;
+})()"""
+
+
+def wait_read_again(page: Page, count: str, before: int) -> int:
+    """Waits, at most five seconds, for the page's next read of the arm: until ``count``, an expression that every
+    read raises, is above ``before``. Returns the count then; it is still ``before`` when no read came."""
+    try:
+        page.wait_for_function(f"before => ({count}) > before", arg=before, timeout=5000)
+    except WaitTimeout:
+        pass
+    return page.evaluate(count)
+
+
+def ask_page(check: Check, browser, base: str, service: str, label: str, port: str | None) -> tuple[BrowserContext, Page]:
+    """Opens a page of its own and brings it to where "Ask the model once" is offered, on the simulated arm or,
+    with ``port``, on a stand-in of a browser's port; checks at each step what the page calls missing."""
+    own = browser.new_context(viewport={"width": 1280, "height": 800}, locale="en-US")
+    check.watch(own)
+    own.add_init_script(COUNT_WORKERS)
+    if port is not None:
+        own.add_init_script(port)
+    page = open_page(check, own, base)
+    button = page.locator("#ask-once")
+
+    # what the page calls missing is asked with a wait for it (wait_missing), never read at once
+    lacking = wait_missing(page, "ask.need.arm")
+    check.ok(f"{label}: no arm is read: Ask is not offered, an arm is missing", button.is_disabled() and lacking == "ask.need.arm", lacking)
+    page.click("#arm-sim" if port is None else "#arm-connect")
+    wait_phase(page, "reading")
+    page.wait_for_function("window.pearjs.arm.view.live !== null && window.pearjs.arm.view.live.turnText !== null")
+    if port is not None:
+        check.equal(f"{label}: an arm is read: a camera is missing", wait_missing(page, "ask.need.camera"), "ask.need.camera")
+        page.select_option("#camera-select", "test-picture")
+        page.click("#camera-start")
+    page.wait_for_function("document.querySelector('#camera-status').dataset.phase === 'live'")
+    check.equal(f"{label}: a camera runs: a checked model service is missing", wait_missing(page, "ask.need.model"), "ask.need.model")
+    check.equal(f"{label}: the service is checked", run_model_check(page, f"{service}/v1", MODEL, KEY), "ok")
+    check.equal(f"{label}: the service is checked: an instruction is missing", wait_missing(page, "ask.need.instruction"), "ask.need.instruction")
+    check.ok(f"{label}: Ask is still not offered", button.is_disabled())
+    page.fill("#task-instruction", INSTRUCTION)
+    lacking = wait_missing(page, "")
+    check.ok(f"{label}: an instruction is written: Ask is offered", lacking == "" and button.is_enabled(), lacking)
+    return own, page
+
+
+def ask_once(check: Check, browser, base: str, service: str, label: str, port: str | None) -> None:
+    """One ask that is answered: what the service was sent, what the page shows, and that nothing moved."""
+    pieces, returned = recorded_answer()
+    ModelService.configure(keys=[KEY], stream=pieces)
+    own, page = ask_page(check, browser, base, service, label, port)
+    seen_before = len(ModelService.seen)
+    log_before = len(log_lines(page))
+    turn_text = page.locator("#turn-text").text_content()
+    kinds_before = page.evaluate(GUARD_KINDS)
+    written_before = page.evaluate("window.portLog.written.length") if port is not None else 0
+    page.click("#ask-once")
+    check.equal(f"{label}: the model answered, and the answer ends in an action", wait_asked(page), "action")
+    packets_at_answer = page.evaluate(GUARD_PACKETS)
+    written_at_answer = page.evaluate("window.portLog.written.length") if port is not None else 0
+    asked = ModelService.seen[seen_before:]
+    posts = [entry for entry in asked if entry["method"] == "POST"]
+    check.equal(f"{label}: the service was asked once", [entry["path"] for entry in posts], ["/v1/chat/completions"])
+    if len(posts) != 1:
+        own.close()
+        return
+
+    headers, body = posts[0]["headers"], json.loads(posts[0]["body"])
+    check.equal(f"{label}: the request's Origin is the page's origin", headers.get("origin"), base)
+    check.equal(f"{label}: its Authorization carries the key", headers.get("authorization"), f"Bearer {KEY}")
+    check.ok(
+        f"{label}: a preflight for the POST came first, without the key",
+        any(entry["method"] == "OPTIONS" and entry["headers"].get("access-control-request-method") == "POST" and "authorization" not in entry["headers"] for entry in asked),
+        [(entry["method"], entry["path"]) for entry in asked],
+    )
+    check.equal(f"{label}: the request asks for a stream", body.get("stream"), True)
+    check.equal(f"{label}: it names the model that was checked", body.get("model"), MODEL)
+    messages = body.get("messages", [])
+    check.equal(f"{label}: a system message, then the turn", [message["role"] for message in messages], ["system", "user"])
+    check.ok(f"{label}: the system message holds the instruction", INSTRUCTION in messages[0]["content"], messages[0]["content"][-160:])
+    parts = messages[1]["content"]
+    texts = [part["text"] for part in parts if part["type"] == "text"]
+    images = [part["image_url"]["url"] for part in parts if part["type"] == "image_url"]
+    check.equal(f"{label}: the user message's text is exactly the turn's text of step 1, then PEAR's name of the camera", texts, [turn_text, "[wrist]"])
+    check.ok(f"{label}: one image, as a JPEG's data", len(images) == 1 and images[0].startswith("data:image/jpeg;base64,"), [image[:40] for image in images])
+    data = images[0].split(",", 1)[1]
+    jpeg = base64.b64decode(data)
+    check.equal(f"{label}: the image decodes to 640 x 480", page.evaluate(DECODE_JPEG, data), [640, 480])
+    check.ok(f"{label}: its bytes are a JPEG's from the first to the last", jpeg[:2] == b"\xff\xd8" and jpeg[-2:] == b"\xff\xd9", (jpeg[:2], jpeg[-2:]))
+
+    result = page.locator("#ask-result")
+    written = returned["answer"].split("```json")[-1].split("```")[0].strip()
+    check.equal(f"{label}: the page shows the scripted answer byte for byte", page.locator("#ask-answer").text_content(), returned["answer"])
+    check.equal(f"{label}: and the scripted reasoning", page.locator("#ask-reasoning").text_content(), returned["reasoning"])
+    check.ok(f"{label}: the phase is no longer shown once the answer is there", page.locator("#ask-phase-part").is_hidden())
+    timings = page.locator("#ask-performance").text_content() or ""
+    check.ok(f"{label}: the timings the client reported", page.locator("#ask-performance-part").is_visible() and timings != "", timings)
+    usage = page.locator("#ask-usage").text_content() or ""
+    check.ok(f"{label}: the tokens the service reported", all(f"{name} {returned['usage'][name]}" in usage for name in ("input", "output", "cached_input")), usage)
+    shown = json.loads(page.locator("#ask-action").get_attribute("data-action") or "{}")
+    check.equal(f"{label}: the action is the scripted one", {name: shown.get(name) for name in ("arm", "gripper")}, json.loads(written))
+    check.equal(f"{label}: shown as the JSON the model wrote", page.locator("#ask-action-json").text_content(), written)
+    sentence = page.locator("#ask-action-sentence").inner_text()
+    check.ok(f"{label}: and in a sentence", "z +1.5 cm" in sentence and "x +0.0 cm" in sentence and "hold the gripper as it is" in sentence, sentence)
+    check.equal(f"{label}: what was sent is shown: the turn's text", page.locator("#ask-sent-text").text_content(), turn_text)
+    # step 1's text is compared after the page's next render of the arm, which follows the answer: the render that
+    # writes the text also writes the count of the readings, so the count's change is waited for (at most 5 s)
+    readings_at_answer = page.locator("#arm-readings").text_content()
+    try:
+        page.wait_for_function("before => document.getElementById('arm-readings').textContent !== before", arg=readings_at_answer, timeout=5000)
+    except WaitTimeout:
+        pass
+    readings_after = page.locator("#arm-readings").text_content()
+    check.ok(f"{label}: step 1 was rendered again after the answer", readings_after != readings_at_answer and readings_after != "", (readings_at_answer, readings_after))
+    check.equal(f"{label}: and step 1 shows the same text after the ask as before it", page.locator("#turn-text").text_content(), turn_text)
+    check.ok(f"{label}: the page says that nothing was sent to the arm", "Nothing was sent to the arm" in page.locator("#ask-not-sent").inner_text())
+    check.equal(f"{label}: the client was closed", result.get_attribute("data-closed"), "true")
+    check.ok(f"{label}: Ask is offered again, Cancel is not", page.locator("#ask-once").is_enabled() and page.locator("#ask-cancel").is_disabled())
+
+    # nothing moved, nothing was started. Asked after the page's next read of the arm: a recorded answer can come
+    # faster than that read (about ten a second), and what is asked here may not depend on which came first
+    packets_after = wait_read_again(page, GUARD_PACKETS, packets_at_answer)
+    check.ok(f"{label}: the arm was read again after the answer", packets_after > packets_at_answer, (packets_at_answer, packets_after))
+    check.equal(f"{label}: the guard refused nothing", int(page.locator("#guard-line").get_attribute("data-refused") or "0"), 0)
+    check.ok(f"{label}: the guard counts packets", len(kinds_before) > 0, kinds_before)
+    check.equal(f"{label}: the guard counts no new kind of packet", page.evaluate(GUARD_KINDS), kinds_before)
+    check.equal(f"{label}: no Worker was started", page.evaluate("window.workersStarted"), 0)
+    if port is not None:
+        written_after = wait_read_again(page, "window.portLog.written.length", written_at_answer)
+        check.ok(
+            f"{label}: and the reading went on: the port was written to again after the answer",
+            written_after > written_at_answer >= written_before,
+            (written_before, written_at_answer, written_after),
+        )
+        instructions = page.evaluate("[...new Set(window.portLog.written.map((entry) => entry.bytes[4]))].sort((a, b) => a - b)")
+        check.ok(f"{label}: the port was given nothing but reads (the instructions 1, 2 and 0x82)", len(instructions) > 0 and set(instructions) <= {1, 2, 0x82}, instructions)
+
+    lines = log_lines(page)[log_before:]
+    said = "\n".join(lines)
+    check.ok(
+        f"{label}: the log says what happened",
+        all(any(words in line for line in lines) for words in ("Ask the model once: asked.", "answered after", "the answer ends in an action, which was not executed", "the client is closed")),
+        lines,
+    )
+    secrets = (KEY, urlsplit(service).netloc, INSTRUCTION, "Moving up", "The cube is", '"arm"', "base64", turn_text.split("\n")[0])
+    check.equal(f"{label}: the log holds no key, no address, no instruction, no answer, no state and no image", [secret for secret in secrets if secret in said], [])
+    check.ok(f"{label}: the whole log holds no key", KEY not in page.locator("#log-output").input_value())
+    own.close()
+
+
+def ask_failures(check: Check, browser, base: str, service: str) -> None:
+    """What can go wrong, on one page of the simulated arm: each time what the page shows, in PEAR's words, that
+    the client is closed and that Ask is offered again."""
+    pieces, _ = recorded_answer()
+    ModelService.configure(keys=[KEY], stream=pieces)
+    own, page = ask_page(check, browser, base, service, "what can go wrong", None)
+    result, button, pear = page.locator("#ask-result"), page.locator("#ask-once"), page.locator("#ask-pear")
+
+    def after(label: str, outcome: str, words: list[str]) -> None:
+        check.equal(f"{label}: the page says so", wait_asked(page), outcome)
+        said = pear.text_content() or ""
+        check.ok(f"{label}: in PEAR's words", said != "" and all(word in said for word in words), said)
+        check.ok(f"{label}: the key is not shown", KEY not in page.locator("#ask").inner_text() and OTHER_KEY not in page.locator("#ask").inner_text())
+        check.equal(f"{label}: the client is closed", result.get_attribute("data-closed"), "true")
+        check.ok(f"{label}: no action is shown", page.locator("#ask-action").is_hidden())
+        check.ok(f"{label}: the page says that nothing was sent to the arm", "Nothing was sent to the arm" in page.locator("#ask-not-sent").inner_text())
+        check.ok(f"{label}: Ask is offered again", button.is_enabled() and page.locator("#ask-cancel").is_disabled())
+
+    # the service takes another key now, and answers where the browser may show it
+    ModelService.configure(keys=[OTHER_KEY], refusal_has_cors=True, stream=pieces)
+    page.click("#ask-once")
+    after("a wrong key (401)", "failed", ["AuthenticationError", "Error code: 401", "Unauthorized"])
+    # as a vLLM server refuses it, outside its CORS middleware: the browser withholds the refusal from the page
+    ModelService.configure(keys=[OTHER_KEY], stream=pieces)
+    page.click("#ask-once")
+    after("a wrong key, withheld by the browser", "failed", ["Connection error"])
+    # the page asked whether something answers there, and says why a browser shows no reason, as step 3 words it
+    explain = page.locator("#ask-explain")
+    said = explain.inner_text()
+    check.ok(
+        "a wrong key, withheld by the browser: the page says that the browser withheld the answer, and the two usual reasons",
+        result.get_attribute("data-withheld") == "true"
+        and "the browser withheld its answer" in said
+        and "the key is wrong" in said
+        and f"does not allow this page's origin ({page.evaluate('location.origin')})" in said,
+        said,
+    )
+    lines = [line for line in page.locator("#log-output").input_value().splitlines() if "the browser withheld its answer from this page" in line]
+    check.ok("a wrong key, withheld by the browser: the log says so once, without an address", len(lines) == 1 and "http" not in lines[0], lines)
+    page.click("#language-zh")
+    try:
+        page.wait_for_function("document.getElementById('ask-explain').textContent.includes('瀏覽器不讓本頁讀取回應')", timeout=5000)
+    except WaitTimeout:
+        pass
+    said = explain.inner_text()
+    check.ok("a wrong key, withheld by the browser: and in Chinese", "瀏覽器不讓本頁讀取回應" in said and "金鑰不對" in said and "PEAR 的原話" in said, said)
+    page.click("#language-en")
+    try:
+        page.wait_for_function("!document.getElementById('ask-explain').textContent.includes('PEAR 的原話')", timeout=5000)
+    except WaitTimeout:
+        pass
+
+    ModelService.configure(keys=[KEY], stream=[piece for piece in pieces if "```" not in piece])
+    page.click("#ask-once")
+    after("an answer without an action", "no-action", ["ValueError: Final answer must end with a fenced json action"])
+    check.equal("an answer without an action: the answer is shown", (page.locator("#ask-answer").text_content() or "").strip(), "Moving up.")
+
+    ModelService.configure(keys=[KEY], stream=pieces, stream_stalls_after=4)
+    page.click("#ask-once")
+    page.wait_for_function("document.getElementById('ask-result').dataset.outcome === 'asking' && document.getElementById('ask-answer').textContent.includes('Moving up.')")
+    check.ok("Cancel: it is offered while the answer streams, Ask is not", page.locator("#ask-cancel").is_enabled() and button.is_disabled())
+    check.equal("Cancel: PEAR's word for the phase is shown while the answer streams", page.locator("#ask-phase").text_content(), "Thinking")
+    check.equal("Cancel: and the reasoning so far", page.locator("#ask-reasoning").text_content(), "The cube is left of the gripper.")
+    check.equal("Cancel: the page shows the answer so far", (page.locator("#ask-answer").text_content() or "").strip(), "Moving up.")
+    page.click("#ask-cancel")
+    after("Cancel while the answer streams", "cancelled", [])
+
+    ModelService.configure(keys=[KEY], stream=pieces, is_gone=True)
+    page.click("#ask-once")
+    after("a service that is gone", "failed", ["Connection error"])
+    said = page.locator("#ask-explain").inner_text()
+    check.ok(
+        "a service that is gone: the page does not say that an answer was withheld",
+        result.get_attribute("data-withheld") == "false" and "withheld" not in said and "The model service gave no answer" in said,
+        said,
+    )
+
+    ModelService.configure(keys=[KEY], stream=pieces)
+    page.click("#ask-once")
+    check.equal("after the failures the next ask is answered", wait_asked(page), "action")
+    packets = page.evaluate(GUARD_PACKETS)
+    check.ok("the arm was read again after that answer", wait_read_again(page, GUARD_PACKETS, packets) > packets, packets)
+    check.equal("nothing was refused by the guard meanwhile", int(page.locator("#guard-line").get_attribute("data-refused") or "0"), 0)
+    check.equal("and no Worker was started", page.evaluate("window.workersStarted"), 0)
+    check.ok("the log holds no key", KEY not in page.locator("#log-output").input_value() and OTHER_KEY not in page.locator("#log-output").input_value())
+
+    # while the station drives the simulated arm this window does not read it: the ask is not offered, and the page
+    # says what to do; with the station disabled again it is offered as before
+    check.ok("before the station is enabled Ask is offered", wait_missing(page, "") == "" and button.is_enabled())
+    page.click("#station-enable")
+    wait_station(page, "view.phase === 'on' && view.status !== null && view.status.robot === 'READY'")
+    lacking = wait_missing(page, "ask.need.station")
+    said = page.locator("#ask-missing").inner_text()
+    check.ok(
+        "while the station drives the arm Ask is not offered, and the page says to disable the station first",
+        lacking == "ask.need.station" and button.is_disabled() and "Disable the station first" in said,
+        (lacking, said),
+    )
+    page.click("#station-disable")
+    wait_station(page, "view.phase === 'off'")
+    lacking = wait_missing(page, "")
+    check.ok("with the station disabled again Ask is offered", lacking == "" and button.is_enabled(), lacking)
+
+    # a camera that runs and gives no frame at the click (the preview's picture is taken away for the moment): no
+    # request goes out, and the ask says so itself; with the picture back the next ask is answered. Each step
+    # waits for the note or the answer it means.
+    seen_before = len(ModelService.seen)
+    page.evaluate("(() => { const video = document.getElementById('camera-video'); window.heldStream = video.srcObject; video.srcObject = null; })()")
+    page.click("#ask-once")
+    try:
+        page.wait_for_function("document.getElementById('ask-missing').dataset.frame === 'none'", timeout=5000)
+    except WaitTimeout:
+        pass
+    said = page.locator("#ask-missing").inner_text()
+    check.ok(
+        "a camera without a frame at the click: the ask says that the model was not asked, and why",
+        page.locator("#ask-missing").get_attribute("data-frame") == "none" and "The model was not asked" in said and "no fresh frame" in said,
+        said,
+    )
+    check.ok("a camera without a frame at the click: Ask is offered again, and no result is shown", button.is_enabled() and result.is_hidden())
+    check.equal("a camera without a frame at the click: the service saw no request", len(ModelService.seen) - seen_before, 0)
+    check.equal("a camera without a frame at the click: the camera is still called running", page.locator("#camera-status").get_attribute("data-phase"), "live")
+    page.evaluate("(async () => { const video = document.getElementById('camera-video'); video.srcObject = window.heldStream; await video.play(); })()")
+    page.wait_for_function("(() => { const video = document.getElementById('camera-video'); return video.readyState >= 2 && video.videoWidth > 0; })()")
+    page.click("#ask-once")
+    check.equal("with a frame again the ask is answered", wait_asked(page), "action")
+    check.equal("and the note of the missing frame is gone", page.locator("#ask-missing").inner_text(), "")
+
+    # an arm that is connected and read, and whose state the page cannot make (the simulated arm as it leaves the
+    # factory: never calibrated): the ask is not offered, and the page names the reading, not a missing arm
+    page.select_option("#sim-scenario", "factory")
+    lacking = wait_missing(page, "ask.need.reading")
+    wait_phase(page, "reading")
+    lacking = wait_missing(page, "ask.need.reading")
+    said = page.locator("#ask-missing").inner_text()
+    check.ok(
+        "an arm that is read without a complete reading: Ask is not offered, and the page names the reading, not a missing arm",
+        lacking == "ask.need.reading" and button.is_disabled() and "no complete reading" in said and "Start the simulated arm" not in said,
+        (lacking, said),
+    )
+    page.select_option("#sim-scenario", "normal")
+    lacking = wait_missing(page, "")
+    check.ok("with a complete reading again Ask is offered", lacking == "" and button.is_enabled(), lacking)
+    own.close()
+
+
+def part_ask(check: Check, browser, base: str, service: str) -> None:
+    ask_once(check, browser, base, service, "simulated arm", None)
+    ask_once(check, browser, base, service, "a real arm", scripted_port(USB_ADAPTER, SIX_CALIBRATED))
+    ask_failures(check, browser, base, service)
+    ModelService.configure()
+
+
 def part_languages(check: Check, browser, base: str, service: str) -> None:
     for locale, wanted in (("zh-TW", "zh-Hant-TW"), ("zh-HK", "zh-Hant-TW"), ("en-GB", "en"), ("ja-JP", "en")):
         context = browser.new_context(viewport={"width": 1280, "height": 800}, locale=locale)
@@ -1659,6 +2085,17 @@ def part_languages(check: Check, browser, base: str, service: str) -> None:
         "the task says the same in Chinese",
         all(word in page.locator("#task").inner_text() for word in ("只會讓模擬手臂動", "Worker", "連接真實的手臂時，它只讀取，不會讓真實的手臂動")),
         page.locator("#task").inner_text()[:200],
+    )
+    check.ok(
+        "the task says in Chinese that it can ask a model once, does not execute the action, and that no model drives an arm yet",
+        all(word in page.locator("#task").inner_text() for word in ("它可以問模型一次並顯示回答", "不會執行模型要求的動作", "目前還沒有模型驅動手臂")),
+        page.locator("#task").inner_text()[:260],
+    )
+    jog_lead = page.locator("[data-i18n='station.jogLead']").text_content() or ""
+    check.ok(
+        "the station's actions are said in Chinese to observe the wrist camera's frame, and not to run without a fresh one",
+        "工作站看到的手腕攝影機畫面" in jog_lead and "沒有新的畫面時，動作不會執行" in jog_lead and "沒有相機" not in jog_lead,
+        jog_lead,
     )
     check.equal("the Chinese button is the pressed one", page.locator("#language-zh").get_attribute("aria-pressed"), "true")
 
@@ -2246,10 +2683,53 @@ def clock_entries(page: Page, at: str) -> list:
     return entries
 
 
+def camera_plausible(camera: object) -> bool:
+    """Whether the camera's numbers of a clock entry are numbers and plausible: counts that are not negative, a
+    longest time between two frames only once two came, times over 200 ms only with a longest one over 200 ms, and
+    a time for making a frame exactly when the window made one."""
+    if not isinstance(camera, dict):
+        return False
+    if not all(is_number(camera.get(name)) and camera[name] >= 0 for name in ("frames", "gapsOver200", "made", "leftOut")):
+        return False
+    gap, mean, longest = camera.get("maxGapMs"), camera.get("makeMeanMs"), camera.get("makeMaxMs")
+    if gap is None:
+        gaps_fit = camera["gapsOver200"] == 0
+    else:
+        gaps_fit = is_number(gap) and gap > 0 and camera["frames"] >= 2 and (camera["gapsOver200"] == 0 or gap > 200)
+    if camera["made"] == 0:
+        return gaps_fit and mean is None and longest is None
+    return gaps_fit and is_number(mean) and is_number(longest) and 0 < mean <= longest
+
+
+def camera_kept_fresh(camera: object) -> bool:
+    """Whether, by the camera's numbers of a clock entry, the frames came closer together than PEAR's 0.2 s the
+    whole time: frames arrived, the longest time between two is under 200 ms, none was over, and the window timed
+    the frames it made."""
+    return (
+        camera_plausible(camera)
+        and camera["frames"] >= 2
+        and camera["made"] >= 2
+        and camera["maxGapMs"] is not None
+        and camera["maxGapMs"] < 200
+        and camera["gapsOver200"] == 0
+    )
+
+
+def camera_rate(page: Page, low: int, high: int, timeout_ms: int = 4000) -> dict:
+    """Returns the camera's numbers of the station's status once ``low`` to ``high`` frames arrived in the last
+    second, or the last ones read when the time is over."""
+    deadline = time.monotonic() + timeout_ms / 1000
+    while True:
+        seen = (station_view(page).get("status") or {}).get("camera") or {}
+        if low <= (seen.get("perSecond") or 0) <= high or time.monotonic() > deadline:
+            return seen
+        page.wait_for_timeout(100)
+
+
 def clock_plausible(entry: object) -> bool:
     """Whether a clock entry of the log has plausible counts: the clock has slept, the periods since enabling are
-    one fewer than the steps (2 at most), those over 40 ms are among those over 25 ms, and the timing self-check
-    is the one of 150 periods, with its numbers."""
+    one fewer than the steps (2 at most), those over 40 ms are among those over 25 ms, the timing self-check
+    is the one of 150 periods, with its numbers, and the camera's numbers are plausible."""
     if not isinstance(entry, dict):
         return False
     clock, periods, timing, steps = entry.get("clock"), entry.get("periods"), entry.get("timing"), entry.get("steps")
@@ -2267,6 +2747,7 @@ def clock_plausible(entry: object) -> bool:
         and 0 <= steps - periods["count"] <= 2
         and 0 <= periods["over40"] <= periods["over25"] <= periods["count"]
         and timing["periods"] == 150
+        and camera_plausible(entry.get("camera"))
     )
 
 
@@ -2278,6 +2759,27 @@ def station_view(page: Page) -> dict:
             return { phase: view.phase, status: view.status, lost: view.lost, problem: view.problem, timing: view.timing,
                      action: view.action, outcome: view.outcome, plan: view.plan, report: view.report };
         })()"""
+    )
+
+
+def station_frame(page: Page) -> "dict | None":
+    """Returns the frame the last action's observation held, as the page holds and shows it: its first and last
+    bytes, its size, its number among the frames the station's camera has seen, its age at the observation, and
+    the size the page decoded it to; None when the page holds none."""
+    return page.evaluate(
+        """async () => {
+            const frame = window.pearjs.station().frame;
+            if (frame === null) return null;
+            const image = document.getElementById('station-frame-image');
+            for (let turn = 0; turn < 40 && !(image.src === frame.url && image.complete && image.naturalWidth > 0); turn++) {
+                await new Promise(resolve => setTimeout(resolve, 50));
+            }
+            const bytes = frame.bytes;
+            return { first: [bytes[0], bytes[1]], last: [bytes[bytes.length - 2], bytes[bytes.length - 1]], bytes: bytes.length,
+                     number: frame.number, ageMs: frame.ageMs, width: image.naturalWidth, height: image.naturalHeight,
+                     isShown: image.src === frame.url && !document.getElementById('station-frame').hidden,
+                     caption: document.getElementById('station-frame-caption').textContent };
+        }"""
     )
 
 
@@ -2358,6 +2860,18 @@ def station_enabled(check: Check, page: Page, label: str) -> dict:
     check.equal(f"{label}: the page shows the periods", page.locator("#station-periods").get_attribute("data-count"), str(periods["count"]))
     check.numbers.setdefault("station", {})[label] = {"periods": periods, "steps a second": round(rate, 2)}
 
+    # the wrist camera as the station sees it: the window sends it the frames of the simulated arm's camera (the
+    # test picture), and the loop above kept its period with them flowing
+    seen = status.get("camera") or {}
+    check.ok(f"{label}: the status says that the camera's frames arrive: at least five in the last second, the last one younger than 0.2 s", seen.get("isRunning") is True and (seen.get("perSecond") or 0) >= 5 and seen.get("ageMs") is not None and 0 <= seen["ageMs"] < 200, seen)
+    check.ok(f"{label}: no frame is in a status: its camera holds six numbers", sorted(seen) == ["ageMs", "frames", "gapsOver200", "isRunning", "maxGapMs", "perSecond"] and len(json.dumps(status)) < 4000, [sorted(seen), len(json.dumps(status))])
+    seen = camera_rate(page, 15, 22)
+    check.ok(f"{label}: the window sends a frame every 50 ms: 15 to 22 arrived in the last second", 15 <= (seen.get("perSecond") or 0) <= 22, seen)
+    line = page.locator("#station-camera")
+    told = [line.inner_text(), line.get_attribute("data-max-gap-ms"), line.get_attribute("data-gaps-over200")]
+    check.ok(f"{label}: the camera's line tells the longest time between two frames, under 200 ms, and that none was over", "the longest time between two frames was" in told[0] and told[0].endswith(": 0.") and 0 < float(told[1] or 0) < 200 and told[2] == "0", told)
+    check.numbers["station"][f"{label}: the camera"] = seen
+
     # the Worker's clock, for a measurement: in the status, and as one line of the station's panel
     told_clock = status.get("clock") or {}
     check.ok(f"{label}: the Worker's status carries the clock's eight numbers, each a number, and the clock has slept", sorted(told_clock) == sorted(CLOCK_NUMBERS) and all(is_number(told_clock[name]) for name in CLOCK_NUMBERS) and told_clock["sleeps"] > 0, told_clock)
@@ -2384,6 +2898,9 @@ def station_disabled(check: Check, page: Page, label: str, turn_text: str) -> No
     check.ok(f"{label}: Enable is offered again", page.locator("#station-enable").is_visible() and not page.locator("#station-enable").is_disabled())
     entries = clock_entries(page, "disable")
     check.ok(f"{label}: at Disable the log holds the clock's entry: one line of JSON with plausible counts", len(entries) == 1 and clock_plausible(entries[0]), entries)
+    cameras = [entry.get("camera") if isinstance(entry, dict) else None for entry in entries]
+    check.ok(f"{label}: over the station's time the camera's frames were never 0.2 s apart: the entry's longest time between two is under 200 ms and none was over", len(cameras) == 1 and camera_kept_fresh(cameras[0]), cameras)
+    check.numbers.setdefault("station", {})[f"{label}: the camera at Disable"] = cameras
     lines = log_lines(page)
     check.ok(f"{label}: the log tells of enabling and disabling", any(line.startswith("Station: enabled; the robot opened in ") for line in lines) and any(line.startswith("Station: disabled; the simulated arm stands at ") for line in lines), lines[-6:])
     guard = page.locator("#guard-line")
@@ -2518,12 +3035,66 @@ def settled_status(page: Page) -> dict:
     return station_view(page)["status"]
 
 
+CAMERA_STOPPED = "Camera unavailable: {'wrist': 'Camera reader stopped; reconnect the camera'}"
+
+
+def station_camera(check: Check, page: Page) -> dict:
+    """On the enabled station: with the camera of step 2 stopped an action is not run, the page shows PEAR's
+    error as it is and says what to do, in both languages; with the camera started again an action completes.
+    Returns the Worker's status at the end."""
+    button = f"#station-jog button[data-jog='{JOG_BUTTONS[0][0]}']"
+    line = page.locator("#station-camera")
+    check.equal("camera: while frames arrive the panel says so", line.get_attribute("data-state"), "station.camera.arriving")
+    page.click("#camera-stop")
+    wait_station(page, "view.status.camera.isRunning === false && view.status.camera.perSecond === 0", 8000)
+    page.wait_for_function("document.getElementById('station-camera').dataset.state === 'station.camera.stopped'")
+    english = line.inner_text()
+    page.click("#language-zh")
+    page.wait_for_timeout(300)
+    chinese = line.inner_text()
+    page.click("#language-en")
+    check.ok("camera: with the camera of step 2 stopped the station is told, and its panel says that no frames arrive and what to do, in English and in Chinese", "no frames arrive" in english and "start the camera in step 2" in english and "test picture" in english and "沒有畫面送達" in chinese and "請在步驟 2 啟動攝影機" in chinese and "測試畫面" in chinese, [english, chinese])
+    page.click(button)
+    wait_station(page, "view.action === null && view.outcome !== null", 30000)
+    failed = (station_view(page)["report"] or {}).get("record") or {}
+    check.equal("camera: an action after the stop is not run: PEAR's result is failed, with PEAR's error and the reader's reason", [failed.get("status"), (failed.get("error") or {}).get("message")], ["failed", CAMERA_STOPPED])
+    check.ok("camera: the page shows PEAR's error byte for byte, in the report the model would read, and no frame of an observation", CAMERA_STOPPED in page.locator("#station-feedback").inner_text() and station_frame(page) is None and page.locator("#station-frame").is_hidden(), page.locator("#station-feedback").inner_text()[:300])
+    # with PEAR's result and report, the page's own sentence at the report: what happened and what to do
+    advice = page.locator("#station-report-camera")
+    advice_english = advice.inner_text() if advice.is_visible() else ""
+    page.click("#language-zh")
+    page.wait_for_timeout(300)
+    advice_chinese = advice.inner_text() if advice.is_visible() else ""
+    page.click("#language-en")
+    page.wait_for_timeout(300)
+    check.ok("camera: at the report of the action that was not run the page says in its own sentence that there was no fresh frame and what to do, in English", "did not run this action, because it had no fresh frame of the wrist camera" in advice_english and "start it (with the simulated arm the test picture is enough)" in advice_english, advice_english)
+    check.ok("camera: and in Chinese when the page is Chinese", "沒有手腕攝影機的新畫面" in advice_chinese and "請啟動它（使用模擬手臂時，測試畫面就夠了）" in advice_chinese, advice_chinese)
+    check.ok("camera: beside the page's sentence PEAR's report and result line are unchanged", CAMERA_STOPPED in page.locator("#station-feedback").inner_text() and page.locator("#station-report-line").get_attribute("data-outcome") == "station.action.done", [page.locator("#station-feedback").inner_text()[:200], page.locator("#station-report-line").get_attribute("data-outcome")])
+    status = settled_status(page)
+    check.equal("camera: the station still holds the arm, at rest", [status["robot"], status["control"]], ["READY", "HOLD"])
+    page.click("#camera-start")
+    wait_station(page, "view.status.camera.isRunning === true && view.status.camera.perSecond >= 5", 10000)
+    page.click(button)
+    wait_station(page, "view.action === null && view.outcome !== null", 30000)
+    record = (station_view(page)["report"] or {}).get("record") or {}
+    frame = station_frame(page) or {}
+    check.equal("camera: with the camera started again an action completes, and its observation held a frame", [record.get("status"), frame.get("first"), frame.get("width"), frame.get("height")], ["completed", [0xFF, 0xD8], 640, 480])
+    check.equal("camera: after an action that completes the page's sentence about the frame is gone", [advice.is_visible(), advice.text_content()], [False, ""])
+    lines = log_lines(page)
+    told = [line for line in lines if line.startswith("Station: the camera ")]
+    text = "\n".join(lines)
+    check.ok("camera: the log tells when the station's camera went on, off and on again, and holds no frame's bytes", [line.split(";")[0] for line in told[-3:]] == ["Station: the camera runs", "Station: the camera stopped", "Station: the camera runs"] and "/9j/" not in text and max(len(line) for line in lines) < 5000, told)
+    check.numbers.setdefault("station", {})["the camera stopped and started"] = {"stopped": failed, "frame after the start": frame, "the panel's line": [english, chinese]}
+    return settled_status(page)
+
+
 def station_buttons(check: Check, page: Page) -> dict:
     """On the enabled station, after Home: each of the twelve buttons is one action of the model's format that
     completes and changes the quantity it names, in the model's state the Worker tells, by its amount with its
     sign. Returns the Worker's status at the end."""
     seen = {}
     status = settled_status(page)
+    last_number = 0
     for button, part, quantity, amount, tolerance, gripper in JOG_BUTTONS:
         before = status
         page.click(f"#station-jog button[data-jog='{button}']")
@@ -2536,6 +3107,12 @@ def station_buttons(check: Check, page: Page) -> dict:
         check.equal(f"buttons: {button} is one action that completed", [view["outcome"]["key"], record.get("status")], ["station.action.done", "completed"])
         check.close(f"buttons: {button} changed {part}.{quantity} of the model's state by {amount:+g}", change, amount, tolerance)
         seen[button] = {"status": record.get("status"), "change": round(change, 4), "before": before["state"], "after": status["state"]}
+        # the frame its observation held, as the Worker told it once: the very bytes, which the page decodes
+        frame = station_frame(page) or {}
+        check.equal(f"buttons: {button}: its observation held a frame: JPEG bytes (FF D8 first, FF D9 last) that the page decodes to 640 x 480 and shows in the panel", [frame.get("first"), frame.get("last"), frame.get("width"), frame.get("height"), frame.get("isShown")], [[0xFF, 0xD8], [0xFF, 0xD9], 640, 480, True])
+        check.ok(f"buttons: {button}: the frame's number is at least 1 and higher than that of the action before, and the frame was no older than 0.2 s", frame.get("number", 0) >= 1 and frame.get("number", 0) > last_number and 0 <= frame.get("ageMs", 999) <= 200, [last_number, frame])
+        last_number = frame.get("number", 0)
+        seen[button]["frame"] = frame
         if gripper is not None:
             told = json_or_none(str(report.get("feedback") or "").removesuffix(" Use the new measured observation.")) or {}
             check.equal(f"buttons: {button}: PEAR's record and the report the model reads tell the gripper as {gripper}", [record.get("gripper_outcome"), told.get("gripper")], [gripper, gripper])
@@ -2701,12 +3278,28 @@ def station_real_arm(check: Check, browser, base: str) -> None:
             client.start();
             const positions = {{ shoulder_pan: 2025, shoulder_lift: 1540, elbow_flex: 2003, wrist_flex: 2915, wrist_roll: 996, gripper: 3499 }};
             const enabled = await client.request({{ type: 'enable', positions, isHidden: false }});
+            // nothing was told of a camera: the robot runs no action
+            const blind = await client.request({{ type: 'jog', action: {delta_action(z=1)} }});
+            // the camera told by hand as the window tells it: that it runs, and frames of the test picture
+            const picture = window.pearjs.testPicture();
+            const send = async () => {{
+                const frame = await window.pearjs.frameOf(picture, 640, 480);
+                URL.revokeObjectURL(frame.url);
+                client.tell({{ kind: 'frame', jpeg: frame.bytes.buffer }});
+            }};
+            client.tell({{ kind: 'camera', isRunning: true }});
+            await send();
+            const feeder = setInterval(send, 100);
             const report = await client.request({{ type: 'jog', action: {delta_action(z=1)} }});
+            clearInterval(feeder);
             const disabled = await client.request({{ type: 'disable' }});
-            return {{ failures: enabled.timing.failures, status: report.record.status, motors: Object.keys(disabled.positions).length }};
+            return {{ failures: enabled.timing.failures, status: report.record.status, motors: Object.keys(disabled.positions).length, blind: blind.record }};
         }})()"""
     )
+    blind = asked.pop("blind", None) or {}
     check.equal("a real arm: asked all the same, the Worker enables, runs one action and disables on its own simulated arm", asked, {"failures": [], "status": "completed", "motors": 6})
+    check.ok("a real arm: before the Worker was told of a camera its robot ran no action: the result failed with PEAR's \"Camera unavailable\" and the reader's reason", blind.get("status") == "failed" and "Camera unavailable: {'wrist': 'Camera reader stopped; reconnect the camera'}" in json.dumps(blind), blind)
+    check.numbers.setdefault("station", {})["a real arm: the action without a camera"] = blind
     port_log = page.evaluate("window.portLog")
     instructions = sorted({entry["bytes"][4] for entry in port_log["written"]})
     check.ok("a real arm: every packet the port was given is a PING, a READ or a SYNC READ", len(instructions) > 0 and set(instructions) <= {1, 2, 0x82}, instructions)
@@ -2733,6 +3326,8 @@ def part_station(check: Check, browser, context: BrowserContext, base: str, dist
     page.click("#language-zh")
     page.wait_for_timeout(300)
     check.ok("served: the clock's line is in Chinese when the page is Chinese", "啟用以來 Worker 的時鐘" in page.locator("#station-clock").inner_text(), page.locator("#station-clock").inner_text())
+    camera_line = page.locator("#station-camera").inner_text()
+    check.ok("served: the camera's line tells the longest time between two frames in Chinese when the page is Chinese", "兩張畫面之間最長間隔" in camera_line and camera_line.endswith("的次數：0。"), camera_line)
     page.click("#language-en")
 
     # Stop while the arm holds: the robot's stop(), which never closes
@@ -2740,6 +3335,7 @@ def part_station(check: Check, browser, context: BrowserContext, base: str, dist
     page.wait_for_function("document.getElementById('log-output').value.includes('Station: stopped')")
     entries = clock_entries(page, "stop")
     check.ok("served: at Stop the log holds the clock, the periods since enabling and the self-check's numbers: one line of JSON with plausible counts", len(entries) == 1 and clock_plausible(entries[0]), entries)
+    check.ok("served: at Stop the entry holds the camera's numbers: frames arrived, never 0.2 s apart, and the window timed the frames it made", len(entries) == 1 and isinstance(entries[0], dict) and camera_kept_fresh(entries[0].get("camera")), [entry.get("camera") if isinstance(entry, dict) else None for entry in entries])
     if len(entries) == 1 and entries[0] is not None:
         check.numbers["station"]["the log's entry at Stop"] = entries[0]
     wait_station(page, "view.status.robot === 'READY'")
@@ -2752,6 +3348,7 @@ def part_station(check: Check, browser, context: BrowserContext, base: str, dist
     check.equal("served: a request the station refuses comes back in the robot's words", page.evaluate("window.pearjs.stationClient.request({ type: 'enable', positions: {}, isHidden: false }).then(() => 'answered', error => error.message)"), "RuntimeError: Station already open")
     station_actions(check, page)
     status = station_buttons(check, page)
+    status = station_camera(check, page)
     status = station_hidden(check, page, status)
     status = station_home_stopped(check, page)
     page.screenshot(path=str(check.out / "station.png"), full_page=True)
@@ -2832,7 +3429,7 @@ def part_station(check: Check, browser, context: BrowserContext, base: str, dist
 
 PARTS = [
     "load", "stamp", "sim", "expected", "guard", "cable", "faults", "calibration", "serial", "diagnostics", "camera",
-    "model", "privacy", "languages", "keyboard", "layout", "folder", "subpath", "hosted", "insecure", "log",
+    "model", "privacy", "ask", "languages", "keyboard", "layout", "folder", "subpath", "hosted", "insecure", "log",
     "transport", "timing", "selftest", "station",
 ]
 
@@ -2908,6 +3505,7 @@ def main() -> int:
             run("model", lambda: part_model(check, context, base, service, closed_port))
             if "model" in wanted:
                 run("privacy", lambda: part_privacy(check, context, service))
+            run("ask", lambda: part_ask(check, browser, base, service))
             run("languages", lambda: part_languages(check, browser, base, service))
             run("keyboard", lambda: part_keyboard(check, context, base))
             run("layout", lambda: part_layout(check, browser, base, service))

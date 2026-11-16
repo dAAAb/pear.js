@@ -7,12 +7,14 @@ a servo. A simulated arm lets anyone try it, and a machine test it, without hard
 only there, the second version's stage A runs PEAR's station in a Worker of the page, driven by hand ("The
 station in a Worker, on a simulated arm" below).
 
-State: published. The first, read-only version on 2026-11-15; the second version's stage A on 2026-11-16.
+State: published. The first, read-only version on 2026-11-15; the second version's stage A on 2026-11-16, and on
+the same day stage B's first two parts (the camera's frames reach the station; ask the model once).
 
 Checked on 2026-11-16, on the files as published: `npm run typecheck` passes; `npm run build:web` gives three
-files; 1,272 browser checks pass in 25 parts, 0 failed; `npx vitest run` passes (76 files, 9,180 tests).
-**Nothing here has met a real adapter, a real servo, a real camera, a browser with a visible window or macOS**;
-"First try on a real arm" below is how that is to happen.
+files; 1,481 browser checks pass in 26 parts, 0 failed; `npx vitest run` passes (84 files, 9,284 tests).
+The read-only part met a real adapter, real servos, a real camera, a browser with a visible window and macOS
+once, on 2026-11-16 ("What the first try showed" below). **Nothing that writes to a servo has met a real arm, and
+no real model service has answered the page.**
 
 A session that restarts continues from "Left" and changes the files it finds in place.
 
@@ -214,6 +216,259 @@ browser was not looked at in a run (the Web Serial specification gives a dedicat
 that ends because the page was hidden has its own sentence, which no run has shown: no check hides the page
 during a Home.
 
+### Stage B, first part, on 2026-11-16: the camera's frames reach the station
+
+Stage B will let a model drive the simulated arm turn by turn, as PEAR's turn loop does. Its first part is the
+camera: the station's robot in the Worker has its wrist camera, and every observation holds the frame a turn
+would send. The model, the task and the turn loop are not in it.
+
+What it is:
+
+- A Worker cannot open a camera, so the camera stays in the window (step 2). While the station is enabled and
+  the camera runs, the window sends the Worker the camera's frames: each the JPEG a turn would send (640 x 480
+  at PEAR's quality 90, made by the function step 2 captures with), every 50 ms, as a message without an id
+  whose bytes are transferred, not copied. Nothing answers a frame. The window also tells the Worker when the
+  camera starts and when it stops, and sends nothing while no camera runs. (The first session sent one every
+  100 ms. PEAR takes a frame for fresh up to 0.2 s after it arrived, so one frame that was late or left out
+  could make an observation fail with "Camera frame is stale"; at 50 ms three in a row must fail.)
+- In the Worker the frames are the frame reader of the library's `WristCamera` (`WindowFrames` in
+  `web/src/station_host.ts`): the last JPEG, stamped when it arrives on the Worker's `realTimeClock()`, the
+  clock the wrist camera reads; the window's clock is never used for a frame's age. The robot is made with
+  `CameraFeed` over that `WristCamera` as its cameras, where stage A gave it none.
+- Without a fresh frame the robot does what PEAR's does. Seen in runs: with the camera stopped, and with no
+  camera told at all, the observation fails with `Camera unavailable: {'wrist': 'Camera reader stopped;
+  reconnect the camera'}`, the loop brakes into a hold, and the action's result is PEAR's failed result with
+  that error; the station still holds the arm, and with the camera started again the next action completes.
+  The page shows the error byte for byte in the report the model would read, and the camera's line of the
+  station's panel says what to do, in both languages. Since the second session the page's own sentence also
+  stands at the report of the action that was not run (whenever the result's error begins with "Camera
+  unavailable"): that the station had no fresh frame, and what to do; PEAR's result and report are unchanged
+  beside it, and it is gone with the next report.
+- The status carries six numbers of the camera (whether the window says it runs, the frames of the last
+  second, the frames since enabling, the last frame's age and, since the second session, the longest time
+  between two frames' arrivals and how many such times were over 200 ms) and no frame. The two new ones are
+  measured on the Worker's clock since enabling, only between frames of one spell in which the window said
+  that its camera runs; a time that is still open when a status is told (the frames have stopped and none has
+  come since) is not in them: the last frame's age shows it. The camera's line of the panel tells them, and
+  the log's `Station: clock {...}` entries (at Stop, at Disable, when the page is hidden) hold them under
+  `camera`, with the frames that arrived and the window's own numbers: how many frames it made, how long making
+  one took (mean and longest, ms: from asking the camera's function for the JPEG until it is there) and how many
+  were left out because the one before was not ready. The frame an observation held is told
+  once, as an event: the panel shows it as a small picture with its number among the frames the wrist camera
+  has handed to observations, its size and its age. A frame's bytes never go to the log.
+
+Runs of 2026-11-16 on the first session's files, with a frame every 100 ms (Windows: Node 24.18.1; WSL: headless
+Chromium); the second session's runs follow them:
+
+- The whole browser check in its two halves, one run after the other: 606 checks in 13 parts and 709 checks in
+  12 parts, 0 failed (each count holds the five checks of a whole run: 1,310 different checks, where stage A
+  had 1,272). The part `station` has 292 checks, 38 of them new: after Enable (served,
+  from a folder, under a path) the status says that frames arrive (10 in the last second, the last one 80 to
+  86 ms old) and its camera holds four numbers and no frame (6 checks); each of the twelve buttons is an action
+  whose observation held a frame: JPEG bytes (FF D8 first, FF D9 last; 23,754 to 23,916 bytes) that the page
+  decodes to 640 x 480 and shows, with a number above that of the action before (6 to 17) and 34 to 37 ms old
+  at the observation (24); the camera stopped and started again while the station is on (7): the panel's line
+  in both languages, an action that is not run and PEAR's error in the report, the arm still held, an action
+  that completes after the start, the log's lines; and with a real arm and the Worker started by hand, no
+  action runs before a camera is told (1). With the frames flowing the loop kept its period: 49 periods in the
+  last second, mean 20.00 ms, longest 20.1 ms, none over 25 ms.
+- With a port that is not the simulated one nothing but reads is written: the parts `guard`, `serial`,
+  `diagnostics`, `selftest` and the real-arm checks of `station` pass in those runs. The built folder holds
+  three files (504 KB), and the page asks no other host.
+- `tests/web/station_host.test.ts` with `PEAR_JS_REAL_TIME=1` (the station's code in Node, frames sent by the
+  test): 12 tests pass. Without a camera told an action fails with PEAR's error and nothing moves; with frames
+  an action completes and its observation's frame is told once; the same after a stop and a start.
+- `npm test`: 76 files and 9,180 tests pass (3 files and 11 tests are skipped: they need real time).
+- Six breaks at once in a scratch copy made 31 of the 38 new checks fail, each for its break: the age in the
+  status (3), the status's four numbers (3), the frame's bytes (12), the frame's number (11), the English
+  sentence that says what to do (1), the log's lines (1). Not shown to fail on a break: the six checks of an
+  action that is not run without a camera and runs again with one (the refusal is the library's, not the
+  page's), and the number of the first button's frame.
+
+The second session's runs, the same day and machine, on the files as they are now (a frame every 50 ms):
+
+- The whole browser check in its two halves, one run after the other: 606 checks in 13 parts and 724 checks in
+  12 parts, 0 failed (1,325 different checks). The part `station` has 307 checks, 15 of them new: after each
+  Enable (served, from a folder, under a path) 15 to 22 frames arrived in the last second, and the camera's
+  line tells the longest time between two frames and that none was over 200 ms (6, and 1 for the line in
+  Chinese); the log's entry at Stop holds the camera's numbers (1), and at each Disable they say that the
+  frames were never 0.2 s apart (3); with the camera stopped the page's sentence stands at the report of the
+  action that was not run, in English and in Chinese, with PEAR's report and result line unchanged beside it,
+  and it is gone after an action that completes (4). The entries' camera numbers are also checked for
+  plausibility wherever the clock's are.
+- The numbers of that run. After each Enable: 20 frames in the last second, the last one 34 to 36 ms old. The
+  served station from Enable to Disable, over all the part's actions: 799 frames arrived, the longest time
+  between two was 69.6 ms, none was over 200 ms; the window made 801 frames in 14.3 ms each on average, the
+  longest 158.2 ms (once; one frame was left out). From a folder and under a path (a few seconds each): the
+  longest time between two 52.6 ms; 12.6 and 13.4 ms a frame, the longest 18.5 and 16.9 ms, none left out.
+  With twenty frames a second the loop kept its period: the first session's checks of it pass unchanged.
+- `npm test`: 76 files and 9,181 tests pass (3 files and 11 tests are skipped: they need real time). The new
+  test is the one of the times between frames, on a clock set by hand.
+- Five breaks at once in a scratch copy made 24 checks of `station` fail, each for its break: all 15 new ones
+  and 9 older ones that read the same things (a frame every 100 ms: the 3 checks of the rate; every time
+  between two frames counted as one over 200 ms: the camera's line in both languages, the entries at Stop, at
+  Disable and of the hidden page; a seventh thing in the status's camera: the 3 checks of its six numbers; the
+  page's sentence shown exactly when it should not be, and PEAR's report left out beside it: the 4 checks of
+  the sentence and the one of PEAR's error).
+- With the robot given no cameras, in a scratch copy, 31 checks of `station` fail: every button's frame and
+  its number (24, the first button's number among them), the action that is not run after the camera's stop
+  and PEAR's error in the report, the three checks of the page's sentence, the action that completes with a
+  frame after the start, and the real arm's action without a camera. So five of the seven checks that the
+  first session had not shown to fail do fail there. Two still pass and were never shown to fail: "camera:
+  while frames arrive the panel says so" and "camera: the station still holds the arm, at rest".
+- Later on this day the sentence under "One action at a time" was corrected. It said that the station has no
+  camera in this version and that an observation holds no frame. It now says that an observation holds the
+  joints, the control state and the wrist camera's frame as the station sees it, and that without a fresh frame
+  the action is not run (both languages; a check in the part `load` and one in `languages`; each fails in a
+  scratch copy on the sentence without these words).
+
+Not proven: two of PEAR's three reasons ("Waiting for camera frames", "Camera frame is stale") were never seen
+in a run; a time over 200 ms between two frames was never seen in a browser run (that such a time is counted
+is proven by a test with a clock set by hand, in `tests/web/station_host.test.ts`); a real camera (every run
+used the test picture); a camera that gives another size than 640 x 480; a page that is truly hidden while its
+camera runs; another machine or a browser with a visible window (the numbers above are headless Chromium's on
+one machine; the log's entries are there so that they can be read elsewhere). Home takes no observation in the
+page, so it shows no frame.
+
+Changed with the ask's later session (see the second part): the one way the page takes a frame for the station
+and for an ask (`CameraSession.frameBytes`) now gives no frame when the browser calls the camera's track ended
+or muted, so a picture that the preview still holds of such a camera is not handed on as a frame of this
+moment. Every run used the test picture, whose track is neither: the station's checks pass as before, and a
+muted or ended track was not produced in a run.
+
+### Stage B, second part, on 2026-11-16: ask the model once, and nothing moves
+
+The first meeting of the page with a model. Under the instruction of step 4 the page has a panel "Ask the model
+once" (`web/src/ask.ts`, wired in `web/src/main.ts`). It builds what PEAR's turn loop would send as the first turn
+of a task, sends it with the library's own client, shows the answer as it streams, and shows the action the model
+asked for. The action is not executed: the module holds no robot, no station and no bus. It runs in the window,
+needs no station, and works on a real arm as on the simulated one, because it only uses what the window reads.
+
+- It is offered when the window reads an arm, a camera runs, step 3 found the model service connected and an
+  instruction is written; otherwise the page names the first of these that is missing. While the station drives
+  the simulated arm the window does not read it, and the page says to disable the station first. A change of the
+  address, the name or the key after step 3's check asks for a new check.
+- The notice of step 4 says what is now true: the page can ask a model once and show the answer, it does not
+  execute the action the model asks for, and no model drives an arm yet (both languages; a check in the part
+  `load` and one in `languages`; each fails in a scratch copy on the notice without these words).
+- Everything the model reads is made by the library. The client is made as PEAR's console makes one:
+  `OfferedModel.newClient(systemPrompt(instruction))` with `VLLMClient`. No number is the page's own: the time-out
+  is `OfferedModel`'s 300 s, the sampling and the limits are `VLLMClient`'s. The turn is
+  `ObservationMessage.build` of an observation that holds the joints the window read, the state of step 1 and the
+  frame of this moment as the JPEG the page already makes, with no feedback and no reference images.
+- The request is `client.infer`. The page shows PEAR's word for the phase while the request runs, the reasoning
+  and the answer as they stream, the tokens and the client's last report of the timings. Cancel stops the request
+  as an operator's stop does (the turn's cancellation and the client's). After the answer, a failure or a
+  cancellation the client is closed: every ask is a new conversation.
+- Then the answer, byte for byte, and the action the format reads of it (`parseAction`): the json block as the
+  model wrote it and a sentence in words (the gripper as PEAR's prompt defines its number: above zero open, below
+  zero close, zero hold). For an answer without an action, a failure and a cancellation the page shows the
+  error's class and message as the library gives them. Every outcome ends with the sentence that nothing was sent
+  to the arm.
+- The key stays in the page's memory and goes into the request only. The log gets what happened: asked, with the
+  sizes; answered after how long, with how many characters; an action or not; the class of an error. It gets no
+  key, no address, no instruction, no answer and no image.
+
+What is proven, by the part `ask` of `web/tests/browser_check.py` (151 checks; headless Chromium; it runs in the
+first half of the whole check, which had 746 checks in its last run on this day; the second half had 726, 0 failed
+in both). The stand-in model service of the check now
+answers `POST /v1/chat/completions` with a stream of server-sent events and keeps what it was sent. The answer it
+streams is a recorded one: the body of the first turn of "three turns of one task" in
+`tests/fixtures/agent/client.json`, piece by piece as the recording server sent it to PEAR's own client.
+
+- On the simulated arm with the test picture: the page names what is missing step by step; the service was asked
+  once, after a preflight without the key; the request's `Origin` is the page's origin and its `Authorization`
+  carries the key; it asks for a stream and names the checked model; the system message holds the instruction; the
+  user message's text is exactly the turn's text step 1 shows, followed by PEAR's name of the camera (`[wrist]`);
+  its one image decodes to 640 x 480 and is a JPEG from its first to its last byte. The page shows the recorded
+  answer and reasoning byte for byte, the recorded tokens, the action equal to the recorded one, as the JSON the
+  model wrote and in a sentence, and that nothing was sent. The guard refused nothing and counts no new kind of
+  packet; no Worker was started; the lines the ask added to the log hold no key, no address, no instruction, no
+  answer, no state and no image.
+- On a stand-in of a browser's serial port that answers as a calibrated arm of six servos: the same, and the port
+  was given nothing but reads (the instructions 1, 2 and 0x82); after the answer it was written to again, so the
+  reading went on.
+- What can go wrong, each with what the page shows, that the client is closed, that no action is shown and that
+  Ask is offered again: a wrong key answered 401 where the browser may show it (`AuthenticationError`, "Error
+  code: 401"); the same refusal as a vLLM server sends it, outside its CORS middleware, which the browser
+  withholds from the page ("Connection error"); an answer without an action ("ValueError: Final answer must end
+  with a fenced json action"); Cancel while the answer streams (the phase "Thinking", the reasoning and the answer
+  so far are on the page at that moment); a service that closes the connection without an answer ("Connection
+  error"). After these the next ask is answered.
+- With the station enabled on that page (the simulated arm, everything else in place) Ask is not offered and the
+  page says to disable the station first; with the station disabled again it is offered (3 checks).
+- Where a check asked at once what the page does a moment later, it now waits. What the page names as missing
+  is waited for, at most five seconds, and then asserted. What the reading of the arm did is asked after the
+  page's next read: the guard has counted packets again after the answer and, on the stand-in port, the port
+  was written to again. (The first version asserted at once that the port had been written to since the click.
+  The recorded answer can come faster than the page's next read of the arm, about ten a second, and one run of
+  the whole check failed there.) Five runs of the part, one after the other: 134 checks, 0 failed each time;
+  with the three checks of the station 137, 0 failed, in two more runs and in the whole check. One check read
+  at once: that step 1 shows the same text after the ask as before it. It missed a change that the page renders
+  with its next read of the arm, and its break did not make it fail. It now waits for the page's next render of
+  the arm after the answer (the render that writes the text also writes the count of the readings, and the
+  count's change is waited for), then compares; on that break both of its instances fail.
+- Eight breaks made at once in a scratch copy make the part fail (the turn carries a feedback; the log is given
+  the instruction; the answer gets one more byte; Ask is offered without an instruction; the page does not say
+  that nothing was sent; the action is not shown as written; an ask starts a Worker; Cancel does nothing).
+- Later breaks, again in a scratch copy: eight at once made 9 checks of `load`, `languages` and `ask` fail,
+  each for its break: the notice of step 4 and the sentence under "One action at a time" without what is now
+  true, in both languages (4); a camera that does not run told as a missing arm (1); a missing instruction told
+  as a missing model service (3); a page that does not look whether the station drives the arm (1). The eighth
+  break (step 1's text gets a mark once an ask has come to a result) made no check fail: see above. A page that
+  stops reading the arm when the model is asked made 11 checks fail, among them that the arm was read again
+  after the answer (both arms) and that the port was written to again after the answer.
+- A later session closed what a person would meet (the part `ask` is now 151 checks; the whole check on the
+  final files, in its two halves: 760 and 726 checks, 0 failed; vitest: 78 files, 9,198 tests):
+  - An arm that is there and of which the window has no complete reading (it is still being connected, it was
+    never calibrated, or its state cannot be made) is no longer told as "Missing: an arm this window reads".
+    The page says "Missing: a complete reading of the arm" and points to step 1. Checked on the simulated arm
+    as it leaves the factory (never calibrated): Ask is not offered, the page names the reading and not a
+    missing arm; with the calibrated arm again Ask is offered (2 checks).
+  - A camera that runs and gives no frame at the click: no request is made, and the panel says so itself ("The
+    model was not asked: the camera runs, but it gave no fresh frame at this moment"), until the next click.
+    The check takes the stream off the preview for the moment, clicks, waits for the note, and counts what the
+    service saw (nothing); with the picture back the next ask is answered and the note is gone (6 checks).
+  - A refusal the browser withholds: after a plain connection error the page asks the service's address,
+    without a key, whether something answers there (the request of step 3's check, `isReachable` of
+    `web/src/model.ts`). If it does, the panel says that the browser withheld the answer and names the two
+    usual reasons as step 3 words them (a wrong key; an origin the service does not allow), in both languages,
+    and the log says so without the address. A service that is gone is still told as "The model service gave
+    no answer" (4 checks; the stand-in service, when gone, now answers no request at all).
+  - Breaks, each in a scratch copy: three at once made the three checks of the first two items fail that
+    read the page's words (a reading told as a missing arm; the sentence without "The model was not asked";
+    the note left standing after the next click). A page that does not ask the address made the three checks
+    of the withheld refusal fail (the sentence, the log's line, the Chinese sentence). Five more at once made
+    13 checks fail that had never been shown to fail: the image decodes to 640 x 480 (both arms; the frame
+    was made half as large), PEAR's word for the phase while the answer streams (written in small letters),
+    PEAR's words of four failures (the message left out: a wrong key, a withheld refusal, an answer without
+    an action, a service that is gone), "no arm is read: an arm is missing" and "a camera runs: a checked
+    model service is missing" (three pages each). Three more at once (every connection error called a
+    withheld answer; an empty frame instead of no ask; the same count of readings at every render) made 5
+    fail: that a gone service is not called withheld, that no result is shown after a click without a frame,
+    the sentence of that click again, and that step 1 was rendered again after the answer (both arms).
+
+What is not proven:
+
+- No real model service has been asked. The answer is one recorded answer of 8 pieces; a long answer, a slow
+  one, a time-out, the phase "Compacting", a notice and the resending of images after a cache miss were not seen
+  in a browser.
+- Headless Chromium only: no person, no real camera, no real arm. The real-arm case is a stand-in port.
+- That the client is closed is what the page records after `client.close()` returned; it is not observed from
+  outside, and no break was made for it. Neither was a break made for the request's headers (`Origin`,
+  `Authorization`), the guard's counts, the wording of a cancelled request, or the checks that Ask is offered
+  before and after the station and that the arm was read again after the last answer of the failures' page.
+- A frame that is not fresh is refused only as far as the browser says it (a track that is ended or muted, a
+  preview without a picture). A camera whose frames stop while its track stays live and unmuted still gives its
+  last picture, and an ask sends it. Four of the new checks were not shown to fail: the service saw no request
+  (an ask with an empty frame, the break made for it, fails before a request is made), the camera is still
+  called running, with a frame again the ask is answered, and with a complete reading again Ask is offered.
+- The page's question whether something answers goes to the address's `/models`. If that answers while the
+  ask's own connection was dropped for another reason, the panel still says that the browser withheld the
+  answer; the sentence calls its two reasons the usual ones.
+- The Chinese texts of the panel exist for every key; one sentence (the withheld refusal) was read in Chinese
+  in a browser by a check, the others were not, and no person read the new sentences.
+
 ## What the camera hands to a turn, in PEAR
 
 `hardware/cameras.py` opens lerobot's `OpenCVCamera` with the station's `camera` settings (`config.yaml`: 640 x 480,
@@ -392,11 +647,13 @@ and the servos' answer time are the real cost: `docs/progress/sim-bridge.md`), m
 
 ## Not verified
 
-- A real USB adapter, a real servo, a real camera, macOS, Chrome's port chooser and its permission prompts.
+- On a real arm, anything beyond what "What the first try showed" below lists as seen; Chrome itself on macOS (the
+  first try was in Brave 157, which is Chromium 157) and the text of its permission prompts.
 - That real STS3215 servos answer a broadcast PING one after another (the simulated ones do; lerobot's broadcast
   ping relies on this).
 - Reopening a real adapter at other baud rates.
-- `SerialPort.getInfo()` and `navigator.userAgentData` on Chrome for macOS.
+- `SerialPort.getInfo()` and `navigator.userAgentData` on Chrome for macOS (in Brave 157 for macOS both answered:
+  the adapter's USB vendor and product; the brands, the platform, its version and the architecture).
 - That a servo's status packet carries its Status register in the error byte (as the simulated servos do), which
   "a servo reports an error" rests on.
 - That Chrome reports line errors by failing and replacing the stream (the specification says so), and what it
@@ -433,6 +690,31 @@ on the Mac; the page at https://daaab.github.io/pear.js/ (or `dist-web/` opened 
 9. Pull the USB cable: "The connection to the arm was lost". Plug it in, Connect: reading again.
 10. Send back: the log ("Copy the log"; it holds no key and no address of the service), the step that did not
     fit, and a screenshot of the box if there was one.
+
+### What the first try showed (2026-11-16)
+
+One try, by the project's owner, of the page as published at 13275b2: an SO-101 follower whose servos are supplied
+with 12 V, a Mac (macOS 27.2.1, arm64), Brave 157 (Chromium 157) in a visible window; steps 1, 3, 4 and 6 of the
+list above. From the page's log and three screenshots:
+
+- Step 1: the guard's self-test, 3 of 3 and 12 of 12; a secure context, Web Serial present.
+- Step 3: the adapter is USB vendor 1a86, product 55d3; it opened at 1,000,000 baud, 8 data bits, no parity, 1
+  stop bit; the handshake passed (six servos answer, model 777, firmware 3.10); the joints were being read about
+  ten times a second (the 179th read when the screenshot was taken); the five servos in the screenshot report no
+  error, 11.8 to 12.0 V and 34 to 37 °C. Not as the list expects: torque was on at all six servos, left on by an
+  earlier program. The page said so, named the joints, and changed nothing.
+- Step 4: the six rows hold a calibration (no factory values). No file was loaded. The three joints in the
+  screenshot were inside PEAR's limits, their values computed from the registers.
+- Step 6: the wrist camera gave 640 x 480 at 30 frames a second with resize mode none; the captured frame is a
+  JPEG of 640 x 480, 29,353 bytes, quality 90, 4:2:0.
+
+Not tried in it: moving the joints by hand (step 5; torque was on), a calibration file, the model (step 7),
+"Measure timing" (step 8), pulling the cable (step 9). Chrome itself was not used.
+
+What the owner asked for after it, and what was done: he took the file chooser to mean that the page cannot read
+the calibration from the arm. It can and does: the table and the joint values come from the servos' registers.
+The Calibration section now says that the page needs no file and that the file is optional (both languages). He
+also asked for a Home of the real arm: not in this stage, the page still writes nothing to a real arm.
 
 ## Requests
 

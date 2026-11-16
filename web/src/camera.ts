@@ -418,6 +418,23 @@ export class CameraSession {
     this.hooks.onChange();
   }
 
+  /** Returns the frame the preview shows now as a turn would send it, its bytes only: what the station's wrist
+   * camera is fed. Null while no camera runs or it has delivered no frame; the captured frame of step 2 stays. */
+  async frameBytes(): Promise<Uint8Array | null> {
+    if (this.view.phase !== "live") return null;
+    // a track the browser calls ended or muted delivers no frames now: what the preview still holds is old
+    const track = (this.video.srcObject as MediaStream | null)?.getVideoTracks()[0];
+    if (track === undefined || track.readyState !== "live" || track.muted) return null;
+    try {
+      const frame = await captureFrame(this.video);
+      URL.revokeObjectURL(frame.url);
+
+      return frame.bytes;
+    } catch {
+      return null;
+    }
+  }
+
   /** Asks the camera for PEAR's frame: exactly its size if the camera or the browser can give it, and the
    * nearest the camera has when it cannot, which the page then says. */
   private async openCamera(id: string): Promise<MediaStream> {

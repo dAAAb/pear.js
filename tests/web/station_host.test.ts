@@ -18,6 +18,7 @@ import {
   timingVerdict,
   type TimingNumbers,
   uuid4,
+  WindowFrames,
 } from "../../web/src/station_host";
 import type {
   ActionReport,
@@ -39,7 +40,11 @@ function station(): {
   events: StationEvent[];
   lastStatus: () => StationStatus;
   waitFor: (isThere: () => boolean, limitMs?: number) => Promise<void>;
+  /** The window's camera, as the window tells of it: `start` says that it runs and sends a frame (the bytes
+   * FRAME) every 100 ms, `stop` says that it stopped and sends none. */
+  camera: { start: () => void; stop: () => void };
 } {
+  let feeder: ReturnType<typeof setInterval> | null = null;
   const events: StationEvent[] = [];
   const waiting = new Map<number, { resolve: (value: unknown) => void; reject: (error: Error) => void }>();
   let nextId = 0;
@@ -72,8 +77,24 @@ function station(): {
         await new Promise((resolve) => setTimeout(resolve, 20));
       }
     },
+    camera: {
+      start: () => {
+        host.handle({ kind: "camera", isRunning: true });
+        const send = (): void => host.handle({ kind: "frame", jpeg: Uint8Array.from(FRAME).buffer });
+        send();
+        feeder ??= setInterval(send, 100);
+      },
+      stop: () => {
+        if (feeder !== null) clearInterval(feeder);
+        feeder = null;
+        host.handle({ kind: "camera", isRunning: false });
+      },
+    },
   };
 }
+
+/** What the tests send as a frame: the first and the last bytes of a JPEG. The station never decodes a frame. */
+const FRAME = [0xff, 0xd8, 0xff, 0xd9];
 
 const delta = (arm: Partial<Record<"x" | "y" | "z" | "pitch" | "roll", number>>, width = 0): Record<string, unknown> => ({
   type: "single_arm_delta",
@@ -168,7 +189,7 @@ describe("the station of the page's Worker, without time", () => {
 
 describe.skipIf(!REAL_TIME)("the station of the page's Worker, on its simulated arm in real time", () => {
   it("enables, moves by one action, stops a move, goes Home with an approval and disables", async () => {
-    const { ask, events, lastStatus, waitFor } = station();
+    const { ask, camera, events, lastStatus, waitFor } = station();
     // a hidden page fails the timing self-check, which refuses to enable
     await expect(ask({ type: "enable", positions: SIM_START_POSITIONS, isHidden: true })).rejects.toThrow(
       "RuntimeError: The timing self-check failed: the page is not visible",
@@ -186,8 +207,29 @@ describe.skipIf(!REAL_TIME)("the station of the page's Worker, on its simulated 
     expect(before.joints).toHaveLength(6);
     expect(before.turnText).toContain('"arm"');
 
+    // the window has told nothing of a camera: the robot's observation fails as PEAR's does, the action is not
+    // run, and the station still holds the arm
+    expect(before.camera).toEqual({ isRunning: false, perSecond: 0, frames: 0, ageMs: null, maxGapMs: null, gapsOver200: 0 });
+    const blind = await ask<ActionReport>({ type: "jog", action: delta({ z: 1 }) });
+    console.log(`station_host in real time: without a camera ${JSON.stringify(blind.record)}`);
+    expect(blind.record["status"]).toBe("failed");
+    expect(JSON.stringify(blind.record)).toContain("Camera unavailable: {'wrist': 'Camera reader stopped; reconnect the camera'}");
+    expect(events.filter((event) => event.type === "frame")).toHaveLength(0);
+    await waitFor(() => lastStatus().robot === "READY");
+    expect((lastStatus().state?.arm.z ?? 0) - (before.state?.arm.z ?? 0)).toBeCloseTo(0, 1);
+
+    // the camera runs: its frames arrive, stamped on the Worker's clock, and an observation holds the last one
+    camera.start();
+    await waitFor(() => lastStatus().camera.isRunning && lastStatus().camera.perSecond >= 5);
+    expect(lastStatus().camera.ageMs).toBeLessThan(200);
+
     // one action of the model's format (centimetres and radians): 1 cm up
     const report = await ask<ActionReport>({ type: "jog", action: delta({ z: 1 }) });
+    const held = events.filter((event) => event.type === "frame") as Extract<StationEvent, { type: "frame" }>[];
+    expect(held).toHaveLength(1);
+    expect([...held[0]!.jpeg]).toEqual(FRAME);
+    expect(held[0]!.number).toBeGreaterThanOrEqual(1);
+    expect(held[0]!.ageMs).toBeLessThanOrEqual(200);
     expect(report.record["status"]).toBe("completed");
     expect(JSON.parse(report.feedback.replace(" Use the new measured observation.", ""))).toMatchObject({
       status: "completed",
@@ -235,9 +277,55 @@ describe.skipIf(!REAL_TIME)("the station of the page's Worker, on its simulated 
     console.log(`station_host in real time: the periods of the last second ${JSON.stringify(periods)}`);
     expect(periods.count).toBeGreaterThan(40);
 
+    // the camera stops: the next action is not run, in PEAR's words; started again, an action completes
+    camera.stop();
+    const dark = await ask<ActionReport>({ type: "jog", action: delta({ z: 1 }) });
+    expect(dark.record["status"]).toBe("failed");
+    expect(JSON.stringify(dark.record)).toContain("Camera unavailable: {'wrist': 'Camera reader stopped; reconnect the camera'}");
+    await waitFor(() => lastStatus().robot === "READY");
+    camera.start();
+    await waitFor(() => lastStatus().camera.perSecond >= 5);
+    const again = await ask<ActionReport>({ type: "jog", action: delta({ z: 1 }) });
+    expect(again.record["status"]).toBe("completed");
+    camera.stop();
+
     const disabled = await ask<DisableResult>({ type: "disable" });
     expect(Object.keys(disabled.positions)).toHaveLength(6);
     expect(lastStatus().robot).toBe("OFF");
     await expect(ask({ type: "stop" })).resolves.toBeNull();
   }, 120_000);
+});
+
+describe("the frames of the window's camera, without time", () => {
+  it("measures the longest time between two frames while the camera runs, and counts those over 0.2 s", () => {
+    // times that binary floating point holds exactly, so that the differences are exact
+    let now = 16;
+    const frames = new WindowFrames({ monotonic: () => now });
+    const frame = (): void => frames.take({ kind: "frame", jpeg: new ArrayBuffer(1) });
+
+    frame(); // before the window said that its camera runs: no time is measured from it
+    frames.take({ kind: "camera", isRunning: true });
+    now += 3;
+    frame();
+    expect(frames.numbers()).toMatchObject({ frames: 2, maxGapMs: null, gapsOver200: 0 });
+    now += 0.0625;
+    frame();
+    now += 0.125;
+    frame();
+    expect(frames.numbers()).toMatchObject({ frames: 4, maxGapMs: 125, gapsOver200: 0 });
+    now += 0.25; // longer than a frame stays fresh
+    frame();
+    expect(frames.numbers()).toMatchObject({ frames: 5, maxGapMs: 250, gapsOver200: 1 });
+
+    // the time a camera stood still is not a time between two of its frames
+    frames.take({ kind: "camera", isRunning: false });
+    now += 8;
+    frame();
+    frames.take({ kind: "camera", isRunning: true });
+    now += 2;
+    frame();
+    now += 0.5;
+    frame();
+    expect(frames.numbers()).toMatchObject({ isRunning: true, frames: 8, maxGapMs: 500, gapsOver200: 2, ageMs: 0 });
+  });
 });

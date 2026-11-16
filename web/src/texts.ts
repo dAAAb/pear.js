@@ -128,7 +128,7 @@ export const EN = {
 
   "cal.title": "Calibration",
   "cal.lead":
-    "lerobot's calibration stores each servo's homing offset and range in the servo itself and in a calibration file. The table shows what the servos hold. Load your calibration file to compare the two: PEAR starts only when they are equal.",
+    "lerobot's calibration stores each servo's homing offset and range in the servo itself and in a calibration file. The table shows what the servos hold, read from the arm just now, and the joint values below are computed from it: this page needs no file. PEAR's own station also loads the file and starts only when the two are equal, so you can load yours here to compare them.",
   "cal.id": "ID",
   "cal.joint": "Joint",
   "cal.offset": "Homing offset",
@@ -138,7 +138,7 @@ export const EN = {
   "cal.same.yes": "same",
   "cal.same.no": "differs",
   "cal.same.missing": "not in the file",
-  "cal.fileLabel": "lerobot calibration file (.json)",
+  "cal.fileLabel": "lerobot calibration file (.json), optional",
   "cal.fileHint":
     "lerobot keeps it under ~/.cache/huggingface/lerobot/calibration/robots/, in a folder named after the robot type, as <id>.json. In the macOS file dialog press Cmd+Shift+G to type that path; folders that begin with a dot are hidden, and Cmd+Shift+. shows them. The file stays on this computer.",
   "cal.remove": "Remove the file",
@@ -293,10 +293,51 @@ export const EN = {
 
   "task.title": "Task",
   "task.notice":
-    "This version moves only a simulated arm, in a Worker of this page. With a real arm connected it only reads and cannot move the real arm. It asks no model yet. On the simulated arm you can try the station by hand below: enable it, move it one small step at a time, send it Home and stop it.",
+    "This version moves only a simulated arm, in a Worker of this page. With a real arm connected it only reads and cannot move the real arm. It can ask a model once and show the answer: it does not execute the action the model asks for, and no model drives an arm yet. On the simulated arm you can try the station by hand below: enable it, move it one small step at a time, send it Home and stop it.",
   "task.instruction": "Instruction",
   "task.placeholder": "Put the red block into the box.",
   "task.start": "Start",
+  "ask.title": "Ask the model once",
+  "ask.lead":
+    "Sends the model what the first turn of a task would send: PEAR's system prompt with the instruction above, the arm's state as step 1 shows it, and the camera's frame of this moment. The answer is shown as it arrives. The action the model asks for is shown and not executed: nothing is sent to the arm.",
+  "ask.button": "Ask the model once",
+  "ask.cancel": "Cancel",
+  "ask.need.station": "The station is driving the simulated arm, so this window does not read it. Disable the station first.",
+  "ask.need.arm": "Missing: an arm this window reads. Start the simulated arm or connect an arm in step 1.",
+  "ask.need.reading":
+    "Missing: a complete reading of the arm. This window is connected to an arm, but has no complete reading of it yet; step 1 shows what it reads and what it lacks.",
+  "ask.need.camera": "Missing: a running camera. Start one in step 2.",
+  "ask.noFrame":
+    "The model was not asked: the camera runs, but it gave no fresh frame at this moment. Look at the picture in step 2; when it shows the camera's view again, ask once more.",
+  "ask.need.model":
+    "Missing: a checked model service. Check it in step 3; after a change of the address, the name or the key, check again.",
+  "ask.need.instruction": "Missing: an instruction. Write one above.",
+  "ask.status.asking": "Asking the model…",
+  "ask.status.action": "The model answered after {seconds} s, and its answer ends in an action.",
+  "ask.status.noAction": "The model answered after {seconds} s, but its answer holds no action.",
+  "ask.status.cancelled": "Cancelled after {seconds} s.",
+  "ask.status.failed": "The request failed after {seconds} s.",
+  "ask.sent": "What was sent",
+  "ask.sent.sizes":
+    "PEAR's system prompt with the instruction ({system} characters), the text below ({text} characters) and one image (JPEG {size}, {bytes} bytes).",
+  "ask.phase": "The model:",
+  "ask.reasoning": "Reasoning",
+  "ask.answer": "Answer",
+  "ask.usage": "Tokens:",
+  "ask.performance": "Timings:",
+  "ask.action": "The action the model asked for",
+  "ask.sentence":
+    "In words: move the fingertip by x {x} cm, y {y} cm, z {z} cm (+x forward, +y left, +z up), turn it by pitch {pitch} rad and roll {roll} rad, and {gripper} (gripper.width {width}).",
+  "ask.gripper.open": "open the gripper",
+  "ask.gripper.close": "close the gripper",
+  "ask.gripper.hold": "hold the gripper as it is",
+  "ask.explain.noAction": "The format reads no action of this answer. PEAR's words:",
+  "ask.explain.cancelled": "The request was stopped. PEAR's words:",
+  "ask.explain.failed": "The model service gave no answer. PEAR's words:",
+  "ask.explain.withheld":
+    "The service is there, but the browser withheld its answer from this page, and a browser does not say why. There are two usual reasons: the key is wrong (a vLLM server refuses a wrong key without the header a browser needs before it shows a refusal to a page), or the service does not allow this page's origin ({origin}). Check the service again in step 3. PEAR's words:",
+  "ask.notSent":
+    "Nothing was sent to the arm. This page does not execute the action; the client is closed, and the next ask is a new conversation.",
   "task.stop": "Stop",
   "task.stopNote": "Stop brakes the arm and holds it where it is. It works whenever the station holds an arm; in this version that is only the simulated arm.",
 
@@ -336,6 +377,18 @@ export const EN = {
     "Control periods in the last second: {count}, mean {mean} ms, longest {max} ms, {over} over 25 ms. Steps since enabling: {steps}.",
   "station.clock":
     "The Worker's clock since enabling: {sleeps} sleeps ({timers} timers, {yields} turns without a timer), {spin} ms in busy waits; a sleep ended {lateMean} ms late on average and {lateMax} ms at most; a timer fired at most {timerLate} ms late; margin {margin} ms.",
+  "station.camera.arriving":
+    "The wrist camera as the station sees it: frames arrive, {rate} in the last second; the last one was {age} ms old when this was told.",
+  "station.camera.waiting": "The wrist camera as the station sees it: the camera runs, but no frame arrived in the last second.",
+  "station.camera.stopped":
+    "The wrist camera as the station sees it: no frames arrive, because the camera in step 2 does not run; the last one came {seconds} s ago. Without a fresh frame the station runs no action: start the camera in step 2 (with the simulated arm the test picture is enough).",
+  "station.camera.never":
+    "The wrist camera as the station sees it: no frames arrive, because the camera in step 2 does not run; none has come since enabling. Without a fresh frame the station runs no action: start the camera in step 2 (with the simulated arm the test picture is enough).",
+  "station.camera.gaps":
+    "Since enabling, while the camera ran, the longest time between two frames was {gap} ms; times over 200 ms, after which a frame is too old for the station: {over}.",
+  "station.frame.alt": "The frame the last observation held",
+  "station.frame.caption":
+    "The frame the last observation held: frame {number} of those the station's camera has seen, {width} x {height}, JPEG, {bytes} bytes, {age} ms old at the observation.",
   "station.hidden": "The page was hidden: the station stopped, and it starts no action until the page is visible again.",
   "station.wasHidden":
     "The page was hidden for a while: the station stopped then. The page is visible again, and actions can be started.",
@@ -346,7 +399,7 @@ export const EN = {
   "station.stopFailed": "Stop got no answer: {error}",
   "station.jogTitle": "One action at a time",
   "station.jogLead":
-    "Each button is one action in the model's format (single_arm_delta: centimetres and radians), executed as a turn executes it: the arm at rest, an observation, then the action from that observation. The station has no camera in this version, so an observation holds the joints and the control state and no frame.",
+    "Each button is one action in the model's format (single_arm_delta: centimetres and radians), executed as a turn executes it: the arm at rest, an observation, then the action from that observation. An observation holds the joints, the control state and the wrist camera's frame as the station sees it; without a fresh frame the action is not run.",
   "station.jog.open": "Gripper: open",
   "station.jog.close": "Gripper: close",
   "station.home": "Home",
@@ -358,6 +411,8 @@ export const EN = {
   "station.action.resting": "waiting for the arm to rest",
   "station.action.done": "{action}: {status}",
   "station.action.failed": "{action} did not run: {error}",
+  "station.action.noFrame":
+    "The station did not run this action, because it had no fresh frame of the wrist camera (a frame is fresh for 0.2 s after it arrived). If the camera in step 2 does not run, start it (with the simulated arm the test picture is enough); if it runs, run the action again: the camera's line above tells whether frames arrive.",
   "station.action.homed": "Home is done: {stages}.",
   "station.action.stopped": "{action}: you pressed Stop while it ran, so it ended there. PEAR's result is {status}.",
   "station.action.stoppedHidden":
@@ -521,7 +576,7 @@ export const ZH_TW: Record<TextKey, string> = {
 
   "cal.title": "校正",
   "cal.lead":
-    "lerobot 校正時，會把每顆伺服馬達的歸零偏移（homing offset）與活動範圍同時寫進馬達本身和一份校正檔。下表是馬達裡存的數值。載入你的校正檔就能比對兩者：必須完全一致，PEAR 才會啟動。",
+    "lerobot 校正時，會把每顆伺服馬達的歸零偏移（homing offset）與活動範圍同時寫進馬達本身和一份校正檔。下表是剛從手臂的馬達裡讀出來的數值，下面的關節讀數就是用它換算的：本頁不需要校正檔。PEAR 原版的 station 還會載入校正檔，兩者完全一致才啟動；想比對的話，可以在這裡載入你的校正檔。",
   "cal.id": "ID",
   "cal.joint": "關節",
   "cal.offset": "歸零偏移",
@@ -531,7 +586,7 @@ export const ZH_TW: Record<TextKey, string> = {
   "cal.same.yes": "一致",
   "cal.same.no": "不同",
   "cal.same.missing": "校正檔裡沒有",
-  "cal.fileLabel": "lerobot 校正檔（.json）",
+  "cal.fileLabel": "lerobot 校正檔（.json），可不選",
   "cal.fileHint":
     "lerobot 預設把它放在 ~/.cache/huggingface/lerobot/calibration/robots/ 底下、以機器人類型命名的資料夾裡，檔名是 <id>.json。在 macOS 的選檔視窗按 Cmd+Shift+G 可以直接輸入這個路徑；以點開頭的資料夾預設是隱藏的，按 Cmd+Shift+. 就會顯示。檔案只會留在這台電腦上。",
   "cal.remove": "移除校正檔",
@@ -676,10 +731,46 @@ export const ZH_TW: Record<TextKey, string> = {
 
   "task.title": "任務",
   "task.notice":
-    "這個版本只會讓模擬手臂動，而且是在這個頁面的 Worker 裡執行。連接真實的手臂時，它只讀取，不會讓真實的手臂動。它也還不會詢問模型。在模擬手臂上，你可以在下面親手試試工作站：啟用、一次移動一小步、回到 Home，以及停止。",
+    "這個版本只會讓模擬手臂動，而且是在這個頁面的 Worker 裡執行。連接真實的手臂時，它只讀取，不會讓真實的手臂動。它可以問模型一次並顯示回答，但不會執行模型要求的動作；目前還沒有模型驅動手臂。在模擬手臂上，你可以在下面親手試試工作站：啟用、一次移動一小步、回到 Home，以及停止。",
   "task.instruction": "指令",
   "task.placeholder": "把紅色積木放進盒子裡。",
   "task.start": "開始",
+  "ask.title": "問模型一次",
+  "ask.lead":
+    "把任務第一回合會送出的內容送給模型：帶有上面指令的 PEAR 系統提示、步驟 1 顯示的手臂狀態，以及攝影機此刻的畫面。回答會邊收邊顯示。模型要求的動作只會顯示，不會執行：不會送任何東西給手臂。",
+  "ask.button": "問模型一次",
+  "ask.cancel": "取消",
+  "ask.need.station": "工作站正在驅動模擬手臂，這個視窗讀不到手臂。請先停用工作站。",
+  "ask.need.arm": "還缺：這個視窗讀得到的手臂。請在步驟 1 啟動模擬手臂或連接手臂。",
+  "ask.need.reading": "還缺：手臂的完整讀數。這個視窗已連上手臂，但還沒有完整的讀數；步驟 1 會顯示目前讀到什麼、還缺什麼。",
+  "ask.need.camera": "還缺：正在運作的攝影機。請在步驟 2 啟動。",
+  "ask.noFrame": "沒有詢問模型：攝影機正在運作，但這一刻沒有給出新的畫面。請看步驟 2 的畫面；等它重新顯示攝影機的畫面後，再問一次。",
+  "ask.need.model": "還缺：檢查過的模型服務。請在步驟 3 檢查；位址、名稱或金鑰改過之後，請再檢查一次。",
+  "ask.need.instruction": "還缺：指令。請在上面寫一句。",
+  "ask.status.asking": "正在詢問模型…",
+  "ask.status.action": "模型在 {seconds} 秒後回答，回答的結尾是一個動作。",
+  "ask.status.noAction": "模型在 {seconds} 秒後回答，但回答裡沒有動作。",
+  "ask.status.cancelled": "已在 {seconds} 秒後取消。",
+  "ask.status.failed": "請求在 {seconds} 秒後失敗。",
+  "ask.sent": "送出的內容",
+  "ask.sent.sizes": "帶有指令的 PEAR 系統提示（{system} 個字元）、下面這段文字（{text} 個字元），以及一張影像（JPEG {size}，{bytes} 位元組）。",
+  "ask.phase": "模型：",
+  "ask.reasoning": "推理",
+  "ask.answer": "回答",
+  "ask.usage": "Token：",
+  "ask.performance": "時間：",
+  "ask.action": "模型要求的動作",
+  "ask.sentence":
+    "用白話說：指尖移動 x {x} 公分、y {y} 公分、z {z} 公分（+x 向前、+y 向左、+z 向上），轉動 pitch {pitch} 弧度、roll {roll} 弧度，並且{gripper}（gripper.width {width}）。",
+  "ask.gripper.open": "打開夾爪",
+  "ask.gripper.close": "合上夾爪",
+  "ask.gripper.hold": "讓夾爪保持不動",
+  "ask.explain.noAction": "這個格式從這段回答讀不出動作。PEAR 的原話：",
+  "ask.explain.cancelled": "請求已被停止。PEAR 的原話：",
+  "ask.explain.failed": "模型服務沒有給出回答。PEAR 的原話：",
+  "ask.explain.withheld":
+    "服務是通的，但瀏覽器不讓本頁讀取回應，也不會說明原因。常見的原因有兩個：金鑰不對（vLLM 伺服器拒絕錯誤的金鑰時，回應裡少了瀏覽器要求的標頭，瀏覽器因此不會把這個拒絕交給網頁），或是服務不允許本頁的來源（{origin}）。請在步驟 3 再檢查一次。PEAR 的原話：",
+  "ask.notSent": "沒有送任何東西給手臂。這個頁面不會執行動作；用戶端已關閉，下一次詢問是全新的對話。",
   "task.stop": "停止",
   "task.stopNote": "停止會讓手臂煞車，並停在原地保持不動。只要工作站握有手臂，停止鈕就能用；這個版本只有模擬手臂。",
 
@@ -718,6 +809,14 @@ export const ZH_TW: Record<TextKey, string> = {
   "station.periods": "最近一秒的控制週期：{count} 個，平均 {mean} ms，最長 {max} ms，{over} 個超過 25 ms。啟用以來的步數：{steps}。",
   "station.clock":
     "啟用以來 Worker 的時鐘：睡眠 {sleeps} 次（計時器 {timers} 個，不用計時器的讓出 {yields} 次），忙碌等待共 {spin} ms；睡眠平均晚 {lateMean} ms 結束，最晚 {lateMax} ms；計時器最晚 {timerLate} ms 才觸發；餘裕 {margin} ms。",
+  "station.camera.arriving": "工作站看到的手腕攝影機：畫面持續送達，最近一秒 {rate} 張；回報狀態時，最後一張是 {age} ms 前的。",
+  "station.camera.waiting": "工作站看到的手腕攝影機：攝影機已啟動，但最近一秒沒有畫面送達。",
+  "station.camera.stopped": "工作站看到的手腕攝影機：沒有畫面送達，因為步驟 2 的攝影機沒有在執行；最後一張是 {seconds} 秒前的。沒有新的畫面，工作站不會執行任何動作：請在步驟 2 啟動攝影機（使用模擬手臂時，測試畫面就夠了）。",
+  "station.camera.never": "工作站看到的手腕攝影機：沒有畫面送達，因為步驟 2 的攝影機沒有在執行；啟用以來一張也沒有。沒有新的畫面，工作站不會執行任何動作：請在步驟 2 啟動攝影機（使用模擬手臂時，測試畫面就夠了）。",
+  "station.camera.gaps": "啟用以來，在攝影機執行期間，兩張畫面之間最長間隔 {gap} ms；超過 200 ms（畫面就太舊，工作站不採用）的次數：{over}。",
+  "station.frame.alt": "上一次觀測所含的畫面",
+  "station.frame.caption":
+    "上一次觀測所含的畫面：工作站的攝影機看到的第 {number} 張，{width} x {height}，JPEG，{bytes} 位元組，觀測時是 {age} ms 前的。",
   "station.hidden": "頁面曾被隱藏：工作站已停止，在頁面重新顯示之前不會開始任何動作。",
   "station.wasHidden": "頁面曾被隱藏一段時間：工作站當時已停止。現在頁面已重新顯示，可以再開始動作。",
   "station.enableFailed": "無法啟用工作站：{error}",
@@ -726,7 +825,7 @@ export const ZH_TW: Record<TextKey, string> = {
   "station.stopFailed": "停止沒有得到回應：{error}",
   "station.jogTitle": "一次一個動作",
   "station.jogLead":
-    "每個按鈕都是一個模型格式的動作（single_arm_delta：公分與弧度），執行方式和一個回合相同：手臂靜止、觀測一次，再從這次觀測執行動作。這個版本的工作站沒有相機，所以觀測裡只有關節與控制狀態，沒有影像。",
+    "每個按鈕都是一個模型格式的動作（single_arm_delta：公分與弧度），執行方式和一個回合相同：手臂靜止、觀測一次，再從這次觀測執行動作。觀測裡有關節、控制狀態，以及工作站看到的手腕攝影機畫面；沒有新的畫面時，動作不會執行。",
   "station.jog.open": "夾爪：打開",
   "station.jog.close": "夾爪：閉合",
   "station.home": "Home",
@@ -738,6 +837,8 @@ export const ZH_TW: Record<TextKey, string> = {
   "station.action.resting": "等待手臂靜止",
   "station.action.done": "{action}：{status}",
   "station.action.failed": "{action}沒有執行：{error}",
+  "station.action.noFrame":
+    "工作站沒有執行這個動作，因為沒有手腕攝影機的新畫面（畫面送達後 0.2 秒內才算新）。如果步驟 2 的攝影機沒有在執行，請啟動它（使用模擬手臂時，測試畫面就夠了）；如果已經在執行，請再執行一次這個動作：上方攝影機那一行會說明畫面有沒有送達。",
   "station.action.homed": "Home 完成：{stages}。",
   "station.action.stopped": "{action}：你在它執行時按了停止，所以動作到此為止。PEAR 的結果是 {status}。",
   "station.action.stoppedHidden": "{action}：頁面在它執行時被隱藏，所以工作站把它停了下來。PEAR 的結果是 {status}。",
