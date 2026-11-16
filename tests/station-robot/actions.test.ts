@@ -119,8 +119,8 @@ function expectCase(record: ActionCase, expected: Outcome<ModelFields>): void {
 
 describe("PEAR action fixtures", () => {
   test("fixture sections have the required coverage", () => {
-    expect(fixture.adapter_cases.length).toBeGreaterThanOrEqual(929);
-    expect(fixture.model_cases.length).toBeGreaterThanOrEqual(287);
+    expect(fixture.adapter_cases.length).toBeGreaterThanOrEqual(939);
+    expect(fixture.model_cases.length).toBeGreaterThanOrEqual(297);
     expect(fixture.whole_float_cases.length).toBeGreaterThanOrEqual(22);
     expect(fixture.instance_cases.length).toBe(6);
   });
@@ -184,6 +184,36 @@ describe("PEAR action fixtures", () => {
       for (const target of [0, -0, 1, 5e-324, 1 - 2 ** -53, -5e-324, 1 + 2 ** -52]) {
         expect(targets.filter((value) => Object.is(value, target)).length).toBeGreaterThanOrEqual(3);
       }
+    }
+  });
+
+  test("the fixtures hold a chunk with a gripper outside its range and a key that is none of its fields", () => {
+    // PEAR checks the grippers' range last, of a chunk whose fields and keys it has taken: with a key that is no
+    // field it refuses the key, and the range is not checked
+    for (const cases of [fixture.adapter_cases, fixture.model_cases]) {
+      const alone = cases.filter((record) => record.kind === "chunk grippers: outside their range");
+      const withKey = cases.filter(
+        (record) => record.kind === "chunk grippers: outside their range, with an extra key",
+      );
+      expect(alone.length).toBeGreaterThanOrEqual(5);
+      expect(withKey.length).toBe(alone.length);
+      alone.forEach((record, index) => {
+        expect(refusalOf(record)).toMatch(
+          /^1 validation error for [^\n]+\n(joint_positions\n)? {2}Value error, Gripper targets must be within \[0, 1\] \[type=value_error, /,
+        );
+        // the same chunk with the key, or the two: each key is refused and nothing else is
+        const other = withKey[index] as ActionCase;
+        const chunk = record.input as Record<string, unknown>;
+        const fields = { ...(other.input as Record<string, unknown>) };
+        const keys = Object.keys(fields).filter((key) => !(key in chunk));
+        expect(keys.length).toBeGreaterThanOrEqual(1);
+        for (const key of keys) {
+          delete fields[key];
+        }
+        expect(fields).toEqual(chunk);
+        expect(refusalOf(other)).not.toContain("Gripper targets");
+        expect(refusalOf(other).match(/\[type=[a-z_]+, /g)).toEqual(keys.map(() => "[type=extra_forbidden, "));
+      });
     }
   });
 

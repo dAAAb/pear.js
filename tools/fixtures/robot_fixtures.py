@@ -1439,6 +1439,7 @@ class ActionCases:
         cases += self.gripper_bound_cases("adapter")
         cases += self.length_cases("adapter", with_many_rows=True)
         cases += self.shown_cases()
+        cases += self.gripper_range_cases("adapter")
 
         return cases
 
@@ -1478,6 +1479,7 @@ class ActionCases:
             cases.append(self.case(via, value, "a model"))
         cases += self.gripper_bound_cases("JointPositions")
         cases += self.length_cases("JointPositions", with_many_rows=False)
+        cases += self.gripper_range_cases("JointPositions")
         return cases
 
     def gripper_bound_cases(self, via: str) -> list[dict[str, Any]]:
@@ -1490,6 +1492,28 @@ class ActionCases:
             end = [*row[:GRIPPER_INDEX], target, *row[GRIPPER_INDEX + 1 :]]
             for positions in ([end], [end, row], [row, end]):
                 cases.append(self.case(via, {**self.CHUNK, "positions": positions}, "chunk grippers: at the bounds"))
+        return cases
+
+    def gripper_range_cases(self, via: str) -> list[dict[str, Any]]:
+        """A chunk with a gripper's target outside [0, 1], alone and with a key that is none of its fields. PEAR
+        checks the grippers' range last, of a chunk whose fields and keys it has taken: with such a key it refuses
+        the key and does not check the range. No value of a whole float is shown (see whole_float_cases)."""
+        row = self.CHUNK["positions"][0]
+        above = [*row[:GRIPPER_INDEX], 1.5, *row[GRIPPER_INDEX + 1 :]]
+        below = [*row[:GRIPPER_INDEX], -0.25, *row[GRIPPER_INDEX + 1 :]]
+        ints = {"positions": [[0, 0, 0, 0, 0, 2]], "rate_hz": 10}
+        if via == "adapter":
+            ints = {"type": "joint_positions", **ints}
+        cases = []
+        for chunk, extra in (
+            ({**self.CHUNK, "positions": [above]}, {"extra": 1.5}),
+            ({**self.CHUNK, "positions": [row, above]}, {"extra": "x"}),
+            ({**self.CHUNK, "positions": [below]}, {"extra": {"k": 2}}),
+            ({**self.CHUNK, "positions": [above, below]}, {"extra": None, "note": True}),
+            (ints, {"extra": 1}),
+        ):
+            cases.append(self.case(via, chunk, "chunk grippers: outside their range"))
+            cases.append(self.case(via, {**chunk, **extra}, "chunk grippers: outside their range, with an extra key"))
         return cases
 
     def length_cases(self, via: str, *, with_many_rows: bool) -> list[dict[str, Any]]:

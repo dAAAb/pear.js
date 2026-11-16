@@ -98,14 +98,15 @@ gives up first ("Motion remained unstable before timeout"). `SO101Homing.is_open
 
 `tools/fixtures/robot_fixtures.py` (session 1's; changed in place since, never rewritten) refuses a PEAR that is not
 at the pinned commit, takes `--output` and `--scale` (while working also `--only parts|sessions|agent` and
-`--groups`), and writes, 746,031 bytes in all with `libm.json` (the numbers are those after Round 4):
+`--groups`), and writes, 746,490 bytes in all with `libm.json` (the numbers are those after Round 4 and the twenty
+cases of 2026-11-16):
 
 - `parts.json.gz`: `checked_action` 208 cases (with every answer of PEAR's kinematics on the way), `delta_base` 108,
   `action_parts` 42, `checked_home` 313, `check_home_bounds` and `home_move` of both classes 192,
   `recheck_home_move` 56, `time_estimates` 24, `needs_opening` 96, `measured_positions` 7, the planning of Home on a
   robot without one 4; `from_snapshot` 522 with `to_record`, the report for both values of `is_dispatched` and the
-  log, `MotionResult.build` 8, the report of 145 results no robot built; `ActionAdapter.validate` 929, the models
-  themselves 287, 22 inputs with whole floats, PEAR's `isinstance` of a value of each of the six models against
+  log, `MotionResult.build` 8, the report of 145 results no robot built; `ActionAdapter.validate` 939, the models
+  themselves 297, 22 inputs with whole floats, PEAR's `isinstance` of a value of each of the six models against
   each model; 13 scripts of the wrist camera and the camera feed.
 - `sessions.json.gz`: 73 sessions of PEAR's `SteppedStandInSO101Robot` on `StandInClock` (28 of them the SO-101
   scenarios of PEAR's four test files, 4 generated), 1,657 steps, 11,920 control periods.
@@ -141,6 +142,13 @@ past a limit with the reading inside, a gripper command past an endpoint, a join
 not exactly its start, the move tolerance). For the action models: 428 adapter and 67 model cases (lists past their
 maximum with bad items at each level, shown inputs around 50 bytes, a gripper's target at the ends of its range)
 and the table of `isinstance`; they come after the old cases, which keep their numbers.
+
+Added on 2026-11-16 for a rule of the action models that no case held (the end of "Refusal texts of the action
+models"): ten adapter and ten model cases, `chunk grippers: outside their range` and the same chunks `with an extra
+key` (`gripper_range_cases`). They come last in both lists. The script was run before and after the change: before
+it, the four files it writes were byte for byte the committed ones; after it, `sessions.json.gz` and
+`agent_rig.json.gz` still are, every earlier case of `parts.json.gz` is unchanged and in its place, and `meta.json`
+differs in the two counts.
 
 For whoever writes a session later: build a joint chunk from readings only where the arm has not been stopped in
 a Cartesian move before. After such a stop, whether a joint that the chunk does not ask to move makes an excursion
@@ -542,6 +550,22 @@ None of these texts can come from a model's answer through the turn loop: `parse
 the action from exactly the format's quantities, each a finite number, and refuses everything else with texts of
 its own. They are what a page gets that calls the robot with an action it made itself.
 
+**Checked on 2026-11-16: three probes that the first writer of `actions.ts` had reported as held by no case** (its
+report reached nobody until then). Each was run again on PEAR's pydantic and on `actions.ts` as committed:
+
+- A row that is too short and holds an item that is no number: the item's error alone, no `too_short`. pear.js
+  gives PEAR's text; two `too long: a row among others` cases have held it since Round 4.
+- A chunk with a gripper's target outside [0, 1] and a key that is none of its fields: PEAR checks the range last
+  (`check_gripper_range`, once the fields and the keys are taken), so the key alone is refused. pear.js gives PEAR's
+  text, but no case held it: a change that checks the range although such a key is there failed none of the 9,283
+  tests of the whole suite. The fixture script now writes PEAR's record of five such chunks, each alone and with
+  its key or keys, through the adapter and through the model (20 cases); the same change now fails 10 tests.
+- An int too large for a float (`10**10000`), which PEAR shows as `<unprintable int object>`: JavaScript has no such
+  number. JSON's becomes `Infinity`, which is refused in PEAR's words for `inf`; a BigInt is under "Left".
+
+Counts since: `tests/station-robot` 5,049 tests (`actions` 1,267: the 20 cases and one test of what the fixtures
+hold); the whole suite 84 files pass, 3 skipped; 9,305 tests pass, 11 skipped. `npx tsc --noEmit`: 0 errors.
+
 ### The audit's breaks, run again
 
 The audit's 225 breaks, each alone, against `tests/station-robot` as it is now (5,028 tests; every file restored):
@@ -707,7 +731,9 @@ From the independent audit (the numbers are its findings; Round 4 has the table)
   key of a model's dict PEAR gives the one error `string_unicode` at the model's place and pear.js
   `extra_forbidden` beside the model's other errors; as a tag PEAR shows three U+FFFD and pear.js the surrogate.
   Both refuse and nothing moves. Deliberate difference 17 is held by no fixture. A hole of a sparse array is read
-  as `undefined` by the list's validation (JSON gives none; no test).
+  as `undefined` by the list's validation (JSON gives none; no test). A BigInt is refused as no number, in a text
+  PEAR has for no value (`input_value={}, input_type=dict`), where PEAR takes a Python int for a float (JSON gives
+  no BigInt; no test).
 - 6: planning on a slow device was not measured and nothing was changed (deliberate difference 16).
 - 7: a cancellation that is set while `waitStationary` is already waiting (the rows are of one set before); the
   turn loop with an encoder that takes long (pinned at the adapter only).

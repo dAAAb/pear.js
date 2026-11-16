@@ -8,10 +8,13 @@ the two sha256 compared (36 of 36 equal). Run on 2026-11-15, 18:24 to 18:26, whe
 the fixtures of 64 sessions. Two sessions were added after that run (4,223 tests, 66 sessions, as committed); the
 36 breaks were not run again on them.
 
-The directory now has 13 files and 5,028 tests on the fixtures of 73 sessions. An independent audit later made 225
+The directory now has 13 files and 5,049 tests on the fixtures of 73 sessions. An independent audit later made 225
 breaks of its own (none of these 36), and they were run again after its findings were answered: 214 of the 221
 that can still be made fail a test, and the other 7 change nothing that can be told from outside
-(`docs/progress/robot.md`, "Round 4").
+(`docs/progress/robot.md`, "Round 4"). One more break was made on 2026-11-16, in the same way (a copy, never the
+repository): a chunk's grippers' range checked although the chunk has a key that is none of its fields
+(`station/motion/actions.ts`). It failed nothing; since PEAR's record of such chunks is in the fixtures it fails 10
+tests (`docs/progress/robot.md`, "Refusal texts of the action models").
 
 "Failed" counts tests of the 4,219 of that run. A session or a task that differs fails its own test and the file's
 summary test, and `engine` runs the same cases again, so one differing session shows as 4.
