@@ -12,7 +12,7 @@ default; never a directory of the repository).
 
 Parts: load, stamp, sim, expected, guard, cable, faults, calibration, serial, diagnostics, camera, model,
 privacy, ask, languages, keyboard, layout, folder, subpath, hosted, insecure, log, transport, timing, selftest,
-station.
+station, preflight.
 """
 
 from __future__ import annotations
@@ -2640,7 +2640,8 @@ BLOB_TEXTS = """(() => {
     window.blobOf = url => made.get(url) ?? null;
 })();"""
 
-# The entry points of Web Serial: the Worker's text names none of them.
+# The entry points of Web Serial. The Worker's text names getPorts, by which its hand-over check finds the port the
+# page was granted, and never requestPort: asking a person for a port stays the window's.
 WEB_SERIAL_NAMES = ("navigator.serial", "requestPort", "getPorts")
 
 # The numbers of the Worker's clock (realTimeClock().stats()), as the status and the panel's line carry them.
@@ -3318,10 +3319,11 @@ def part_station(check: Check, browser, context: BrowserContext, base: str, dist
     page = open_page(check, context, base)
     status = station_enabled(check, page, "served")
 
-    # the text the Worker was started from (the Blob behind the Worker's URL) has no way to Web Serial
+    # the text the Worker was started from (the Blob behind the Worker's URL): of Web Serial it names what its
+    # hand-over check needs to find a granted port, and nothing by which it could ask for one
     worker_text = page.evaluate("async url => { const blob = window.blobOf(url); return blob === null ? null : await blob.text(); }", page.workers[0].url if page.workers else "")
     named = [name for name in WEB_SERIAL_NAMES if name in (worker_text or "")]
-    check.equal("served: the text the Worker was started from is the station's code and names none of navigator.serial, requestPort, getPorts", [worker_text is not None and "The timing self-check failed" in worker_text, named], [True, []])
+    check.equal("served: the text the Worker was started from is the station's code; of Web Serial's entry points it names getPorts and never requestPort", [worker_text is not None and "The timing self-check failed" in worker_text, "getPorts" in named, "requestPort" in named], [True, True, False])
     check.numbers["station"]["the Worker's text"] = {"characters": len(worker_text or ""), "names of Web Serial in it": named}
     page.click("#language-zh")
     page.wait_for_timeout(300)
@@ -3427,10 +3429,533 @@ def part_station(check: Check, browser, context: BrowserContext, base: str, dist
         server.server_close()
 
 
+# The hand-over check of a real arm's line (the request "preflight"): how the page's log begins the line of the
+# Worker's report, and the lines by which it says that a check has ended, whichever way.
+PREFLIGHT_REPORT = "Station: real-arm preflight "
+PREFLIGHT_ENDS = (
+    "Station: the window reads the arm again, on the same port",
+    "Station: the window does not read the arm again on the same port",
+    "Station: the Worker did not give the line back",
+)
+# The fields of the Worker's report (PreflightReport in station_protocol.ts).
+PREFLIGHT_FIELDS = ["detail", "guard", "isClosed", "lineErrors", "ports", "servos", "settings", "singleReads", "stop", "timing", "tookMs"]
+# What the page's simulated arm holds of its calibration, by servo id (Homing_Offset and the two position limits),
+# the model number of an STS3215, and the USB ids of the adapter (a CH343's), written out here.
+SIM_ARM = {1: [-1470, 758, 3292], 2: [97, 857, 3284], 3: [1238, 836, 3069], 4: [-1028, 838, 3138], 5: [-233, 0, 4095], 6: [1269, 2037, 3499]}
+STS3215 = 777
+ADAPTER_IDS = {"vendorId": 0x1A86, "productId": 0x55D3}
+# Where a servo keeps a setting, as the report's table says it in English.
+SETTING_AREAS = {
+    "eeprom": "EEPROM: survives a power cycle",
+    "ram": "RAM: lost when the power goes off",
+    "factory": "factory block: not known whether it survives a power cycle",
+}
+# Keeps what the stand-in port had seen of the page at two moments (window.handOver): when the request "preflight"
+# went to the Worker, and when the Worker's report came back, before the page's own listener got it.
+HANDOVER_MOMENTS = """window.handOver = [];
+window.Worker = class extends Worker {
+    constructor(...parts) {
+        super(...parts);
+        this.addEventListener('message', event => {
+            let text = '';
+            try { text = JSON.stringify(event.data) ?? ''; } catch { text = ''; }
+            if (text.includes('"tookMs"')) window.handOverMoment('report');
+        });
+    }
+    postMessage(message, ...rest) {
+        if (message?.request?.type === 'preflight') window.handOverMoment('request');
+        return super.postMessage(message, ...rest);
+    }
+};
+window.handOverMoment = what => {
+    const log = window.portLog;
+    window.handOver.push({ what, opened: log.opened.length, closed: log.closed, written: log.written.length });
+};"""
+# What the page shows of the hand-over check: whether its control is shown and can be pressed, the line while it
+# runs, and the report's parts in their order, each with its kind, its tone ("table" for a table), its sentence or
+# title, the Worker's own words and a table's rows.
+PREFLIGHT_SHOWN = """(() => {
+    const visible = node => node.getClientRects().length > 0;
+    const control = document.getElementById('station-preflight-run');
+    const line = document.getElementById('station-preflight-status');
+    const found = document.getElementById('station-preflight-report');
+    const parts = [...document.getElementById('station-preflight-parts').children].map(node => ({
+        kind: (node.dataset.kind ?? '').replace(/^preflight-/, ''),
+        tone: node.dataset.tone ?? (['error', 'warn'].find(tone => node.classList.contains(tone)) ?? 'table'),
+        text: (node.matches('p') ? node : node.querySelector('h4, p'))?.textContent ?? '',
+        detail: node.querySelector('p.detail')?.textContent ?? null,
+        rows: [...node.querySelectorAll('tbody tr')].map(row => [...row.cells].map(cell => cell.textContent)),
+    }));
+    return { isShown: visible(control), isOffered: visible(control) && !control.disabled, running: line.dataset.running ?? '',
+             line: line.textContent, isReportShown: visible(found), stop: found.dataset.stop ?? '', closed: found.dataset.closed ?? '', parts };
+})()"""
+
+
+def preflight_shown(page: Page) -> dict:
+    """Returns what the page shows of the hand-over check (PREFLIGHT_SHOWN)."""
+    return page.evaluate(PREFLIGHT_SHOWN)
+
+
+def preflight_sentences(shown: dict) -> dict:
+    """Returns the sentences of the report the page shows, by their kind."""
+    return {part["kind"]: part for part in shown["parts"] if part["tone"] != "table"}
+
+
+def preflight_tables(shown: dict) -> dict:
+    """Returns the tables of the report the page shows, by their kind."""
+    return {part["kind"]: part for part in shown["parts"] if part["tone"] == "table"}
+
+
+def preflight_order(shown: dict) -> list[list[str]]:
+    """Returns the kind and the tone of each part of the report the page shows, in the page's order."""
+    return [[part["kind"], part["tone"]] for part in shown["parts"]]
+
+
+def preflight_reports(page: Page) -> list:
+    """Returns the reports of the hand-over check in the page's log: what each line "Station: real-arm preflight
+    {...}" writes as JSON, None for one that is no JSON."""
+    return [json_or_none(line[len(PREFLIGHT_REPORT):]) for line in log_lines(page) if line.startswith(PREFLIGHT_REPORT + "{")]
+
+
+def preflight_ended(page: Page) -> int:
+    """Returns how many hand-over checks the page's log says have ended, whichever way."""
+    return sum(1 for line in log_lines(page) if line.startswith(PREFLIGHT_ENDS))
+
+
+def wait_offered(page: Page, timeout_ms: int = 10000) -> bool:
+    """Waits until the hand-over check's control is shown and can be pressed; returns whether it is."""
+    try:
+        page.wait_for_function("(() => { const control = document.getElementById('station-preflight-run'); return control.getClientRects().length > 0 && !control.disabled; })()", timeout=timeout_ms)
+        return True
+    except WaitTimeout:
+        return False
+
+
+def preflight_pressed(page: Page) -> tuple[int, int]:
+    """Presses the hand-over check's control; returns how many lines the log held and how many hand-over checks it
+    said had ended, both before the press."""
+    before = (len(log_lines(page)), preflight_ended(page))
+    page.click("#station-preflight-run")
+    return before
+
+
+def preflight_report(check: Check, page: Page, label: str, before: tuple[int, int], reports: int) -> tuple[dict, list[str]]:
+    """Waits for the end of the hand-over check that was pressed; returns its report as the log holds it, and the
+    lines the log gained by it. ``reports`` is how many reports the log must hold then."""
+    try:
+        page.wait_for_function(
+            "([beginnings, before]) => document.getElementById('log-output').value.split('\\n').filter(line => beginnings.some(beginning => line.includes(beginning))).length > before",
+            arg=[list(PREFLIGHT_ENDS), before[1]],
+            timeout=45000,
+        )
+    except WaitTimeout:
+        pass
+    check.equal(f"{label}: the hand-over check ends, and the log says how", preflight_ended(page), before[1] + 1)
+    gained = log_lines(page)[before[0]:]
+    found = preflight_reports(page)
+    check.equal(f"{label}: the log holds one line \"Station: real-arm preflight {{...}}\" for each check that was run, and each is JSON", [len(found), all(isinstance(report, dict) for report in found)], [reports, True])
+    report = found[-1] if found and isinstance(found[-1], dict) else {}
+    check.equal(f"{label}: the report has the fields of the protocol's PreflightReport", sorted(report), PREFLIGHT_FIELDS)
+    return report, gained
+
+
+def reads_only(port_log: dict) -> list[int]:
+    """Returns the instructions of the packets a stand-in port was given, each once: 1 is PING, 2 READ, 0x82 SYNC
+    READ."""
+    return sorted({entry["bytes"][4] for entry in port_log["written"]})
+
+
+def enable_refused(page: Page) -> list:
+    """Returns whether the station's Enable is disabled, and the reason the page gives."""
+    return [page.locator("#station-enable").is_disabled(), page.locator("#station-why").get_attribute("data-why")]
+
+
+def preflight_real_path(check: Check, browser, base: str) -> None:
+    """Without ?preflight=sim, on a stand-in of a browser's port that answers as a calibrated arm of six servos:
+    the control is offered and the hand-over runs as on a real arm, up to where a headless browser ends it. The
+    Worker asks its own navigator.serial, whose getPorts() gives no port (the stand-in lives in the window), so
+    the report stops at "no-port"; the port's own record tells what the window did around the request."""
+    label = "the real path"
+    own = browser.new_context(viewport={"width": 1280, "height": 800}, locale="en-US")
+    check.watch(own)
+    own.add_init_script(scripted_port(USB_ADAPTER, SIX_CALIBRATED))
+    own.add_init_script(HANDOVER_MOMENTS)
+    page = open_page(check, own, base)
+    check.equal(f"{label}: before an arm is read the control is not shown", preflight_shown(page)["isShown"], False)
+    page.click("#arm-connect")
+    wait_phase(page, "reading")
+    page.wait_for_function("window.pearjs.arm.view.live !== null")
+    check.ok(f"{label}: on a port that is read as a calibrated arm of six servos, not the simulated one, the control is offered", wait_offered(page) and page.evaluate("window.pearjs.arm.view.isSimulated") is False, preflight_shown(page))
+    why = page.locator("#station-why")
+    check.equal(f"{label}: the station's Enable is still refused on a real arm", enable_refused(page), [True, "station.why.realArm"])
+    check.ok(f"{label}: and its sentence still says that a real arm is only read", "A real arm is connected" in why.inner_text(), why.inner_text())
+    check.equal(f"{label}: no Worker runs before the control is pressed", len(page.workers), 0)
+    port_log = page.evaluate("window.portLog")
+    check.equal(f"{label}: before the hand-over the window has opened the port once, at the servos' baud rate, and not closed it", [[entry["baudRate"] for entry in port_log["opened"]], port_log["closed"]], [[1000000], 0])
+
+    before = preflight_pressed(page)
+    report, gained = preflight_report(check, page, label, before, 1)
+    check.numbers.setdefault("preflight", {})["the real path: the report"] = report
+    # the one fact of a real browser here: a Worker started from a Blob has a navigator.serial, and getPorts()
+    # answers; null in place of the list would mean that this browser gives such a Worker no Web Serial
+    check.equal(f"{label}: the Worker has a navigator.serial of its own and its getPorts() gave no port: the report's ports is an empty list, not null", report.get("ports", "absent"), [])
+    check.equal(
+        f"{label}: the report stops at no-port: nothing was read, no port was taken, the guard was given no packet",
+        {name: report.get(name, "absent") for name in ("stop", "servos", "settings", "singleReads", "timing", "guard", "lineErrors", "isClosed")},
+        {"stop": "no-port", "servos": None, "settings": None, "singleReads": None, "timing": None, "guard": {"passed": {}, "refused": 0}, "lineErrors": 0, "isClosed": True},
+    )
+    detail = str(report.get("detail", ""))
+    check.equal(f"{label}: the Worker's own words name the adapter the window read and how many ports the Worker was given", detail, "The Worker was given no granted port with the USB ids 1a86:55d3 (0 granted in all)")
+    asked = [line for line in gained if line.startswith("Station: real-arm preflight asked")]
+    check.ok(f"{label}: the log says what the Worker was asked: a granted port, the adapter's ids, and that the window closed its session", len(asked) == 1 and "source granted;" in asked[0] and "the window closed its session" in asked[0] and 'usb {"vendorId":6790,"productId":21971}' in asked[0], asked)
+
+    shown = preflight_shown(page)
+    sentences = preflight_sentences(shown)
+    check.equal(f"{label}: the page shows the report, stopped at no-port, with the line given back", [shown["isReportShown"], shown["stop"], shown["closed"]], [True, "no-port", "true"])
+    check.equal(
+        f"{label}: the report's parts, in their order: the stop as an error, the empty list of ports as a warning, and that nothing was read",
+        preflight_order(shown),
+        [["outcome", "error"], ["ports", "warn"], ["closed", "ok"], ["servos", "info"], ["settings", "info"], ["limp", "info"], ["timing", "info"], ["guard", "ok"], ["lineErrors", "ok"], ["took", "info"]],
+    )
+    outcome = sentences.get("outcome") or {}
+    check.ok(f"{label}: the page says in a sentence that the Worker was given no port of this adapter, and what to do", str(outcome.get("text", "")).startswith("The Worker was given no port of this adapter, although the page was granted one. Reload the page, connect the arm in step 1 again and check once more;"), outcome)
+    check.equal(f"{label}: under the sentence, the Worker's own words", outcome.get("detail"), detail)
+    check.equal(
+        f"{label}: the other sentences say the empty list, that the line is the window's again, and that nothing was read",
+        [(sentences.get(kind) or {}).get("text") for kind in ("ports", "closed", "servos", "settings", "limp", "timing", "guard", "lineErrors")],
+        [
+            "Ports the Worker was given: none. Its getPorts() gave an empty list.",
+            "The Worker does not hold the arm's line any more, so the window can read the arm again.",
+            "The servos were not read.",
+            "What PEAR's enable would change was not read.",
+            "The limp time was not measured.",
+            "The timing self-check was not run.",
+            "The read-only guard let through: no packet. It refused nothing.",
+            "The line reported no error while the Worker had it.",
+        ],
+    )
+    page.click("#language-zh")
+    page.wait_for_function("!document.getElementById('station-preflight-parts').dataset.signature.startsWith('en')")
+    chinese = preflight_sentences(preflight_shown(page))
+    check.ok(f"{label}: the stop's sentence in Chinese, with the Worker's own words as they are", str((chinese.get("outcome") or {}).get("text", "")).startswith("頁面已經取得這塊轉接板的授權，Worker 卻沒有拿到它的埠。") and (chinese.get("outcome") or {}).get("detail") == detail, chinese.get("outcome"))
+    check.equal(f"{label}: the empty list and the line given back, in Chinese", [(chinese.get(kind) or {}).get("text") for kind in ("ports", "closed")], ["Worker 拿到的埠：沒有。它的 getPorts() 回傳的是空清單。", "Worker 已經不再占用手臂的線路，所以視窗可以重新讀取手臂。"])
+    page.click("#language-en")
+
+    # the port's own record: the truth the page's sentences and its log are held against
+    moments = page.evaluate("window.handOver")
+    check.equal(
+        f"{label}: by the port's own record the window had closed the port when the request went to the Worker, and had not opened it again when the report came back",
+        [[moment["what"], moment["opened"], moment["closed"]] for moment in moments],
+        [["request", 1, 1], ["report", 1, 1]],
+    )
+    check.equal(f"{label}: between the request and the report nothing was written to the port", len(moments) == 2 and moments[1]["written"] - moments[0]["written"], 0)
+    port_log = page.evaluate("window.portLog")
+    check.equal(f"{label}: after the report the window opened the same port again, at the servos' baud rate, and it is not closed again", [[entry["baudRate"] for entry in port_log["opened"]], port_log["closed"]], [[1000000, 1000000], 1])
+    written = len(port_log["written"])
+    check.ok(f"{label}: the window reads the arm again: the port is given packets after the hand-over", len(moments) == 2 and wait_read_again(page, "window.portLog.written.length", written) > written > moments[1]["written"], [moments, written])
+    check.ok(f"{label}: every packet the port was ever given is a PING, a READ or a SYNC READ", set(reads_only(page.evaluate("window.portLog"))) <= {1, 2, 0x82} and written > 0, reads_only(page.evaluate("window.portLog")))
+    check.ok(f"{label}: the log says that the window reads the arm again, on the same port", "Station: the window reads the arm again, on the same port" in gained, gained[-3:])
+    check.equal(f"{label}: step 1 reads the arm, and the window's guard refused nothing", [phase(page), page.locator("#guard-line").get_attribute("data-refused")], ["reading", "0"])
+    check.ok(f"{label}: after it the control is offered again", wait_offered(page), preflight_shown(page))
+    check.equal(f"{label}: after it the station is off, and its Enable is refused on a real arm as before", [station_view(page)["phase"], *enable_refused(page)], ["off", True, "station.why.realArm"])
+    own.close()
+
+
+def preflight_whole(check: Check, browser, base: str, service: str) -> None:
+    """With ?preflight=sim, on the page's simulated arm: the whole hand-over. The Worker takes a simulated port of
+    its own that holds the same calibration, reads it behind the read-only guard, measures the timing and gives
+    the line back; the page shows every part of the report and the window reads the arm again. Then the gates
+    around the station's Enable, and an arm that holds another calibration than the Worker's."""
+    label = "the whole hand-over"
+    own = browser.new_context(viewport={"width": 1280, "height": 800}, locale="en-US")
+    check.watch(own)
+    page = open_page(check, own, base, "?lang=en&preflight=sim")
+    check.equal(f"{label}: with ?preflight=sim, before an arm is read the control is not shown", preflight_shown(page)["isShown"], False)
+    connect_sim(page)
+    page.wait_for_function("window.pearjs.arm.view.live !== null")
+    check.ok(f"{label}: with ?preflight=sim the control is offered on the simulated arm", wait_offered(page), preflight_shown(page))
+    check.equal(f"{label}: no Worker runs before the control is pressed", len(page.workers), 0)
+    # the page is given a key and an address first: neither may come into what the hand-over writes to the log
+    check.equal(f"{label}: a model service with a key is checked, so that the page holds a key and an address", run_model_check(page, f"{service}/v1", MODEL, KEY), "ok")
+    window_read = page.evaluate("window.pearjs.arm.fingerprint")
+    check.equal(
+        f"{label}: what the window read of the six servos, and will ask the Worker to find: the simulated arm's calibration",
+        [[servo["id"], servo["model"], servo["homingOffset"], servo["rangeMin"], servo["rangeMax"]] for servo in window_read or []],
+        [[servo, STS3215, *SIM_ARM[servo]] for servo in SIM_ARM],
+    )
+
+    before = preflight_pressed(page)
+    page.wait_for_function("document.getElementById('log-output').value.includes('Station: real-arm preflight asked')")
+    during = page.evaluate(
+        """(() => {
+            const disabled = id => document.getElementById(id).disabled;
+            return { enable: disabled('station-enable'), control: disabled('station-preflight-run'), connect: disabled('arm-connect'),
+                     simulated: disabled('arm-sim'), isRead: window.pearjs.arm.view.phase === 'reading',
+                     running: document.getElementById('station-preflight-status').dataset.running,
+                     line: document.getElementById('station-preflight-status').textContent };
+        })()"""
+    )
+    check.equal(
+        f"{label}: while it runs, neither Enable nor the control can be pressed, nor step 1's Connect and Try without an arm; the window does not read the arm, and the page says that the Worker has the line",
+        during,
+        {"enable": True, "control": True, "connect": True, "simulated": True, "isRead": False, "running": "true", "line": "Checking: the Worker has the arm's line and reads it. This takes a few seconds…"},
+    )
+    refused = page.evaluate(
+        """async expected => {
+            const client = window.pearjs.stationClient;
+            const told = request => client.request(request).then(() => 'answered', error => String(error?.message ?? error));
+            const positions = { shoulder_pan: 2025, shoulder_lift: 1540, elbow_flex: 2003, wrist_flex: 2915, wrist_roll: 996, gripper: 3499 };
+            return [await told({ type: 'enable', positions, isHidden: false }),
+                    await told({ type: 'preflight', source: 'simulated', usb: null, expected, isHidden: false })];
+        }""",
+        window_read,
+    )
+    check.ok(f"{label}: asked all the same while it runs, the Worker refuses Enable and a second hand-over check", len(refused) == 2 and "A preflight of a real arm is under way" in refused[0] and "Another preflight of a real arm is under way" in refused[1], refused)
+    report, gained = preflight_report(check, page, label, before, 1)
+    check.numbers.setdefault("preflight", {})["the whole hand-over: the report"] = report
+
+    servos = report.get("servos") or []
+    settings = report.get("settings") or []
+    guard = report.get("guard") or {}
+    passed = guard.get("passed") or {}
+    check.equal(
+        f"{label}: nothing stopped it, the line was given back, the guard refused nothing, the line had no error, six servos and 45 settings were read",
+        [report.get("stop", "absent"), report.get("detail"), report.get("isClosed"), guard.get("refused"), report.get("lineErrors"), len(servos), len(settings)],
+        [None, "", True, 0, 0, 6, 45],
+    )
+    check.equal(f"{label}: the Worker was given one port, the simulated adapter's", report.get("ports"), [ADAPTER_IDS])
+    check.equal(
+        f"{label}: the same arm: the six servos the Worker read hold the model and the calibration the window read",
+        [[servo.get("id"), servo.get("model"), servo.get("homingOffset"), servo.get("rangeMin"), servo.get("rangeMax")] for servo in servos],
+        [[servo["id"], servo["model"], servo["homingOffset"], servo["rangeMin"], servo["rangeMax"]] for servo in window_read or []],
+    )
+    check.equal(f"{label}: the servos are named as PEAR names them, in the order of their ids", [[servo.get("id"), servo.get("name")] for servo in servos], [[index + 1, motor] for index, motor in enumerate(MOTORS)])
+    check.ok(f"{label}: the guard let through reads only: PING, READ and SYNC READ, some of each", set(passed) == {"PING", "READ", "SYNC READ"} and all(isinstance(count, int) and count > 0 for count in passed.values()), passed)
+    check.equal(f"{label}: the 45 settings are seven for each servo and three more for the gripper", {servo: sum(1 for setting in settings if setting.get("id") == servo) for servo in SIM_ARM}, {1: 7, 2: 7, 3: 7, 4: 7, 5: 7, 6: 10})
+    changed = [setting for setting in settings if setting.get("held") != setting.get("pear")]
+    check.ok(f"{label}: the simulated servos do not hold all of PEAR's values: some settings would be changed", 0 < len(changed) <= 45, len(changed))
+    check.ok(f"{label}: each setting says where the servo keeps it, by its address", all(setting.get("area") == ("eeprom" if setting.get("address", -1) < 40 else "ram" if setting["address"] < 80 else "factory") for setting in settings) and len(settings) > 0, [[setting.get("address"), setting.get("area")] for setting in settings][:12])
+    reads = report.get("singleReads") or {}
+    timing = report.get("timing") or {}
+    check.ok(f"{label}: the limp time was measured: single reads, their time together and the longest one", isinstance(reads.get("count"), int) and reads["count"] > 0 and is_number(reads.get("totalMs")) and is_number(reads.get("maxMs")) and 0 <= reads["maxMs"] <= reads["totalMs"], reads)
+    check.equal(f"{label}: the timing self-check ran its 150 periods on the Worker's line and passed", [timing.get("periods"), timing.get("failures"), timing.get("reasons")], [150, [], []])
+    check.ok(f"{label}: its numbers are those of a 20 ms loop", all(is_number(timing.get(name)) for name in ("meanMs", "maxMs", "maxReadMs", "over25")) and 15 <= timing["meanMs"] <= 25 and timing["maxMs"] >= timing["meanMs"], timing)
+    check.ok(f"{label}: the report says how long the whole took, at least the timing self-check's three seconds", is_number(report.get("tookMs")) and 2900 <= report["tookMs"] < 30000, report.get("tookMs"))
+
+    # the lines the hand-over wrote to the log
+    asked = [line for line in gained if line.startswith("Station: real-arm preflight asked")]
+    check.ok(f"{label}: the log says what the Worker was asked: a simulated port of its own, no adapter's ids, and what the window read", len(asked) == 1 and "source simulated (?preflight=sim: the Worker takes a simulated port of its own, no granted one)" in asked[0] and "usb null, expected " + json.dumps(window_read, separators=(",", ":")) in asked[0], asked)
+    address = service.split("//")[-1]
+    check.ok(f"{label}: no line the hand-over wrote to the log holds the key or the model service's address", len(gained) >= 3 and all(KEY not in line and address not in line for line in gained), [line[:160] for line in gained if KEY in line or address in line])
+    check.ok(f"{label}: and the whole log holds no key", KEY not in "\n".join(log_lines(page)))
+
+    # the report on the page, held against the report's JSON
+    shown = preflight_shown(page)
+    sentences = preflight_sentences(shown)
+    tables = preflight_tables(shown)
+    text = lambda value: str(value).replace("-", MINUS)  # noqa: E731
+    named = {servo.get("id"): f"{servo.get('name')} ({servo.get('id')})" for servo in servos}
+    check.equal(f"{label}: the page shows the report: no stop, the line given back", [shown["isReportShown"], shown["stop"], shown["closed"]], [True, "none", "true"])
+    check.equal(
+        f"{label}: the report's parts, in their order: the outcome, the ports, the line given back, the servos, what tells the arm, the settings as a warning with their rows, the limp time, the timing as passed, the guard, the line's errors, the time",
+        preflight_order(shown),
+        [["outcome", "ok"], ["ports", "info"], ["closed", "ok"], ["servos", "table"], ["identity", "table"], ["settings", "warn"], ["settings", "table"], ["limp", "info"], ["timing", "ok"], ["guard", "ok"], ["lineErrors", "ok"], ["took", "info"]],
+    )
+    check.equal(
+        f"{label}: the page says that the Worker reached the adapter and read six servos, which port it was given, and that the line is the window's again",
+        [(sentences.get(kind) or {}).get("text") for kind in ("outcome", "ports", "closed", "lineErrors")],
+        [
+            "The Worker reached the arm's adapter, opened the line behind the read-only guard and read all six servos.",
+            "Ports the Worker was given (1): USB vendor 1a86, product 55d3.",
+            "The Worker does not hold the arm's line any more, so the window can read the arm again.",
+            "The line reported no error while the Worker had it.",
+        ],
+    )
+    check.equal(
+        f"{label}: the table of the six servos holds the report's values: torque, Lock, Status, voltage, temperature, Goal_Velocity, Torque_Limit, Phase and both positions",
+        (tables.get("servos") or {}).get("rows"),
+        [[named[servo["id"]], "off" if servo["torque"] == 0 else "on" if servo["torque"] == 1 else text(servo["torque"]), text(servo["lock"]), text(servo["status"]), f"{servo['voltage'] / 10:.1f}", text(servo["temperature"]),
+          text(servo["goalVelocity"]), text(servo["torqueLimit"]), text(servo["phase"]), text(servo["position"]), text(servo["goal"])] for servo in servos],
+    )
+    check.equal(
+        f"{label}: the table of what tells this arm from another holds the model, the firmware, Homing_Offset and the limits the Worker read",
+        (tables.get("identity") or {}).get("rows"),
+        [[named[servo["id"]], text(servo["model"]), servo["firmware"], text(servo["homingOffset"]), text(servo["rangeMin"]), text(servo["rangeMax"])] for servo in servos],
+    )
+    check.equal(
+        f"{label}: the settings' sentence counts what PEAR's enable would change, of how many, and how many of them in the EEPROM",
+        (sentences.get("settings") or {}).get("text"),
+        f"PEAR's enable would change {len(changed)} of the 45 settings it writes besides the goal, the torque and the lock. {sum(1 for setting in changed if setting.get('area') == 'eeprom')} of them are in the EEPROM and survive a power cycle.",
+    )
+    check.equal(
+        f"{label}: the settings' table lists exactly the rows of the report whose value differs from PEAR's: the servo, the register, its address, what it holds, what PEAR writes and where it is kept",
+        (tables.get("settings") or {}).get("rows"),
+        [[named.get(setting["id"]), setting["register"], text(setting["address"]), text(setting["held"]), text(setting["pear"]), SETTING_AREAS.get(setting["area"])] for setting in changed],
+    )
+    fixed = page.evaluate("values => values.map(value => typeof value === 'number' ? value.toFixed(2) : String(value))", [reads.get("totalMs"), reads.get("maxMs"), timing.get("meanMs"), timing.get("maxMs"), timing.get("maxReadMs")])
+    check.equal(
+        f"{label}: the limp time's sentence holds the report's count and times",
+        (sentences.get("limp") or {}).get("text"),
+        f"The limp time: PEAR's enable switches each servo's torque off for the time of {reads.get('count')} transactions. On this line {reads.get('count')} single reads took {fixed[0]} ms together, the longest of them {fixed[1]} ms.",
+    )
+    check.equal(
+        f"{label}: the timing's sentence holds the self-check's numbers and its verdict",
+        (sentences.get("timing") or {}).get("text"),
+        f"Timing self-check on this line (reads only): {timing.get('periods')} control periods, mean {fixed[2]} ms, longest {fixed[3]} ms, {timing.get('over25')} over 25 ms, longest read {fixed[4]} ms: passed.",
+    )
+    guard_text = str((sentences.get("guard") or {}).get("text", ""))
+    check.ok(f"{label}: the guard's sentence names what it let through, with the report's counts, and says that it refused nothing", guard_text.startswith("The read-only guard let through: ") and guard_text.endswith(". It refused nothing.") and all(f"{name} {count:,}" in guard_text for name, count in passed.items()) and len(passed) == 3, guard_text)
+    check.equal(f"{label}: the last sentence says how long the whole took", (sentences.get("took") or {}).get("text"), f"The whole check took {round(report.get('tookMs') or 0):,} ms.")
+
+    # the same report in Chinese
+    page.click("#language-zh")
+    page.wait_for_function("!document.getElementById('station-preflight-parts').dataset.signature.startsWith('en')")
+    shown_zh = preflight_shown(page)
+    chinese = preflight_sentences(shown_zh)
+    tables_zh = preflight_tables(shown_zh)
+    check.equal(f"{label}: in Chinese the report has the same parts in the same order", preflight_order(shown_zh), preflight_order(shown))
+    check.equal(
+        f"{label}: the report's sentences in Chinese, with the same numbers",
+        [(chinese.get(kind) or {}).get("text") for kind in ("outcome", "ports", "closed", "settings", "limp", "timing", "lineErrors", "took")],
+        [
+            "Worker 找到了手臂的轉接板，在唯讀保護之後開啟線路，並讀完了六顆伺服馬達。",
+            "Worker 拿到的埠（1 個）：USB 廠商 1a86、產品 55d3。",
+            "Worker 已經不再占用手臂的線路，所以視窗可以重新讀取手臂。",
+            f"除了目標位置、扭力和 Lock 之外，PEAR 啟用時會寫入 45 個設定，其中 {len(changed)} 個會被更動。這些當中有 {sum(1 for setting in changed if setting.get('area') == 'eeprom')} 個在 EEPROM 裡，斷電重開之後仍然保留。",
+            f"鬆軟的時間：PEAR 啟用時，每顆伺服馬達的扭力會關閉 {reads.get('count')} 次通訊的時間。在這條線路上，{reads.get('count')} 次單獨讀取一共花了 {fixed[0]} ms，其中最長的一次 {fixed[1]} ms。",
+            f"這條線路上的計時自我檢查（只讀取）：{timing.get('periods')} 個控制週期，平均 {fixed[2]} ms，最長 {fixed[3]} ms，{timing.get('over25')} 個超過 25 ms，最長的一次讀取 {fixed[4]} ms：通過。",
+            "Worker 占用線路的期間，線路沒有回報任何錯誤。",
+            f"整個檢查花了 {round(report.get('tookMs') or 0):,} ms。",
+        ],
+    )
+    guard_zh = str((chinese.get("guard") or {}).get("text", ""))
+    check.ok(f"{label}: the guard's sentence in Chinese: what it let through, and that it refused nothing", guard_zh.startswith("唯讀保護放行了：") and guard_zh.endswith("。它沒有擋下任何封包。") and all(f"{name} {count:,}" in guard_zh for name, count in passed.items()), guard_zh)
+    check.equal(f"{label}: the tables' titles in Chinese", [(tables_zh.get(kind) or {}).get("text") for kind in ("servos", "settings")], ["Worker 讀到的六顆伺服馬達現況（沒有更動任何東西）", "PEAR 啟用時會更動的設定"])
+    check.equal(
+        f"{label}: the tables' numbers are the same in Chinese",
+        [[row[2:] for row in (tables_zh.get("servos") or {}).get("rows") or []], [row[1:] for row in (tables_zh.get("identity") or {}).get("rows") or []], [row[1:5] for row in (tables_zh.get("settings") or {}).get("rows") or []]],
+        [[row[2:] for row in (tables.get("servos") or {}).get("rows") or []], [row[1:] for row in (tables.get("identity") or {}).get("rows") or []], [row[1:5] for row in (tables.get("settings") or {}).get("rows") or []]],
+    )
+    page.click("#language-en")
+
+    # the window reads the arm again
+    check.ok(f"{label}: the log says that the window reads the arm again, on the same port", "Station: the window reads the arm again, on the same port" in gained, gained[-3:])
+    check.equal(f"{label}: step 1 reads the simulated arm again", [phase(page), page.evaluate("window.pearjs.arm.view.isSimulated")], ["reading", True])
+    page.evaluate("window.pearjs.sim().setPosition('wrist_roll', 1234)")
+    try:
+        wait_raw(page, {"wrist_roll": 1234})
+        moved = True
+    except WaitTimeout:
+        moved = False
+    check.ok(f"{label}: its readings go on: a servo turned by hand after the hand-over shows in step 1", moved, joints_shown(page))
+    check.equal(f"{label}: the window's guard refused nothing", page.locator("#guard-line").get_attribute("data-refused"), "0")
+
+    # the gates
+    label = "the gates"
+    check.ok(f"{label}: after a hand-over check the control is offered again", wait_offered(page), preflight_shown(page))
+    try:
+        page.wait_for_function("!document.getElementById('station-enable').disabled", timeout=10000)
+    except WaitTimeout:
+        pass
+    check.equal(f"{label}: after a hand-over check Enable is offered again on the simulated arm", enable_refused(page), [False, "station.why.ready"])
+    page.click("#station-enable")
+    wait_station(page, "view.phase === 'on'", 40000)
+    shown = preflight_shown(page)
+    check.equal(f"{label}: while the station drives the simulated arm the control is not shown", [station_view(page)["phase"], shown["isShown"], shown["isOffered"]], ["on", False, False])
+    refused = page.evaluate(
+        """expected => window.pearjs.stationClient.request({ type: 'preflight', source: 'simulated', usb: null, expected, isHidden: false })
+            .then(() => 'answered', error => String(error?.message ?? error))""",
+        window_read,
+    )
+    check.ok(f"{label}: asked all the same while the station is open, the Worker refuses the hand-over check", "Station already open" in refused, refused)
+    check.equal(f"{label}: and the station is still on, with the same one report in the log", [station_view(page)["phase"], len(preflight_reports(page))], ["on", 1])
+    page.click("#station-disable")
+    wait_station(page, "view.phase === 'off'")
+    wait_phase(page, "reading")
+    check.ok(f"{label}: after Disable the control is offered again", wait_offered(page), preflight_shown(page))
+
+    # another arm: the window reads a calibration that the Worker's simulated port does not hold
+    label = "another arm"
+    page.evaluate("window.pearjs.sim().servo('elbow_flex').set('Homing_Offset', 1239)")
+    page.click("#arm-disconnect")
+    wait_phase(page, "idle")
+    page.click("#arm-sim")
+    wait_phase(page, "reading")
+    page.wait_for_function("window.pearjs.arm.view.live !== null")
+    other_read = page.evaluate("window.pearjs.arm.fingerprint") or []
+    check.equal(f"{label}: one servo of the window's simulated arm is given another Homing_Offset behind the bus's back, and the window reads it when it connects again", [servo["homingOffset"] for servo in other_read], [-1470, 97, 1239, -1028, -233, 1269])
+    check.ok(f"{label}: the control is offered on it", wait_offered(page), preflight_shown(page))
+    before = preflight_pressed(page)
+    report, gained = preflight_report(check, page, label, before, 2)
+    check.numbers.setdefault("preflight", {})["another arm: the report"] = report
+    guard = report.get("guard") or {}
+    check.equal(
+        f"{label}: the report stops at other-arm: nothing more was read, the line was given back, the guard refused nothing",
+        {name: report.get(name, "absent") for name in ("stop", "servos", "settings", "singleReads", "timing", "isClosed", "lineErrors")} | {"refused": guard.get("refused")},
+        {"stop": "other-arm", "servos": None, "settings": None, "singleReads": None, "timing": None, "isClosed": True, "lineErrors": 0, "refused": 0},
+    )
+    detail = str(report.get("detail", ""))
+    check.ok(f"{label}: the Worker's own words name the difference: the servo, the register, what it read and what the window read", "servo 3 Homing_Offset: read 1238, expected 1239" in detail, detail)
+    check.ok(f"{label}: up to the comparison the guard let through reads only", 0 < len(guard.get("passed") or {}) and set(guard.get("passed") or {}) <= {"PING", "READ", "SYNC READ"}, guard)
+    shown = preflight_shown(page)
+    outcome = preflight_sentences(shown).get("outcome") or {}
+    check.equal(f"{label}: the page shows this report in place of the first, stopped at other-arm", [shown["isReportShown"], shown["stop"], shown["closed"], outcome.get("tone")], [True, "other-arm", "true", "error"])
+    check.ok(f"{label}: the page says in a sentence that the Worker reached another arm, with the Worker's own words under it", str(outcome.get("text", "")).startswith("The servos the Worker read do not hold what this window read: the Worker reached another arm.") and outcome.get("detail") == detail, outcome)
+    page.click("#language-zh")
+    page.wait_for_function("!document.getElementById('station-preflight-parts').dataset.signature.startsWith('en')")
+    outcome = preflight_sentences(preflight_shown(page)).get("outcome") or {}
+    check.ok(f"{label}: the same sentence in Chinese", str(outcome.get("text", "")).startswith("Worker 讀到的伺服馬達，和這個視窗讀到的內容不一樣：Worker 接到的是另一隻手臂。") and outcome.get("detail") == detail, outcome)
+    page.click("#language-en")
+    check.ok(f"{label}: the window reads its arm again, and the log says so", "Station: the window reads the arm again, on the same port" in gained and phase(page) == "reading", gained[-3:])
+    own.close()
+
+
+def preflight_addresses(check: Check, browser, base: str) -> None:
+    """Which arm is offered the control under which address: with ?preflight=sim a real arm is not, and without it
+    the simulated arm is not."""
+    label = "the gates"
+    own = browser.new_context(viewport={"width": 1280, "height": 800}, locale="en-US")
+    check.watch(own)
+    own.add_init_script(scripted_port(USB_ADAPTER, SIX_CALIBRATED))
+    page = open_page(check, own, base, "?lang=en&preflight=sim")
+    page.click("#arm-connect")
+    wait_phase(page, "reading")
+    page.wait_for_function("window.pearjs.arm.view.live !== null && window.pearjs.arm.fingerprint !== null")
+    page.wait_for_timeout(500)
+    shown = preflight_shown(page)
+    check.equal(f"{label}: with ?preflight=sim a real arm (a stand-in port, read as a calibrated arm of six servos) is not offered the control", [page.evaluate("window.pearjs.arm.view.isSimulated"), shown["isShown"], shown["isOffered"]], [False, False, False])
+    check.equal(f"{label}: and the station's Enable is refused on it as on any real arm", enable_refused(page), [True, "station.why.realArm"])
+    check.equal(f"{label}: no Worker runs for it", len(page.workers), 0)
+    page.close()
+
+    page = open_page(check, own, base)
+    connect_sim(page)
+    page.wait_for_function("window.pearjs.arm.view.live !== null && window.pearjs.arm.fingerprint !== null")
+    page.wait_for_timeout(500)
+    shown = preflight_shown(page)
+    check.equal(f"{label}: without ?preflight=sim the simulated arm is not offered the control", [page.evaluate("window.pearjs.arm.view.isSimulated"), shown["isShown"], shown["isOffered"]], [True, False, False])
+    try:
+        page.wait_for_function("!document.getElementById('station-enable').disabled", timeout=10000)
+    except WaitTimeout:
+        pass
+    check.equal(f"{label}: and the station's Enable is offered on it, as before", enable_refused(page), [False, "station.why.ready"])
+    own.close()
+
+
+def part_preflight(check: Check, browser, base: str, service: str) -> None:
+    """The read-only hand-over of a real arm's serial line to the page's Worker and back (the request "preflight"):
+    the real path as far as a headless browser goes, the whole of it on the simulated arm, the gates around it, and
+    an arm that is not the one the window read."""
+    preflight_real_path(check, browser, base)
+    preflight_whole(check, browser, base, service)
+    preflight_addresses(check, browser, base)
+    ModelService.configure()
+
+
 PARTS = [
     "load", "stamp", "sim", "expected", "guard", "cable", "faults", "calibration", "serial", "diagnostics", "camera",
     "model", "privacy", "ask", "languages", "keyboard", "layout", "folder", "subpath", "hosted", "insecure", "log",
-    "transport", "timing", "selftest", "station",
+    "transport", "timing", "selftest", "station", "preflight",
 ]
 
 
@@ -3518,6 +4043,7 @@ def main() -> int:
             run("timing", lambda: part_timing(check, context, base))
             run("selftest", lambda: part_selftest(check, browser))
             run("station", lambda: part_station(check, browser, context, base, dist))
+            run("preflight", lambda: part_preflight(check, browser, base, service))
 
             check.part = "whole run"
             check.equal("no uncaught error in any page", check.page_errors, [])

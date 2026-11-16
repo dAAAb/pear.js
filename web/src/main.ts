@@ -6,7 +6,7 @@ import { monotonic } from "../../src/agent/index";
 import { type SerialPortLike } from "../../src/feetech/index";
 import { JOINTS, MOTORS, type MotorName, servoFaults } from "../../src/so101/hardware/index";
 import { SO101Kinematics } from "../../src/so101/kinematics/index";
-import { type ArmFailure, ArmSession, type BoundsMark } from "./arm";
+import { type ArmFailure, ArmSession, type BoundsMark, usbIdsOf } from "./arm";
 import { Ask, type AskResult, renderAsk } from "./ask";
 import {
   CameraSession,
@@ -20,11 +20,20 @@ import {
 import { applyStaticTexts, count, initialLanguage, language, listed, onLanguageChange, setLanguage, t } from "./i18n";
 import { PageLog, redact } from "./log";
 import { checkModel, type ModelCheck } from "./model";
+import { type PreflightPart, preflightParts } from "./preflight_view";
 import { type GuardSelfTest, guardSelfTest } from "./readonly";
 import { SIM_CALIBRATION, SIM_SCENARIOS, SimArm, type SimScenario } from "./sim_port";
 import { StationClient } from "./station_client";
 import { CLOCK_NUMBERS } from "./station_protocol";
-import type { ActionReport, HomeResult, StationEvent, StationStatus, TimingCheck } from "./station_protocol";
+import type {
+  ActionReport,
+  ArmFingerprint,
+  HomeResult,
+  PreflightReport,
+  StationEvent,
+  StationStatus,
+  TimingCheck,
+} from "./station_protocol";
 import type { TextKey } from "./texts";
 import { formatStats, measureTiming, READS, TIMER_PERIOD_MS, TIMER_PERIODS, type TimingReport } from "./timing";
 
@@ -590,8 +599,9 @@ function renderArm(): void {
   const isOpen = isBusy || view.phase === "reading";
   const isGuardBroken = selfTest !== null && selfTest.failures.length > 0;
 
-  // while the station holds the simulated arm, this section is the station's: no arm is connected beside it
-  const isHeldByStation = stationView.phase !== "off";
+  // while the station holds the simulated arm, this section is the station's: no arm is connected beside it;
+  // nor while the Worker has a real arm's line for the hand-over check
+  const isHeldByStation = stationView.phase !== "off" || preflight.isRunning;
   byId<HTMLButtonElement>("arm-connect").disabled = isBusy || isGuardBroken || isHeldByStation || webSerial() === null;
   byId<HTMLButtonElement>("arm-sim").disabled = isBusy || isGuardBroken || isHeldByStation;
   const retry = byId<HTMLButtonElement>("arm-retry");
@@ -1167,6 +1177,18 @@ const stationView: StationView = {
   frame: null,
 };
 
+/** The hand-over check of a real arm's line: whether one runs, the report of the last one, and how many reports
+ * there have been, which tells the page when to show another. */
+const preflight: { isRunning: boolean; report: PreflightReport | null; reports: number } = {
+  isRunning: false,
+  report: null,
+  reports: 0,
+};
+
+/** Whether the page's address asks the hand-over check to run on a simulated port that the Worker makes itself
+ * (?preflight=sim): the way through it without an arm, for a check of the page. */
+const isPreflightSimulated = new URLSearchParams(location.search).get("preflight") === "sim";
+
 const station = new StationClient({
   onEvent: (event) => onStationEvent(event),
   onLost: (reason, detail) => {
@@ -1351,7 +1373,7 @@ function logClock(at: "stop" | "disable" | "hidden"): void {
 
 /** "Drive": ends the window's reading of the simulated arm and enables the station on that arm where it stands. */
 async function enableStation(): Promise<void> {
-  if (stationView.phase !== "off" || stationWhy() !== null || sim === null) return;
+  if (stationView.phase !== "off" || preflight.isRunning || stationWhy() !== null || sim === null) return;
   const simulated = sim;
   const positions = Object.fromEntries(MOTORS.map((motor) => [motor, simulated.position(motor)]));
   stationView.phase = "enabling";
@@ -1416,6 +1438,112 @@ async function disableStation(): Promise<void> {
     log.add(`Station: could not be disabled: ${errorText(error)}`);
   }
   renderStation();
+}
+
+/** What the hand-over check would be given of the arm the window reads now; null when the check is not offered:
+ * the station is not off, a check or "Ask the model once" runs, or the window does not read a real arm whose six
+ * servos answer and hold a calibration. With ?preflight=sim the simulated arm stands in for the real one. */
+function preflightOffer(): { port: SerialPortLike; expected: ArmFingerprint } | null {
+  if (stationView.phase !== "off" || stationView.lost !== null || preflight.isRunning) return null;
+  if (ask !== null || isAskStarting) return null;
+  const view = arm.view;
+  const port = arm.lastPort;
+  if (port === null || view.phase !== "reading" || view.live === null || view.isStalled) return null;
+  if (view.isSimulated !== isPreflightSimulated) return null;
+  const expected = arm.fingerprint;
+
+  return expected === null ? null : { port, expected };
+}
+
+/** The hand-over of the arm's line to the Worker and back, reads only: the window closes its session, the Worker
+ * finds the port the page was granted, reads it behind its own read-only guard and closes it, and the window
+ * reads the same port again. Nothing is written to a servo, and the robot is not opened. */
+async function runPreflight(): Promise<void> {
+  const offer = preflightOffer();
+  if (offer === null) return;
+  const source = isPreflightSimulated ? "simulated" : "granted";
+  const usb = usbIdsOf(offer.port);
+  preflight.isRunning = true;
+  preflight.report = null;
+  preflight.reports += 1;
+  stationView.problem = null;
+  renderArm();
+  await arm.disconnect(); // the Worker can open the port only when the window has closed it
+  log.add(
+    `Station: real-arm preflight asked, source ${source}${
+      isPreflightSimulated ? " (?preflight=sim: the Worker takes a simulated port of its own, no granted one)" : ""
+    }; the window closed its session; usb ${JSON.stringify(usb)}, expected ${JSON.stringify(offer.expected)}`,
+  );
+  let isGivenBack = true;
+  try {
+    station.start();
+    const report = await station.request({
+      type: "preflight",
+      source,
+      usb,
+      expected: offer.expected,
+      isHidden: document.hidden,
+    });
+    preflight.report = report;
+    preflight.reports += 1;
+    isGivenBack = report.isClosed;
+    log.add(`Station: real-arm preflight ${JSON.stringify(report)}`);
+  } catch (error) {
+    stationView.problem = { key: "station.preflight.failed", error: errorText(error) };
+    log.add(`Station: real-arm preflight failed: ${errorText(error)}`);
+  }
+  preflight.isRunning = false;
+
+  if (!isGivenBack) {
+    // a port the Worker still holds cannot be opened here; the report's sentence says that reloading frees it
+    log.add("Station: the Worker did not give the line back (isClosed false); the window does not open the port");
+    renderArm();
+    return;
+  }
+  // whatever the outcome, the window reads the same port again
+  pageProblem = null;
+  const isSimulated = sim !== null && offer.port === sim.port;
+  await connectArm(offer.port, { isSimulated, label: isSimulated ? "simulated port" : "Web Serial" });
+  log.add(
+    arm.view.phase === "reading"
+      ? "Station: the window reads the arm again, on the same port"
+      : `Station: the window does not read the arm again on the same port (${arm.view.phase})`,
+  );
+  renderArm();
+}
+
+/** Returns one part of the hand-over check's report as the page shows it: a sentence, which is a message box
+ * when the person must act on it or know of it, or a table under its title. */
+function preflightNode(part: PreflightPart): Node {
+  const kind = `preflight-${part.kind}`;
+  if (part.type === "sentence") {
+    if (part.tone === "error" || part.tone === "warn") {
+      return box(part.tone, kind, null, part.detail === null ? [part.text] : [part.text, { detail: part.detail }]);
+    }
+
+    return element("p", { className: "status", text: part.text, data: { kind, tone: part.tone } });
+  }
+  const head = element("thead", {}, [
+    row(
+      part.head.map((text, index) => {
+        const heading = element("th", { text, className: part.numeric[index] === true ? "number" : "" });
+        heading.scope = "col";
+        return heading;
+      }),
+    ),
+  ]);
+  const body = element(
+    "tbody",
+    {},
+    part.rows.map((cells) =>
+      row(cells.map((text, index) => cell(text, part.numeric[index] === true ? "number" : index === 0 ? "name" : ""))),
+    ),
+  );
+
+  return element("div", { data: { kind } }, [
+    element("h4", { text: part.title }),
+    element("div", { className: "scroll" }, [element("table", {}, [head, body])]),
+  ]);
 }
 
 /** The stop bar's button: the robot's `stop()`, which brakes and holds. It never closes the station. */
@@ -1544,7 +1672,7 @@ function renderStation(): void {
 
   const enable = byId<HTMLButtonElement>("station-enable");
   enable.hidden = isHeld;
-  enable.disabled = view.phase !== "off" || why !== null;
+  enable.disabled = view.phase !== "off" || why !== null || preflight.isRunning;
   const disable = byId<HTMLButtonElement>("station-disable");
   disable.hidden = !isHeld;
   disable.disabled = !isOn;
@@ -1688,6 +1816,22 @@ function renderStation(): void {
           bytes: count(frame.bytes.length),
           age: count(frame.ageMs),
         }),
+  );
+
+  // the hand-over check of a real arm's line: its control while it is offered or runs, and its last report
+  const offer = preflightOffer();
+  byId("station-preflight").hidden = offer === null && !preflight.isRunning;
+  byId<HTMLButtonElement>("station-preflight-run").disabled = offer === null;
+  const checking = byId("station-preflight-status");
+  checking.dataset.running = String(preflight.isRunning);
+  setText(checking, preflight.isRunning ? t("station.preflight.running") : "");
+  const found = byId("station-preflight-report");
+  const report = preflight.report;
+  found.hidden = report === null;
+  found.dataset.stop = report === null ? "" : (report.stop ?? "none");
+  found.dataset.closed = report === null ? "" : String(report.isClosed);
+  renderOnce(byId("station-preflight-parts"), String(preflight.reports), () =>
+    report === null ? [] : preflightParts(report, { t, count, listed }).map(preflightNode),
   );
 
   const messages: HTMLElement[] = [];
@@ -1953,6 +2097,7 @@ function start(): void {
 
   byId("station-enable").addEventListener("click", () => void enableStation());
   byId("station-disable").addEventListener("click", () => void disableStation());
+  byId("station-preflight-run").addEventListener("click", () => void runPreflight());
   byId("station-home").addEventListener("click", () => void runHome());
   byId("station-approve").addEventListener("click", () => void answerPlan(true));
   byId("station-refuse").addEventListener("click", () => void answerPlan(false));

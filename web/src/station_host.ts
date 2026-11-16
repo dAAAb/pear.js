@@ -1,6 +1,9 @@
 // The station as the page's Worker runs it: PEAR's robot (the SO-101 with its 50 Hz control loop and its driver)
-// on a simulated arm that this file makes itself. It is never handed a port: there is no way from here to a real
-// serial line. station_worker.ts gives it the Worker's messages; a test may give it its own.
+// on a simulated arm that this file makes itself. The robot is never handed a port. The one way from here to a
+// real serial line is the request "preflight": it takes the port the page was granted behind the read-only guard
+// (station_port.ts), reads what its report holds and closes the port again, so that nothing here can write to a
+// real servo. station_worker.ts gives it the Worker's messages and the Worker's serial ports; a test may give it
+// its own.
 //
 // A request is started when it arrives and answered when it is done, so that a Stop is taken while an action is
 // under way: nothing here waits for an action before it takes the next message.
@@ -9,14 +12,29 @@
 // window, which has the camera: a Worker cannot open one.
 
 import { pythonErrorMessage, pythonErrorName, isValueError, RuntimeError } from "../../src/python/errors";
-import { SO101_DEFAULT_CONFIG, type SO101Config } from "../../src/so101/config";
+import { type HardwareSection, SO101_DEFAULT_CONFIG, type SO101Config } from "../../src/so101/config";
 import { SINGLE_ARM_POSE_FORMAT } from "../../src/so101/formats";
 import { WristCamera, type WristFrameReader } from "../../src/so101/hardware/cameras";
-import { followerMotors, simulatedArm } from "../../src/so101/hardware/index";
+import {
+  DEFAULT_FOLLOWER_CONFIG,
+  followerMotors,
+  simulatedArm,
+  SO101Follower,
+  SO101Hardware,
+} from "../../src/so101/hardware/index";
 import { SO101ControlLoop } from "../../src/so101/joint/control_loop";
 import { ARM } from "../../src/so101/layout";
 import { SO101Robot } from "../../src/so101/robot";
-import { protocol, type SimServoChain } from "../../src/feetech/index";
+import {
+  encodeSignMagnitude,
+  ENCODING_TABLE,
+  getAddress,
+  OperatingMode,
+  protocol,
+  type RegisterName,
+  type SimServoChain,
+  type Transport,
+} from "../../src/feetech/index";
 import { CameraFeed } from "../../src/station/cameras";
 import type { MonotonicClock } from "../../src/station/joint/clock";
 import { DEFAULT_CONTROL_SETTINGS } from "../../src/station/joint/config";
@@ -24,9 +42,11 @@ import { realTimeClock } from "../../src/station/joint/deadline_clock";
 import { MotionStatus, type MotionResult } from "../../src/station/motion/results";
 import type { ControlLoopClass, StationConfig } from "../../src/station/robot";
 import type { DetailedStatus, HomePlan, Observation } from "../../src/station/schemas";
-import { SIM_CALIBRATION } from "./sim_port";
+import { SIM_CALIBRATION, simulatedGrantedPort } from "./sim_port";
+import { type GrantedPort, grantedPorts, openReadOnly, type ReadOnlyLine, type SerialSource, usbIdsOf } from "./station_port";
 import {
   type ActionReport,
+  type ArmFingerprint,
   type CameraNumbers,
   type CameraTelling,
   type ClockNumbers,
@@ -36,6 +56,11 @@ import {
   type HomeResult,
   type MotorSteps,
   type PeriodsSince,
+  type PreflightReport,
+  type PreflightServo,
+  type PreflightSetting,
+  type PreflightStop,
+  type ServoPrint,
   STATUS_PERIOD_MS,
   type StationEvent,
   type StationRequest,
@@ -44,6 +69,7 @@ import {
   type TimingCheck,
   type TimingFailure,
   type ToStation,
+  type UsbIds,
 } from "./station_protocol";
 
 /** How fast a simulated servo goes to its goal, steps a second: an STS3215 without load turns at about 45 turns
@@ -131,6 +157,88 @@ export const STATION_CONFIG: StationConfig<SO101Config> = {
     camera: { ...SO101_DEFAULT_CONFIG.camera, path: "none" },
   } as SO101Config,
 };
+
+/** The registers PEAR's enable writes to every servo besides Goal_Position, Torque_Enable and Lock, in the order
+ * it writes them, each with the value it writes: lerobot's configure_motors() and the follower's configure(). The
+ * gains are the library's own; the other numbers are not exported there, and a test holds them to what the
+ * library's enable writes. */
+export const ENABLE_SETTINGS: readonly (readonly [RegisterName, number])[] = [
+  ["Return_Delay_Time", 0],
+  ["Maximum_Acceleration", 254],
+  ["Acceleration", 254],
+  ["Operating_Mode", OperatingMode.POSITION],
+  ["P_Coefficient", (STATION_CONFIG.robot.hardware as HardwareSection).position_p_coefficient],
+  ["I_Coefficient", DEFAULT_FOLLOWER_CONFIG.positionICoefficient],
+  ["D_Coefficient", DEFAULT_FOLLOWER_CONFIG.positionDCoefficient],
+];
+
+/** What it writes to the gripper's servo besides: half the torque, half the current, a quarter once overloaded. */
+export const GRIPPER_SETTINGS: readonly (readonly [RegisterName, number])[] = [
+  ["Max_Torque_Limit", 500],
+  ["Protection_Current", 250],
+  ["Overload_Torque", 25],
+];
+
+/** The motor PEAR's enable gives the settings of its own. */
+const GRIPPER = "gripper";
+
+/** How many transactions PEAR's enable makes while a servo is without torque: so many single READs a preflight
+ * makes and times. */
+export const LIMP_TRANSACTIONS = 63;
+
+/** What a servo holds of the calibration, with the registers' names as a difference is told. */
+const PRINT_FIELDS = [
+  ["model", "Model_Number"],
+  ["homingOffset", "Homing_Offset"],
+  ["rangeMin", "Min_Position_Limit"],
+  ["rangeMax", "Max_Position_Limit"],
+] as const;
+
+/** Returns how the servos `read` differ from `expected`, each difference in words; none when it is the same arm. */
+export function fingerprintDifferences(read: readonly ServoPrint[], expected: ArmFingerprint): string[] {
+  const differences: string[] = [];
+  if (expected.length !== read.length) differences.push(`${expected.length} servos expected, ${read.length} read`);
+  for (const servo of read) {
+    const other = expected.find(({ id }) => id === servo.id);
+    if (other === undefined) {
+      differences.push(`servo ${servo.id} is not among the expected`);
+      continue;
+    }
+    for (const [field, register] of PRINT_FIELDS) {
+      if (servo[field] !== other[field]) {
+        differences.push(`servo ${servo.id} ${register}: read ${servo[field]}, expected ${other[field]}`);
+      }
+    }
+  }
+
+  return differences;
+}
+
+/** Returns where a servo keeps the register at `address`, by lerobot's table: the EPROM, the SRAM, or the block
+ * it calls Factory. */
+function areaOf(address: number): PreflightSetting["area"] {
+  if (address < 40) return "eeprom";
+
+  return address < 80 ? "ram" : "factory";
+}
+
+/** Returns USB ids as they are written: vendor and product, four hexadecimal digits each. */
+function usbText(usb: UsbIds): string {
+  return [usb.vendorId, usb.productId].map((id) => id.toString(16).padStart(4, "0")).join(":");
+}
+
+/** What a preflight has found so far; its report is this and what the line says of itself at the end. */
+interface PreflightFindings {
+  ports: (UsbIds | null)[] | null;
+  stop: PreflightStop | null;
+  detail: string;
+  servos: PreflightServo[] | null;
+  settings: PreflightSetting[] | null;
+  singleReads: PreflightReport["singleReads"];
+  timing: TimingCheck | null;
+}
+
+type PreflightRequest = Extract<StationRequest, { type: "preflight" }>;
 
 /** When each control period began, by the page's clock, ms: the station's loop tells it here. */
 const stepStamps: number[] = [];
@@ -316,12 +424,21 @@ export class StationHost {
   private feedback: string | null = null;
   private isHidden = false;
   private isEnabling = false;
+  /** Whether a preflight has a real arm's line, or is about to take it. */
+  private isPreflighting = false;
   private statusTimer: ReturnType<typeof setInterval> | null = null;
   /** The frames of the window's camera: what the wrist camera of the robot that is open reads. A station that
    * is enabled anew has been told nothing of the camera yet. */
   private frames = new WindowFrames();
 
-  constructor(private readonly post: (message: FromStation) => void) {}
+  /** `serial` is where a preflight finds the port the page was granted (station_port.ts); null when the Worker
+   * has no serial ports to give. `timingClock` is the clock the timing self-check keeps its periods with: the
+   * loop's own unless a test gives one that does not wait. */
+  constructor(
+    private readonly post: (message: FromStation) => void,
+    private readonly serial: SerialSource | null = null,
+    private readonly timingClock: Pick<MonotonicClock, "monotonic" | "sleep"> | null = null,
+  ) {}
 
   /** Starts the request of `message`; its reply is posted when it is done. What the window tells of its camera
    * is taken at once and never answered. */
@@ -359,6 +476,8 @@ export class StationHost {
         return this.approve(request.isApproved);
       case "visibility":
         return this.setHidden(request.isHidden);
+      case "preflight":
+        return this.preflight(request);
     }
   }
 
@@ -383,6 +502,7 @@ export class StationHost {
 
   private async enable(positions: MotorSteps, isHidden: boolean): Promise<EnableResult> {
     if (this.robot !== null || this.isEnabling) throw new RuntimeError("Station already open");
+    if (this.isPreflighting) throw new RuntimeError("A preflight of a real arm is under way");
     this.isHidden = isHidden;
     this.isEnabling = true;
     try {
@@ -394,7 +514,7 @@ export class StationHost {
 
   private async enableOn(positions: MotorSteps): Promise<EnableResult> {
     const chain = simulatedArm(SIM_CALIBRATION, positions, { speed: SIM_SPEED_STEPS_S });
-    const timing = await this.timingCheck(chain);
+    const timing = await this.timingCheck(chain, 0);
     this.event({ type: "timing", timing });
     if (timing.failures.length > 0) {
       throw new RuntimeError(`The timing self-check failed: ${timing.failures.join("; ")}`);
@@ -428,11 +548,13 @@ export class StationHost {
     return { timing, openMs: Math.round(performance.now() - began) };
   }
 
-  /** The timing self-check on the line before the torque is switched on, reads only: TIMING_PERIODS control
+  /** The timing self-check on a line before the torque is switched on, reads only: TIMING_PERIODS control
    * periods of one read of every servo's position and a wait for the period's end, on the clock the loop keeps
-   * its periods with. Enabling is refused when the periods or the reads are too slow, or the page is hidden. */
-  private async timingCheck(chain: SimServoChain): Promise<TimingCheck> {
-    const clock = realTimeClock();
+   * its periods with. Enabling is refused when the periods or the reads are too slow, or the page is hidden.
+   * The answer to a read is awaited for `answerLimitMs` at most: zero on the simulated chain, which has answered
+   * by the time the packet is written; a control period on a serial line, where the answer comes in pieces. */
+  private async timingCheck(line: Transport, answerLimitMs: number): Promise<TimingCheck> {
+    const clock = this.timingClock ?? realTimeClock();
     const periodS = 1 / STATION_CONFIG.control.rate_hz;
     const ids = Object.values(followerMotors()).map(({ id }) => id);
     const packet = syncReadPacket(ids, PRESENT_POSITION[0], PRESENT_POSITION[1]);
@@ -441,12 +563,21 @@ export class StationHost {
     let maxReadMs = 0;
     let unanswered = 0;
     let due = clock.monotonic();
+    let isLeftOver = false;
     for (let index = 0; index <= TIMING_PERIODS; index++) {
+      // what came late or in part of the answer before is not this read's answer
+      if (isLeftOver) await line.read(Number.MAX_SAFE_INTEGER, 0);
       const start = performance.now();
       began.push(start);
-      await chain.write(packet);
-      const answer = await chain.read(answerLength, 0);
-      if (answer.length !== answerLength) unanswered += 1;
+      await line.write(packet);
+      let received = 0;
+      for (;;) {
+        const left = start + answerLimitMs - performance.now();
+        received += (await line.read(answerLength - received, Math.max(left, 0))).length;
+        if (received >= answerLength || left <= 0) break;
+      }
+      isLeftOver = received !== answerLength;
+      if (isLeftOver) unanswered += 1;
       maxReadMs = Math.max(maxReadMs, performance.now() - start);
       due += periodS;
       await clock.sleep(Math.max(due - clock.monotonic(), 0));
@@ -467,6 +598,231 @@ export class StationHost {
       failures: reasons.map(timingFailureText),
       reasons,
     };
+  }
+
+  // ---------------------------------------------------------------- the hand-over of a real arm's line, reads only
+
+  /** The request "preflight": refused while the robot is open or being opened, and while another preflight has
+   * the line. */
+  private async preflight(request: PreflightRequest): Promise<PreflightReport> {
+    if (this.robot !== null || this.isEnabling) {
+      throw new RuntimeError("Station already open: a preflight of a real arm needs the station disabled");
+    }
+    if (this.isPreflighting) throw new RuntimeError("Another preflight of a real arm is under way");
+    this.isPreflighting = true;
+    this.isHidden = request.isHidden;
+    try {
+      return await this.preflightOn(request);
+    } finally {
+      this.isPreflighting = false;
+    }
+  }
+
+  /** Takes the port, reads the arm behind the read-only guard and closes the port again, whatever happened in
+   * between: after it the Worker holds no port. The robot is never given this line. */
+  private async preflightOn(request: PreflightRequest): Promise<PreflightReport> {
+    const began = performance.now();
+    const found: PreflightFindings = {
+      ports: null,
+      stop: null,
+      detail: "",
+      servos: null,
+      settings: null,
+      singleReads: null,
+      timing: null,
+    };
+    let line = null as ReadOnlyLine | null;
+    let isClosed = true; // no port was taken
+    try {
+      const port = await this.preflightPort(request, found);
+      if (port !== null) {
+        try {
+          line = await openReadOnly(port);
+        } catch (error) {
+          found.stop = "open-failed";
+          found.detail = `The port did not open: ${pythonErrorName(error)}: ${pythonErrorMessage(error)}`;
+        }
+      }
+      if (line !== null) await this.readArm(line, request.expected, found);
+    } catch (error) {
+      // an error of the line itself is a stop; any other is the request's error, after the port is closed
+      if (line === null || line.guard.failure === null) throw error;
+      found.stop = "line-lost";
+      found.detail = `The port was lost while it was read: ${pythonErrorName(error)}: ${pythonErrorMessage(error)}`;
+    } finally {
+      if (line !== null) isClosed = await line.close();
+    }
+    const counts = line?.guard.counts ?? { passed: {}, refused: {} };
+
+    return {
+      ...found,
+      guard: {
+        passed: { ...counts.passed },
+        refused: Object.values(counts.refused).reduce((sum, count) => sum + count, 0),
+      },
+      lineErrors: line?.lineErrors() ?? 0,
+      isClosed,
+      tookMs: Math.round(performance.now() - began),
+    };
+  }
+
+  /** Returns the one port a preflight reads: the simulated port of the Worker's own, or the one port the page
+   * was granted (of the adapter `usb`, when the window knows it). Null with the stop in `found` when there is no
+   * such port or more than one. */
+  private async preflightPort(request: PreflightRequest, found: PreflightFindings): Promise<GrantedPort | null> {
+    let ports: GrantedPort[];
+    if (request.source === "simulated") {
+      ports = [simulatedGrantedPort()];
+    } else if (this.serial === null) {
+      found.stop = "no-serial";
+      found.detail = "The Worker's navigator has no serial: this browser gives a Worker no serial ports";
+
+      return null;
+    } else {
+      ports = await grantedPorts(this.serial);
+    }
+    found.ports = ports.map(usbIdsOf);
+    const usb = request.usb;
+    const candidates =
+      usb === null
+        ? ports
+        : ports.filter((_, index) => {
+            const ids = (found.ports as (UsbIds | null)[])[index] as UsbIds | null;
+
+            return ids !== null && ids.vendorId === usb.vendorId && ids.productId === usb.productId;
+          });
+    const which = usb === null ? "" : ` with the USB ids ${usbText(usb)}`;
+    if (candidates.length === 0) {
+      found.stop = "no-port";
+      found.detail = `The Worker was given no granted port${which} (${ports.length} granted in all)`;
+
+      return null;
+    }
+    if (candidates.length > 1) {
+      found.stop = "several-ports";
+      found.detail = `The Worker was given ${candidates.length} granted ports${which}: they cannot be told apart`;
+
+      return null;
+    }
+
+    return candidates[0] as GrantedPort;
+  }
+
+  /** Reads the arm on `line`, which is the read-only guard and nothing else: the handshake, whether it is the arm
+   * the window read, what each servo holds, how long the single reads of a limp servo's time take, and the timing
+   * self-check. A stop is told in `found`; an error of the line is thrown. */
+  private async readArm(line: ReadOnlyLine, expected: ArmFingerprint, found: PreflightFindings): Promise<void> {
+    // lerobot's follower as the window's read-only session makes it: without a calibration, never configured, and
+    // with a disconnect that would write nothing. It is given the guard, and the guard is all it can reach
+    const follower = new SO101Follower(line.guard, null, { disableTorqueOnDisconnect: false }, { port: "worker" });
+    const bus = follower.bus;
+    try {
+      await bus.connect(true); // pings ids 1 to 6, requires the STS3215's model number and one firmware for all
+    } catch (error) {
+      if (line.guard.failure !== null) throw error;
+      found.stop = "handshake-failed";
+      found.detail = `The handshake failed: ${pythonErrorMessage(error).trim().replace(/\s*\n\s*/g, " | ")}`;
+
+      return;
+    }
+
+    const access = { normalize: false, numRetry: SO101Hardware.BUS_RETRIES };
+    const motors = Object.entries(followerMotors())
+      .map(([name, { id }]) => ({ name, id }))
+      .sort((a, b) => a.id - b.id);
+    /** Returns a register of all servos, or of `names`, as lerobot reads it. */
+    const read = (register: RegisterName, names: readonly string[] | null = null): Promise<Record<string, number>> =>
+      bus.syncRead(register, names, access);
+    /** Returns it as the servos give it: where the bus takes a sign out of the value, it is put back. */
+    const raw = async (register: RegisterName, names: readonly string[] | null = null): Promise<Record<string, number>> => {
+      const values = await read(register, names);
+      if (!Object.hasOwn(ENCODING_TABLE, register)) return values;
+      const signBit = ENCODING_TABLE[register] as number;
+
+      return Object.fromEntries(Object.entries(values).map(([name, value]) => [name, encodeSignMagnitude(value, signBit)]));
+    };
+
+    // the same arm? What tells one arm from another, before anything else is read
+    const model = await read("Model_Number");
+    const homingOffset = await read("Homing_Offset");
+    const rangeMin = await read("Min_Position_Limit");
+    const rangeMax = await read("Max_Position_Limit");
+    const prints: ServoPrint[] = motors.map(({ name, id }) => ({
+      id,
+      model: model[name] as number,
+      homingOffset: homingOffset[name] as number,
+      rangeMin: rangeMin[name] as number,
+      rangeMax: rangeMax[name] as number,
+    }));
+    const differences = fingerprintDifferences(prints, expected);
+    if (differences.length > 0) {
+      found.stop = "other-arm";
+      found.detail = `Not the arm the window read: ${differences.join("; ")}`;
+
+      return;
+    }
+
+    // the servos, and beside each register PEAR's enable would write what the servo holds now
+    const major = await read("Firmware_Major_Version");
+    const minor = await read("Firmware_Minor_Version");
+    const position = await raw("Present_Position");
+    const goal = await raw("Goal_Position");
+    const torque = await raw("Torque_Enable");
+    const lock = await raw("Lock");
+    const status = await raw("Status");
+    const voltage = await raw("Present_Voltage");
+    const temperature = await raw("Present_Temperature");
+    const goalVelocity = await raw("Goal_Velocity");
+    const torqueLimit = await raw("Torque_Limit");
+    const phase = await raw("Phase");
+    const held = new Map<RegisterName, Record<string, number>>();
+    for (const [register] of ENABLE_SETTINGS) held.set(register, await raw(register));
+    for (const [register] of GRIPPER_SETTINGS) held.set(register, await raw(register, [GRIPPER]));
+    found.servos = motors.map(({ name }, index) => ({
+      ...(prints[index] as ServoPrint),
+      name,
+      firmware: `${major[name]}.${minor[name]}`,
+      position: position[name] as number,
+      goal: goal[name] as number,
+      torque: torque[name] as number,
+      lock: lock[name] as number,
+      status: status[name] as number,
+      voltage: voltage[name] as number,
+      temperature: temperature[name] as number,
+      goalVelocity: goalVelocity[name] as number,
+      torqueLimit: torqueLimit[name] as number,
+      phase: phase[name] as number,
+    }));
+    found.settings = motors.flatMap(({ name, id }) =>
+      [...ENABLE_SETTINGS, ...(name === GRIPPER ? GRIPPER_SETTINGS : [])].map(([register, pear]) => {
+        const [address, bytes] = getAddress(register);
+
+        return {
+          id,
+          register,
+          address,
+          bytes: bytes as 1 | 2,
+          area: areaOf(address),
+          pear,
+          held: (held.get(register) as Record<string, number>)[name] as number,
+        };
+      }),
+    );
+
+    // the limp time: as many single READs, the servos in turn, as PEAR's enable has transactions while a servo is
+    // without torque
+    const round = (value: number): number => Math.round(value * 100) / 100;
+    const readsBegan = performance.now();
+    let maxMs = 0;
+    for (let index = 0; index < LIMP_TRANSACTIONS; index++) {
+      const start = performance.now();
+      await bus.read("Present_Position", (motors[index % motors.length] as { name: string }).name, { normalize: false });
+      maxMs = Math.max(maxMs, performance.now() - start);
+    }
+    found.singleReads = { count: LIMP_TRANSACTIONS, totalMs: round(performance.now() - readsBegan), maxMs: round(maxMs) };
+
+    // the timing self-check on this line: an answer is awaited until its control period is over
+    found.timing = await this.timingCheck(line.guard, 1000 / STATION_CONFIG.control.rate_hz);
   }
 
   private async disable(): Promise<DisableResult> {

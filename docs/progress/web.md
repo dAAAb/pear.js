@@ -8,13 +8,15 @@ only there, the second version's stage A runs PEAR's station in a Worker of the 
 station in a Worker, on a simulated arm" below).
 
 State: published. The first, read-only version on 2026-11-15; the second version's stage A on 2026-11-16, and on
-the same day stage B's first two parts (the camera's frames reach the station; ask the model once).
+the same day stage B's first two parts (the camera's frames reach the station; ask the model once) and the
+read-only hand-over of a real arm's line to the Worker.
 
 Checked on 2026-11-16, on the files as published: `npm run typecheck` passes; `npm run build:web` gives three
-files; 1,481 browser checks pass in 26 parts, 0 failed; `npx vitest run` passes (84 files, 9,284 tests).
+files; 1,578 browser checks pass in 27 parts, 0 failed; `npx vitest run` passes (86 files, 9,349 tests).
 The read-only part met a real adapter, real servos, a real camera, a browser with a visible window and macOS
-once, on 2026-11-16 ("What the first try showed" below). **Nothing that writes to a servo has met a real arm, and
-no real model service has answered the page.**
+once, on 2026-11-16 ("What the first try showed" below). **Nothing that writes to a servo has met a real arm.** A
+real model service has answered the published page once, with the simulated arm ("The first answer of a real
+model" below).
 
 A session that restarts continues from "Left" and changes the files it finds in place.
 
@@ -55,7 +57,9 @@ sentence that says why.
 - `web/src/station_host.ts`: the station as the Worker runs it. It makes its own simulated arm (the library's
   `simulatedArm` on `SIM_CALIBRATION`, at 3,072 steps a second) and PEAR's robot on it (`SO101Robot` with the
   control loop, the driver and the bus; no camera, so an observation holds the joints, the control snapshot and no
-  frame). It is never handed a port. It answers the requests of `web/src/station_protocol.ts` (enable, stop,
+  frame). The robot is never handed a real port; the Worker itself opens a real arm's port only for the hand-over
+  check, behind the read-only guard ("The hand-over of a real arm's line to the Worker, reads only" below). It
+  answers the requests of `web/src/station_protocol.ts` (enable, stop,
   disable, jog, home, approve, visibility), each started when it arrives, so that a Stop is taken while an action
   is under way; and it tells its status ten times a second (the robot's status, the control state, the fault, the
   joints, the targets, the model's state, the turn's text, the loop's periods over the last second), what the
@@ -469,6 +473,129 @@ What is not proven:
 - The Chinese texts of the panel exist for every key; one sentence (the withheld refusal) was read in Chinese
   in a browser by a check, the others were not, and no person read the new sentences.
 
+### The hand-over of a real arm's line to the Worker, reads only (2026-11-16)
+
+The station that is to drive a real arm lives in the Worker, and a `SerialPort` cannot be passed from the window
+to a Worker: each side opens the port itself, and only one of them can have it open. So before anything of the
+page writes to a real servo, two things have to be known that no source settled: whether the browser gives a
+Worker of this page the port the page was granted, and what the control loop's timing is on a real serial line.
+The hand-over check finds out, on the person's own browser and arm, and writes nothing. The page's notice still
+holds: this version writes nothing to a real arm.
+
+What it is:
+
+- In the station's panel, when the window reads a real arm whose six servos answer and hold a calibration, the
+  control "Check the hand-over to the station (reads only)". On the press the window closes its session (as it
+  does before it enables the station), asks the Worker for a `preflight` with the adapter's USB ids and what it
+  read of the six servos (the model, Homing_Offset, the two position limits), and when the answer, an error or
+  the time limit of 30 s has come it reads the same port again. A report that says the Worker did not close the
+  port is the one exception: the window does not try to open it and says that reloading the page frees it.
+- The Worker (`web/src/station_host.ts`, `preflight`), in this order:
+  1. `navigator.serial.getPorts()`. A Worker cannot ask for a port (`requestPort` is the window's); it sees the
+     ports its origin was granted. It takes the one port with the adapter's ids and stops when there is none or
+     more than one, which the API cannot tell apart.
+  2. The port is opened as the window opens it, with the read-only guard `ReadOnlyTransport` as the outermost
+     transport. `web/src/station_port.ts` is the one file of the Worker's code that names `navigator.serial` or
+     `getPorts`, and only the guard leaves the function that opens the port.
+  3. The handshake of the window's read-only session: six servos, the model, one firmware.
+  4. Whether these are the servos the window read. When they are not, nothing more is read.
+  5. For each servo: torque, Lock, Status, voltage, temperature, the goal, Goal_Velocity, Torque_Limit and Phase;
+     and every register PEAR's enable writes besides the goal, the torque and Lock, beside the value PEAR writes
+     (45 rows: seven for each servo and three more for the gripper; a test holds the values to what the
+     library's enable writes).
+  6. 63 single READs one after another, timed: PEAR's enable leaves each servo without torque for the time of 63
+     transactions, so this is how long the arm will be limp when the station is enabled on this line.
+  7. The timing self-check of Enable on this line: 150 control periods of one SYNC READ of the positions. On a
+     serial line an answer is awaited until its control period is over; one that is not whole by then counts as
+     unanswered.
+  8. The port is closed, whatever happened before. The robot is never given this line.
+- The report on the page (`web/src/preflight_view.ts`, in both languages): where the Worker stopped and what the
+  person can do, or that it read the six servos; two tables of the servos; what PEAR's enable would change, the
+  rows of the EEPROM marked as surviving a power cycle; the limp time; the timing self-check with its verdict;
+  what the guard let through and that it refused nothing (a refusal is shown as a defect to report); the line's
+  errors. The log gets the whole report as one line, `Station: real-arm preflight {...}`: no key, no address.
+- A preflight is refused while the station is enabled or being enabled, and Enable while a preflight runs.
+
+What is proven in Node:
+
+- `tests/web/station_preflight.test.ts` (13 tests, on the host with a stand-in of `navigator.serial`
+  and simulated servos behind the shape of a browser's port): a whole preflight fills every field of the report,
+  the port was given PING, READ and SYNC READ packets and nothing else, and it is closed at the end; each stop
+  (no serial, no port, several ports, a port that does not open, a servo missing, another arm with nothing read
+  after the comparison, the port unplugged on the way); the rules of state; the settings' rows against a record
+  of what the library's enable writes; and, in real time, that the simulated arm's Enable still passes its
+  timing self-check. Four breaks made in a scratch copy each fail tests: the bus given the transport beneath the
+  guard, a write let through, the port left open, the comparison left out.
+- `tests/web/preflight_view.test.ts` (32 tests): the report's rows and sentences in both languages for
+  a full report, each stop, settings that differ and none, and a guard that refused something.
+
+What is proven, by the part `preflight` of `web/tests/browser_check.py` (97 checks; headless Chromium; alone it
+takes about ten seconds), of the read-only hand-over of a real arm's serial line to the page's Worker and back
+(the request "preflight", the control "Check the hand-over to the station (reads only)"):
+
+- The real path (no `?preflight=sim`), on a stand-in of a browser's serial port that answers as a calibrated arm
+  of six servos: the control is offered, and pressing it runs the hand-over as on a real arm up to where a
+  headless browser ends it. The Worker asks its own `navigator.serial`; the report's `ports` is an empty list and
+  not null, so in this Chromium a Worker started from a Blob has Web Serial and its `getPorts()` answers. The
+  report stops at `no-port` with nothing read, no packet given to the guard and `isClosed` true; the page shows
+  the stop as an error with what to do, the Worker's own words under it, and that nothing was read, in English and
+  in Chinese. By the port's own record: the window had opened it once and closed it once when the request went to
+  the Worker, had not opened it again when the report came back, wrote nothing in between, then opened it again at
+  1,000,000 baud and went on reading; every packet the port was ever given is a PING, a READ or a SYNC READ. The
+  station's Enable is refused on this arm with its sentence, before and after.
+- The whole hand-over (`?preflight=sim`, the page's simulated arm; the Worker takes a simulated port of its own):
+  while it runs, Enable, the control, step 1's Connect and "Try without an arm" cannot be pressed, the window does
+  not read the arm and the page says that the Worker has the line; asked all the same, the Worker refuses Enable
+  and a second check. The log holds one line `Station: real-arm preflight {...}` whose JSON has the eleven fields
+  of the protocol's report: `stop` null, `isClosed` true, `guard.refused` 0, no error of the line, six servos named
+  as PEAR names them that hold the model and the calibration the window read, 45 settings (seven a servo, three
+  more for the gripper) each with the place its address gives it, the limp time, and a timing self-check of 150
+  periods that passed; the guard let through PING, READ and SYNC READ and nothing else. The page shows the
+  report's twelve parts in their order, and the two tables of the servos, the settings' sentence and its rows
+  (exactly the rows whose value differs from PEAR's), the limp time, the timing's numbers and verdict and the
+  time are those of the JSON; in Chinese the same parts with the same numbers. The lines the hand-over wrote to
+  the log hold neither the key nor the address of a model service checked before. After it the window reads the
+  simulated arm again: the log says so, and a servo turned by hand shows in step 1.
+- The gates: after a check the control and Enable are offered again; while the station drives the simulated arm
+  the control is not shown and the Worker, asked all the same, refuses with "Station already open"; after Disable
+  the control is offered again. With `?preflight=sim` a real arm (the stand-in port) is not offered the control
+  and Enable is refused on it; without it the simulated arm is not offered the control.
+- Another arm: one servo of the window's simulated arm is given another Homing_Offset behind the bus's back and
+  the window connects again. The report stops at `other-arm`, names the difference ("servo 3 Homing_Offset: read
+  1238, expected 1239"), reads nothing more and gives the line back; the page says so in both languages and the
+  window reads its arm again.
+
+What is not proven by it:
+
+- Nothing here ran on a real arm or a real serial port. Whether a Worker's `getPorts()` gives the port that a
+  person granted to the page, which is what the control exists to find out, is not answered: a headless Chromium
+  has no granted port. The way "granted port, opened, read" has run only with the Worker's simulated port in the
+  port's place.
+- On the simulated arm "the same arm" is the same calibration: the window's simulated arm and the Worker's
+  simulated port are two objects. That the Worker closed its port is there the Worker's own word (`isClosed`);
+  a Worker that kept the port and said it had closed it would pass this part (`tests/web/station_preflight.test.ts`
+  holds the close in Node). In the real path the Worker never has the stand-in port, so that the window can open
+  a port the Worker really had and gave back is not shown either: only that the window closes it before the
+  request and opens it after the report.
+- The stops `no-serial`, `several-ports`, `open-failed`, `handshake-failed` and `line-lost`, a report with
+  `isClosed` false, a request that fails and the time limit of 30 s are not reached in a browser; their sentences
+  are held by `tests/web/preflight_view.test.ts` and the stops by the host's test.
+- The timing's numbers are those of the simulated chain in a Worker, not of a serial line; and the settings are
+  held against the report's JSON, not against PEAR's values (the host's test holds those).
+
+What no test shows:
+
+- Everything the check is there to find out: that the browser of the person with the arm gives the Worker the
+  granted port, that the port opens in the Worker once the window has closed it and in the window again
+  afterwards, and the numbers of a real line. No real port has been opened in a Worker by this page.
+- That a port shows its streams as null exactly when it is closed (the Web Serial specification says so): the
+  report's "the Worker closed the port" rests on it, because the library's transport does not tell whether the
+  port's own `close()` failed.
+- The limit of one control period for an answer in the timing self-check on a serial line is the page's choice.
+- When no answer comes within 30 s the page says that the Worker does not answer and asks for a reload; it does
+  not end the Worker itself, so the window's attempt to read the port again fails until the reload.
+- After a hand-over check the Worker stays started although the station is off; nothing ends it but a reload.
+
 ## What the camera hands to a turn, in PEAR
 
 `hardware/cameras.py` opens lerobot's `OpenCVCamera` with the station's `camera` settings (`config.yaml`: 640 x 480,
@@ -660,7 +787,8 @@ and the servos' answer time are the real cost: `docs/progress/sim-bridge.md`), m
   does when the servos have no power.
 - Chrome's own refusal of a camera (NotAllowedError): a headless browser refuses otherwise; the message was shown
   through a stand-in. A camera without a 640 x 480 mode: Chromium's fake camera has one.
-- A running vLLM server or gateway; only GET `/v1/models` is checked, not that POST is allowed across origins.
+- A vLLM server reached directly from the page. The one real service that has answered ("The first answer of a
+  real model" below) stood behind a gateway that answers the CORS preflight itself.
 - Chrome's mixed-content and local-network-access behaviour on a public origin (only headless Chromium 159 was
   measured; what Chrome on macOS asks a person on the real GitHub Pages address is not known).
 - GitHub Pages itself and the job's `npm ci` on Linux.
@@ -686,7 +814,9 @@ on the Mac; the page at https://daaab.github.io/pear.js/ (or `dist-web/` opened 
 6. Camera: choose the wrist camera, Start, allow. "640 x 480 ... This is the frame size PEAR asks for." Capture: a
    JPEG of 640 x 480 with its size in bytes.
 7. Model: the base URL and the key, Check: "The service answers, accepts the key and serves ...".
-8. With the arm connected press "Measure timing" (half a minute).
+8. With the arm connected press "Measure timing" (half a minute). Then, in step 4, "Check the hand-over to the
+   station (reads only)": a few seconds in which the Worker has the arm's line and nothing is written. Its report
+   says whether the Worker reached the adapter and what the control loop's timing is on this line.
 9. Pull the USB cable: "The connection to the arm was lost". Plug it in, Connect: reading again.
 10. Send back: the log ("Copy the log"; it holds no key and no address of the service), the step that did not
     fit, and a screenshot of the box if there was one.
@@ -716,6 +846,28 @@ the calibration from the arm. It can and does: the table and the joint values co
 The Calibration section now says that the page needs no file and that the file is optional (both languages). He
 also asked for a Home of the real arm: not in this stage, the page still writes nothing to a real arm.
 
+### The first answer of a real model (2026-11-16)
+
+One ask, made by the project from the published page (build c2e6681) in headless Chromium 159 on Linux, with the
+page's simulated arm and its test picture. The service was PEAR's own model server (the weights
+`Qwen3.8-27B-PEAR-NVFP4` with their draft model, on one GPU) behind a gateway that speaks the OpenAI protocol over
+HTTPS on a private network address and answers CORS for the page's origin alone.
+
+- Step 3's check: "The service answers, accepts the key and serves ...", after 0.1 s.
+- "Ask the model once" with the instruction "Pick up the green can.": the request's messages were 36,200 bytes of
+  JSON (a system prompt of 4,193 characters, a turn text of 199, one JPEG of 640 x 480 and 23,599 bytes). The
+  answer came after 13.0 s: 9,883 characters of reasoning, streamed, and an answer of 99 characters that ends in
+  an action, which the page read and did not execute. The client reported 1,404 input and 2,639 output tokens, the
+  first visible output after 1.4 s and 203 tokens a second. In its reasoning the model said that the picture is a
+  test picture and holds no green can.
+- The log held neither the key nor the address (it writes `https://<host>/v1/models`), and the page asked no host
+  but its own and the service's.
+- Chromium's Local Network Access checks were switched off for this run
+  (`--disable-features=LocalNetworkAccessChecks`): the service's address is in the address space Chromium calls
+  local, and a headless browser has nowhere to show the permission's prompt. With the checks on, the same page
+  said "Nothing answers at this address" with its paragraph about the browser's permission, and the log held
+  `local-network=prompt`. What a person is asked in a browser with a window is still not known.
+
 ## Requests
 
 For the coordinator's files:
@@ -737,6 +889,9 @@ For the coordinator's files:
   first.
 - Stage B: the wrist camera and the model in the Worker, so that a turn of PEAR's agent loop drives the
   simulated arm.
+- A real arm: the hand-over check on one (the log's line `Station: real-arm preflight`); then the stage that
+  writes, with the person beside the arm: Enable behind a second guard that lets through only what PEAR's station
+  writes, Home with its approval, Stop and Disable.
 - `web/tests/build_check.mjs`: on the second version only its comparison of names was run, in a checkout
   without the installed packages (1,316 references; the one it did not find is a file of an installed
   package). Its clean build was not run; the job's steps (install, type check, tests, build) were run on

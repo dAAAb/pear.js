@@ -161,6 +161,13 @@
             <button type="button" id="station-disable" data-i18n="station.disable" hidden></button>
           </div>
           <p class="hint" id="station-why"></p>
+          <div id="station-preflight" hidden>
+            <div class="actions">
+              <button type="button" id="station-preflight-run" data-i18n="station.preflight.run" disabled></button>
+            </div>
+            <p class="hint" id="station-preflight-note" data-i18n="station.preflight.note"></p>
+            <p class="status" id="station-preflight-status" role="status" aria-live="polite"></p>
+          </div>
           <p class="hint" id="station-disable-note" data-i18n="station.disableNote" hidden></p>
           <p class="status" id="station-status" role="status" aria-live="polite"></p>
           <p class="muted small" id="station-timing"></p>
@@ -172,6 +179,10 @@
             <figcaption class="muted small" id="station-frame-caption"></figcaption>
           </figure>
           <div id="station-messages"></div>
+          <div id="station-preflight-report" hidden>
+            <h3 data-i18n="station.preflight.title"></h3>
+            <div id="station-preflight-parts"></div>
+          </div>
 
           <div id="station-controls" hidden>
             <h3 data-i18n="station.stateTitle"></h3>

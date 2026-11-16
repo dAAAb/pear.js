@@ -114,6 +114,18 @@ export class SimArm {
   }
 }
 
+/** The USB ids the simulated adapter says of itself: those of the CH343 an SO-101's control board carries. */
+export const SIM_USB_IDS = { usbVendorId: 0x1a86, usbProductId: 0x55d3 } as const;
+
+/** A simulated arm's port as a browser hands a granted one to a Worker: with a `getInfo()` that tells the
+ * adapter's USB ids. The station's Worker takes such a port in place of a granted one, so that its hand-over of a
+ * real arm's line runs without hardware; the port the window shows for its simulated arm tells no ids, as before. */
+export function simulatedGrantedPort(
+  arm: SimArm = new SimArm(),
+): SimSerialPort & { getInfo(): { usbVendorId: number; usbProductId: number } } {
+  return Object.assign(arm.port, { getInfo: () => ({ ...SIM_USB_IDS }) });
+}
+
 /** A Web Serial port's shape on the simulated chain. */
 export class SimSerialPort implements SerialPortLike {
   /** The options of the last open(), for whoever wants to see what the page asked for. */

@@ -343,7 +343,7 @@ export const EN = {
 
   "station.title": "The station, by hand",
   "station.lead":
-    "PEAR's robot station runs in a Worker of this page: the robot, its control loop at 50 Hz and its driver. Here it drives a simulated arm that the Worker makes itself. It is never given a serial port, so nothing here can reach a real arm.",
+    "PEAR's robot station runs in a Worker of this page: the robot, its control loop at 50 Hz and its driver. Here it drives a simulated arm that the Worker makes itself. Of a real arm the Worker takes the serial line only for the hand-over check, which reads and writes nothing to a servo: nothing here can move a real arm.",
   "station.enable": "Enable",
   "station.disable": "Disable",
   "station.disableNote":
@@ -397,6 +397,86 @@ export const EN = {
     "The station could not be enabled: the timing self-check failed. Its line above gives the reasons.",
   "station.disableFailed": "The station could not be disabled: {error}",
   "station.stopFailed": "Stop got no answer: {error}",
+  "station.preflight.run": "Check the hand-over to the station (reads only)",
+  "station.preflight.note":
+    "The Worker takes the arm's line for a few seconds, reads it and measures the timing. Nothing is written to a servo and the arm does not move. The readings above pause meanwhile.",
+  "station.preflight.running": "Checking: the Worker has the arm's line and reads it. This takes a few seconds…",
+  "station.preflight.failed": "The hand-over check failed: {error}",
+  "station.preflight.title": "What the Worker found on the arm's line",
+  "station.preflight.outcome.read":
+    "The Worker reached the arm's adapter, opened the line behind the read-only guard and read all six servos.",
+  "station.preflight.stop.no-serial":
+    "This browser gives a Worker no serial port: the Worker's navigator has no serial. The station could not drive a real arm from its Worker here. Nothing is wrong with the arm. Please copy the log at the bottom of the page and send it.",
+  "station.preflight.stop.no-port":
+    "The Worker was given no port of this adapter, although the page was granted one. Reload the page, connect the arm in step 1 again and check once more; if it stays so, please copy the log at the bottom of the page and send it.",
+  "station.preflight.stop.several-ports":
+    "The Worker was given more than one port of this adapter's kind and cannot tell them apart. Unplug the other adapter, or forget it in the browser's site settings for this page, and check again.",
+  "station.preflight.stop.open-failed":
+    "The Worker could not open the port. Another tab or program may hold it: close that and check again. If it stays so, please copy the log at the bottom of the page and send it.",
+  "station.preflight.stop.handshake-failed":
+    "The Worker opened the port but did not find six servos of the one model and firmware on it. Check the arm's power and cable, wait until step 1 shows the joints again, and check again.",
+  "station.preflight.stop.other-arm":
+    "The servos the Worker read do not hold what this window read: the Worker reached another arm. Unplug the other arm's adapter, or forget it in the browser's site settings for this page, and check again.",
+  "station.preflight.stop.line-lost":
+    "The port was lost while the Worker read it. Check the USB cable and the arm's power, connect the arm in step 1 again and check again.",
+  "station.preflight.ports.noSerial": "Ports the Worker was given: none, because its navigator has no serial.",
+  "station.preflight.ports.empty": "Ports the Worker was given: none. Its getPorts() gave an empty list.",
+  "station.preflight.ports.list": "Ports the Worker was given ({count}): {ports}.",
+  "station.preflight.port.usb": "USB vendor {vendor}, product {product}",
+  "station.preflight.port.noIds": "a port without USB ids",
+  "station.preflight.closed.yes": "The Worker does not hold the arm's line any more, so the window can read the arm again.",
+  "station.preflight.closed.no":
+    "The Worker did not give the line back: it still holds the port, so the window cannot read the arm. Reload the page: that ends the Worker and frees the port.",
+  "station.preflight.servos.title": "The six servos as the Worker found them (nothing was changed)",
+  "station.preflight.servos.none": "The servos were not read.",
+  "station.preflight.identity.title": "What tells this arm from another",
+  "station.preflight.col.servo": "Servo (ID)",
+  "station.preflight.col.torque": "Torque",
+  "station.preflight.col.lock": "Lock",
+  "station.preflight.col.status": "Status",
+  "station.preflight.col.voltage": "Voltage (V)",
+  "station.preflight.col.temperature": "Temperature (°C)",
+  "station.preflight.col.goalVelocity": "Goal_Velocity",
+  "station.preflight.col.torqueLimit": "Torque_Limit",
+  "station.preflight.col.phase": "Phase",
+  "station.preflight.col.position": "Present_Position",
+  "station.preflight.col.goal": "Goal_Position",
+  "station.preflight.col.model": "Model_Number",
+  "station.preflight.col.firmware": "Firmware",
+  "station.preflight.col.homingOffset": "Homing_Offset",
+  "station.preflight.col.rangeMin": "Min_Position_Limit",
+  "station.preflight.col.rangeMax": "Max_Position_Limit",
+  "station.preflight.col.register": "Register",
+  "station.preflight.col.address": "Address",
+  "station.preflight.col.held": "Holds now",
+  "station.preflight.col.pear": "PEAR writes",
+  "station.preflight.col.area": "Where it is kept",
+  "station.preflight.torque.on": "on",
+  "station.preflight.torque.off": "off",
+  "station.preflight.settings.title": "What PEAR's enable would change",
+  "station.preflight.settings.none":
+    "PEAR's enable would change no setting: the {total} registers it writes besides the goal, the torque and the lock already hold its values.",
+  "station.preflight.settings.some":
+    "PEAR's enable would change {changed} of the {total} settings it writes besides the goal, the torque and the lock. {eeprom} of them are in the EEPROM and survive a power cycle.",
+  "station.preflight.settings.notRead": "What PEAR's enable would change was not read.",
+  "station.preflight.area.eeprom": "EEPROM: survives a power cycle",
+  "station.preflight.area.ram": "RAM: lost when the power goes off",
+  "station.preflight.area.factory": "factory block: not known whether it survives a power cycle",
+  "station.preflight.limp":
+    "The limp time: PEAR's enable switches each servo's torque off for the time of {count} transactions. On this line {count} single reads took {total} ms together, the longest of them {max} ms.",
+  "station.preflight.limp.none": "The limp time was not measured.",
+  "station.preflight.timing":
+    "Timing self-check on this line (reads only): {periods} control periods, mean {mean} ms, longest {max} ms, {over} over 25 ms, longest read {read} ms: {verdict}.",
+  "station.preflight.timing.passed": "passed",
+  "station.preflight.timing.failed": "failed, so the station would not enable on this line ({failures})",
+  "station.preflight.timing.none": "The timing self-check was not run.",
+  "station.preflight.guard.ok": "The read-only guard let through: {passed}. It refused nothing.",
+  "station.preflight.guard.refused":
+    "The read-only guard refused {refused} packets (it let through: {passed}). No refused packet reached the arm, but this check should never try to send one: that is a defect of the page. Please report it with the log.",
+  "station.preflight.guard.nothing": "no packet",
+  "station.preflight.lineErrors.none": "The line reported no error while the Worker had it.",
+  "station.preflight.lineErrors.some": "The line reported {errors} errors while the Worker had it.",
+  "station.preflight.took": "The whole check took {ms} ms.",
   "station.jogTitle": "One action at a time",
   "station.jogLead":
     "Each button is one action in the model's format (single_arm_delta: centimetres and radians), executed as a turn executes it: the arm at rest, an observation, then the action from that observation. An observation holds the joints, the control state and the wrist camera's frame as the station sees it; without a fresh frame the action is not run.",
@@ -776,7 +856,7 @@ export const ZH_TW: Record<TextKey, string> = {
 
   "station.title": "親手操作工作站",
   "station.lead":
-    "PEAR 的機器人工作站在這個頁面的 Worker 裡執行：機器人、50 Hz 的控制迴圈，以及驅動程式。在這裡它驅動的是 Worker 自己建立的模擬手臂。它從來不會拿到序列埠，所以這裡沒有任何東西能碰到真實的手臂。",
+    "PEAR 的機器人工作站在這個頁面的 Worker 裡執行：機器人、50 Hz 的控制迴圈，以及驅動程式。在這裡它驅動的是 Worker 自己建立的模擬手臂。對真實的手臂，Worker 只會在交接檢查時暫時接手序列線路，而且只讀取、不對伺服馬達寫入任何東西，所以這裡沒有任何東西能讓真實的手臂動。",
   "station.enable": "啟用",
   "station.disable": "停用",
   "station.disableNote":
@@ -823,6 +903,85 @@ export const ZH_TW: Record<TextKey, string> = {
   "station.enableFailed.timing": "無法啟用工作站：計時自我檢查未通過，原因寫在上面那一行。",
   "station.disableFailed": "無法停用工作站：{error}",
   "station.stopFailed": "停止沒有得到回應：{error}",
+  "station.preflight.run": "檢查把手臂交給工作站的交接（只讀取）",
+  "station.preflight.note":
+    "Worker 會接手手臂的序列線路幾秒鐘，讀取它並量測計時。不會對伺服馬達寫入任何東西，手臂也不會動。這段時間上面的讀數會暫停。",
+  "station.preflight.running": "檢查中：Worker 正接手手臂的線路並讀取，需要幾秒鐘…",
+  "station.preflight.failed": "交接檢查失敗：{error}",
+  "station.preflight.title": "Worker 在手臂線路上讀到的結果",
+  "station.preflight.outcome.read": "Worker 找到了手臂的轉接板，在唯讀保護之後開啟線路，並讀完了六顆伺服馬達。",
+  "station.preflight.stop.no-serial":
+    "這個瀏覽器不讓 Worker 使用序列埠：Worker 的 navigator 沒有 serial。在這裡，工作站沒辦法從 Worker 驅動真實的手臂。手臂本身沒有問題。請複製頁面最下方的紀錄並傳回來。",
+  "station.preflight.stop.no-port":
+    "頁面已經取得這塊轉接板的授權，Worker 卻沒有拿到它的埠。請重新載入頁面，在步驟 1 重新連接手臂，再檢查一次；如果還是一樣，請複製頁面最下方的紀錄並傳回來。",
+  "station.preflight.stop.several-ports":
+    "Worker 拿到不只一個同型轉接板的埠，分不出哪一個才是這隻手臂。請拔掉另一塊轉接板，或在瀏覽器的網站設定裡移除這個頁面對它的授權，然後再檢查一次。",
+  "station.preflight.stop.open-failed":
+    "Worker 無法開啟這個埠。可能有其他分頁或程式正在使用它：請把它關掉，再檢查一次。如果還是一樣，請複製頁面最下方的紀錄並傳回來。",
+  "station.preflight.stop.handshake-failed":
+    "Worker 開啟了埠，卻沒有在上面找到六顆型號與韌體一致的伺服馬達。請檢查手臂的電源與接線，等步驟 1 重新顯示關節之後，再檢查一次。",
+  "station.preflight.stop.other-arm":
+    "Worker 讀到的伺服馬達，和這個視窗讀到的內容不一樣：Worker 接到的是另一隻手臂。請拔掉另一隻手臂的轉接板，或在瀏覽器的網站設定裡移除這個頁面對它的授權，然後再檢查一次。",
+  "station.preflight.stop.line-lost":
+    "Worker 讀取到一半時，埠斷線了。請檢查 USB 線和手臂的電源，在步驟 1 重新連接手臂，再檢查一次。",
+  "station.preflight.ports.noSerial": "Worker 拿到的埠：沒有，因為它的 navigator 沒有 serial。",
+  "station.preflight.ports.empty": "Worker 拿到的埠：沒有。它的 getPorts() 回傳的是空清單。",
+  "station.preflight.ports.list": "Worker 拿到的埠（{count} 個）：{ports}。",
+  "station.preflight.port.usb": "USB 廠商 {vendor}、產品 {product}",
+  "station.preflight.port.noIds": "一個沒有 USB 識別碼的埠",
+  "station.preflight.closed.yes": "Worker 已經不再占用手臂的線路，所以視窗可以重新讀取手臂。",
+  "station.preflight.closed.no":
+    "Worker 沒有把線路交還：它還占用著埠，所以視窗無法讀取手臂。請重新載入頁面：這樣會結束 Worker 並釋放埠。",
+  "station.preflight.servos.title": "Worker 讀到的六顆伺服馬達現況（沒有更動任何東西）",
+  "station.preflight.servos.none": "沒有讀到伺服馬達。",
+  "station.preflight.identity.title": "用來分辨這隻手臂的資料",
+  "station.preflight.col.servo": "伺服馬達（ID）",
+  "station.preflight.col.torque": "扭力",
+  "station.preflight.col.lock": "Lock",
+  "station.preflight.col.status": "Status",
+  "station.preflight.col.voltage": "電壓（V）",
+  "station.preflight.col.temperature": "溫度（°C）",
+  "station.preflight.col.goalVelocity": "Goal_Velocity",
+  "station.preflight.col.torqueLimit": "Torque_Limit",
+  "station.preflight.col.phase": "Phase",
+  "station.preflight.col.position": "Present_Position",
+  "station.preflight.col.goal": "Goal_Position",
+  "station.preflight.col.model": "Model_Number",
+  "station.preflight.col.firmware": "韌體",
+  "station.preflight.col.homingOffset": "Homing_Offset",
+  "station.preflight.col.rangeMin": "Min_Position_Limit",
+  "station.preflight.col.rangeMax": "Max_Position_Limit",
+  "station.preflight.col.register": "暫存器",
+  "station.preflight.col.address": "位址",
+  "station.preflight.col.held": "目前的值",
+  "station.preflight.col.pear": "PEAR 會寫入",
+  "station.preflight.col.area": "存放位置",
+  "station.preflight.torque.on": "開",
+  "station.preflight.torque.off": "關",
+  "station.preflight.settings.title": "PEAR 啟用時會更動的設定",
+  "station.preflight.settings.none":
+    "PEAR 啟用時不會更動任何設定：除了目標位置、扭力和 Lock 之外，它會寫入的 {total} 個暫存器都已經是它要的值。",
+  "station.preflight.settings.some":
+    "除了目標位置、扭力和 Lock 之外，PEAR 啟用時會寫入 {total} 個設定，其中 {changed} 個會被更動。這些當中有 {eeprom} 個在 EEPROM 裡，斷電重開之後仍然保留。",
+  "station.preflight.settings.notRead": "沒有讀到 PEAR 啟用時會更動哪些設定。",
+  "station.preflight.area.eeprom": "EEPROM：斷電重開後仍保留",
+  "station.preflight.area.ram": "RAM：斷電就消失",
+  "station.preflight.area.factory": "原廠區塊：不確定斷電重開後是否保留",
+  "station.preflight.limp":
+    "鬆軟的時間：PEAR 啟用時，每顆伺服馬達的扭力會關閉 {count} 次通訊的時間。在這條線路上，{count} 次單獨讀取一共花了 {total} ms，其中最長的一次 {max} ms。",
+  "station.preflight.limp.none": "沒有量測鬆軟的時間。",
+  "station.preflight.timing":
+    "這條線路上的計時自我檢查（只讀取）：{periods} 個控制週期，平均 {mean} ms，最長 {max} ms，{over} 個超過 25 ms，最長的一次讀取 {read} ms：{verdict}。",
+  "station.preflight.timing.passed": "通過",
+  "station.preflight.timing.failed": "未通過，所以工作站在這條線路上不會啟用（{failures}）",
+  "station.preflight.timing.none": "沒有執行計時自我檢查。",
+  "station.preflight.guard.ok": "唯讀保護放行了：{passed}。它沒有擋下任何封包。",
+  "station.preflight.guard.refused":
+    "唯讀保護擋下了 {refused} 個封包（放行的有：{passed}）。被擋下的封包都沒有送到手臂，但這項檢查本來就不該嘗試送出它們：這是頁面的缺陷，請附上紀錄回報。",
+  "station.preflight.guard.nothing": "沒有任何封包",
+  "station.preflight.lineErrors.none": "Worker 占用線路的期間，線路沒有回報任何錯誤。",
+  "station.preflight.lineErrors.some": "Worker 占用線路的期間，線路回報了 {errors} 次錯誤。",
+  "station.preflight.took": "整個檢查花了 {ms} ms。",
   "station.jogTitle": "一次一個動作",
   "station.jogLead":
     "每個按鈕都是一個模型格式的動作（single_arm_delta：公分與弧度），執行方式和一個回合相同：手臂靜止、觀測一次，再從這次觀測執行動作。觀測裡有關節、控制狀態，以及工作站看到的手腕攝影機畫面；沒有新的畫面時，動作不會執行。",

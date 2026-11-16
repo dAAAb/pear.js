@@ -12,6 +12,26 @@ import type { ModelState } from "../../src/so101/kinematics/index";
 /** Where each servo of the simulated arm stands, steps, by the motor's name. */
 export type MotorSteps = Readonly<Record<string, number>>;
 
+/** The USB ids of an adapter, as `SerialPort.getInfo()` gives them. */
+export interface UsbIds {
+  readonly vendorId: number;
+  readonly productId: number;
+}
+
+/** What tells one arm from another on the line: what one servo holds of the calibration. */
+export interface ServoPrint {
+  readonly id: number;
+  /** Model_Number. */
+  readonly model: number;
+  /** Homing_Offset, Min_Position_Limit and Max_Position_Limit, as lerobot reads them. */
+  readonly homingOffset: number;
+  readonly rangeMin: number;
+  readonly rangeMax: number;
+}
+
+/** The six servos of an arm, in the order of their ids. */
+export type ArmFingerprint = readonly ServoPrint[];
+
 export type StationRequest =
   /** Makes the simulated arm at `positions`, checks the timing on its line and opens the robot; `isHidden` is
    * whether the page is hidden then, which the timing self-check refuses. */
@@ -27,7 +47,20 @@ export type StationRequest =
   /** The person's answer to the Home plan that is shown. */
   | { readonly type: "approve"; readonly isApproved: boolean }
   /** Whether the page is hidden: a hidden page stops and starts no action. */
-  | { readonly type: "visibility"; readonly isHidden: boolean };
+  | { readonly type: "visibility"; readonly isHidden: boolean }
+  /** The hand-over of a real arm's line to the Worker, reads only: the Worker finds the port the page was
+   * granted, opens it behind the read-only guard, reads what `PreflightReport` holds and closes it again. Nothing
+   * is written to a servo and the robot is not opened. The window must have closed its own use of the port first.
+   * `usb` is the adapter as the window knows it (null: the browser gave no ids), `expected` what the window read
+   * of the six servos, `isHidden` whether the page is hidden. With `source` "simulated" the Worker takes a
+   * simulated port of its own in place of a granted one: the browser check's way through the same code. */
+  | {
+      readonly type: "preflight";
+      readonly source: "granted" | "simulated";
+      readonly usb: UsbIds | null;
+      readonly expected: ArmFingerprint;
+      readonly isHidden: boolean;
+    };
 
 export type StationRequestType = StationRequest["type"];
 
@@ -157,6 +190,94 @@ export interface TimingCheck {
   readonly reasons: readonly TimingFailure[];
 }
 
+/** Where a preflight stopped before it had read everything. */
+export type PreflightStop =
+  /** The Worker's `navigator` has no `serial`. */
+  | "no-serial"
+  /** `getPorts()` gave no port (of the adapter's ids, when they are known). */
+  | "no-port"
+  /** It gave more than one such port: the API cannot tell them apart. */
+  | "several-ports"
+  /** The port did not open. */
+  | "open-failed"
+  /** Not six servos of the one model and one firmware. */
+  | "handshake-failed"
+  /** The six servos do not hold what the window read: another arm. */
+  | "other-arm"
+  /** The port was lost while it was read. */
+  | "line-lost";
+
+/** One servo as the preflight read it. Raw register values, as the servo gives them. */
+export interface PreflightServo extends ServoPrint {
+  /** The motor's name in PEAR's layout. */
+  readonly name: string;
+  /** The firmware as "major.minor". */
+  readonly firmware: string;
+  /** Present_Position (56) and Goal_Position (42), steps. */
+  readonly position: number;
+  readonly goal: number;
+  /** Torque_Enable (40) and Lock (55). */
+  readonly torque: number;
+  readonly lock: number;
+  /** Status (65): 0 is no error. */
+  readonly status: number;
+  /** Present_Voltage (62), tenths of a volt, and Present_Temperature (63), degrees Celsius. */
+  readonly voltage: number;
+  readonly temperature: number;
+  /** Goal_Velocity (46) and Torque_Limit (48): RAM registers PEAR's enable never writes, so what another program
+   * left in them stays. */
+  readonly goalVelocity: number;
+  readonly torqueLimit: number;
+  /** Phase (18): PEAR's enable rewrites it when bit 0x10 is set. */
+  readonly phase: number;
+}
+
+/** One register PEAR's enable writes to one servo, beside what that servo holds now. */
+export interface PreflightSetting {
+  readonly id: number;
+  /** The register's name in lerobot's table, its address and its length. */
+  readonly register: string;
+  readonly address: number;
+  readonly bytes: 1 | 2;
+  /** Where the servo keeps it: "eeprom" survives a power cycle; "factory" is lerobot's name for the block of
+   * Maximum_Acceleration, of which that is not known. */
+  readonly area: "eeprom" | "ram" | "factory";
+  /** The value PEAR's enable writes, and the value read. */
+  readonly pear: number;
+  readonly held: number;
+}
+
+/** What the Worker found on a real arm's line, by reads alone. */
+export interface PreflightReport {
+  /** What the Worker's `navigator.serial.getPorts()` gave, each port's USB ids (null: none given); null when the
+   * Worker has no `navigator.serial`. */
+  readonly ports: readonly (UsbIds | null)[] | null;
+  /** Where it stopped; null: everything below was read. */
+  readonly stop: PreflightStop | null;
+  /** The stop in a sentence, English, as an error would say it; "" without a stop. */
+  readonly detail: string;
+  /** The six servos in the order of their ids; null when the handshake did not pass. */
+  readonly servos: readonly PreflightServo[] | null;
+  /** Every register PEAR's enable writes besides Goal_Position, Torque_Enable and Lock, for every servo it writes
+   * it to; null with `servos`. */
+  readonly settings: readonly PreflightSetting[] | null;
+  /** As many single READs one after another as PEAR's enable has transactions while a servo is without torque:
+   * how many, how long they took together and the longest one, ms; null when they were not made. */
+  readonly singleReads: { readonly count: number; readonly totalMs: number; readonly maxMs: number } | null;
+  /** The timing self-check on this line: 150 control periods, each one SYNC READ of the positions; null when it
+   * was not run. Its `failures` say whether this line keeps the loop's time; a hidden page is one of them. */
+  readonly timing: TimingCheck | null;
+  /** What the read-only guard let through, counted by instruction, and how many packets it refused: 0, or the
+   * preflight has a defect. */
+  readonly guard: { readonly passed: Readonly<Record<string, number>>; readonly refused: number };
+  /** The line's errors while the Worker had it open. */
+  readonly lineErrors: number;
+  /** Whether the Worker closed the port again: only then may the window read it. */
+  readonly isClosed: boolean;
+  /** How long the whole took, ms. */
+  readonly tookMs: number;
+}
+
 export interface EnableResult {
   readonly timing: TimingCheck;
   /** How long the robot took to open, ms. */
@@ -192,6 +313,7 @@ export interface StationResults {
   home: HomeResult;
   approve: null;
   visibility: null;
+  preflight: PreflightReport;
 }
 
 export type StationEvent =
@@ -246,6 +368,7 @@ export const REQUEST_LIMIT_MS: Readonly<Record<StationRequestType, number>> = {
   home: 180_000,
   approve: 3_000,
   visibility: 3_000,
+  preflight: 30_000,
 };
 
 /** How often the Worker tells its status, ms. */

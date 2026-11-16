@@ -43,6 +43,7 @@ import { LAYOUT } from "../../src/so101/layout";
 import { OTHER_BAUD_RATES, type PingToAll, pingToAll } from "./probe";
 import { type GuardCounts, ReadOnlyTransport, type ReadOnlyViolation } from "./readonly";
 import { type LineErrors, ResilientPort } from "./serial_port";
+import type { ArmFingerprint, ServoPrint, UsbIds } from "./station_protocol";
 import { hexOf, LineTrace, TracedTransport } from "./trace";
 
 /** Between two reads of the joints, ms: about ten a second. */
@@ -162,6 +163,19 @@ export function identifyPort(port: SerialPortLike, isSimulated: boolean): PortId
   const hex = (value: number | undefined): string => (value === undefined ? "?" : value.toString(16).padStart(4, "0"));
 
   return { text: `USB vendor ${hex(info.usbVendorId)}, product ${hex(info.usbProductId)}`, isUsbAdapter: true };
+}
+
+/** Returns the USB ids of ``port``'s adapter as numbers, as Web Serial's getInfo() gives them, for whoever must
+ * find the same adapter among the ports the page was granted; null for a port that gives none (the simulated
+ * one, a Bluetooth or built-in serial port). */
+export function usbIdsOf(port: SerialPortLike): UsbIds | null {
+  const info = (
+    port as SerialPortLike & { getInfo?: () => { usbVendorId?: number; usbProductId?: number } | undefined }
+  ).getInfo?.();
+  if (info === undefined || info === null) return null;
+  if (info.usbVendorId === undefined || info.usbProductId === undefined) return null;
+
+  return { vendorId: info.usbVendorId, productId: info.usbProductId };
 }
 
 /** How many failed reads of a connection the log shows with their bytes: the first of each run of failures. A
@@ -293,6 +307,29 @@ export class ArmSession {
 
   get isConnected(): boolean {
     return this.follower !== null;
+  }
+
+  /** What tells this arm from another on the line, for whoever is handed its line: each servo's id, its model
+   * and what its registers hold of the calibration, in the order of the ids. Null unless all six servos answer,
+   * their models were read and their registers hold a calibration. */
+  get fingerprint(): ArmFingerprint | null {
+    const { servos, registers } = this.view;
+    if (registers === null || this.view.isUncalibrated || servos.length !== MOTORS.length) return null;
+
+    const prints: ServoPrint[] = [];
+    for (const servo of servos) {
+      if (servo.answer !== "ok" || servo.model === null) return null;
+      const held = registers[servo.motor];
+      prints.push({
+        id: servo.id,
+        model: servo.model,
+        homingOffset: held.homingOffset,
+        rangeMin: held.rangeMin,
+        rangeMax: held.rangeMax,
+      });
+    }
+
+    return prints.sort((a, b) => a.id - b.id);
   }
 
   /** Opens ``port`` at the servos' baud rate and reads the arm until it is disconnected or lost. */
