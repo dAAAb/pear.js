@@ -415,7 +415,7 @@ export const EN = {
   "station.preflight.failed": "The hand-over check failed: {error}",
   "station.arming.run": "Enable the station on this arm…",
   "station.arming.note":
-    "“Enable the station on this arm” reads the arm first, as the check does, and shows what it found and what enabling does. Nothing is written to a servo until you have confirmed there. This step has so far run on simulated servos only and never on a real arm.",
+    "“Enable the station on this arm” reads the arm first, as the check does, and shows what it found and what enabling does. Nothing is written to a servo until you have confirmed there, and a setting that survives a power cycle is changed only when the confirmation has listed it. This step has so far run on simulated servos only and never on a real arm.",
   "station.arming.why.calibration":
     "The station cannot be enabled on this arm while the loaded calibration file is not found equal to what the servos hold: PEAR starts only when they are equal. Load this arm's file, or remove the file; without a file the station uses the calibration the servos hold.",
   "station.arming.reading":
@@ -430,14 +430,12 @@ export const EN = {
   "station.arming.blocker.timing":
     "The timing self-check failed on this line ({failures}), so the control loop would not keep its 20 ms here. Close other tabs and programs that keep this computer busy, keep this tab in front, plug the adapter straight into the computer, and try again.",
   "station.arming.blocker.timing.noNumbers": "the report gives no numbers",
-  "station.arming.blocker.settings":
-    "PEAR's enable would change settings that survive a power cycle ({count}): {rows}. This version changes no setting that survives a power cycle, so the arm must have been run by lerobot once, which writes these values. Run the arm with lerobot, then try again.",
   "station.arming.setting.row": "{servo} {register} (address {address}): holds {held}, PEAR writes {pear}",
   "station.arming.blocker.status":
     "These servos report an error, their Status register is not 0: {servos}. Check the servos' power supply and that nothing blocks or overloads the arm, switch the servos' power off and on again, and try again.",
   "station.arming.servo.value": "{servo}: {value}",
   "station.arming.blocker.phase":
-    "Bit 0x10 of the Phase register (address 18) is set on {servos}. PEAR's enable would clear it, and that register survives a power cycle; this version changes no such setting. Run the arm once with lerobot, which clears that bit, then try again.",
+    "Bit 0x10 of the Phase register (address 18) is set on {servos}. PEAR's enable would clear it, and that register survives a power cycle; this version changes such a setting only when the confirmation has listed it, and this bit is not among the settings it lists. Run the arm once with lerobot, which clears that bit, then try again.",
   "station.arming.blocker.uncalibrated":
     "These servos hold the factory's values (offset 0, range 0 to 4095) in place of a calibration: {servos}. Calibrate the arm with lerobot, which writes the calibration into the servos, then try again.",
   "station.arming.blocker.calibration":
@@ -456,6 +454,8 @@ export const EN = {
   "station.arming.confirm.eeprom":
     "Enable changes no setting that survives a power cycle: the {count} such registers it writes hold its values on this arm already.",
   "station.arming.confirm.eeprom.notRead": "What Enable writes of the servos' settings was not read on this arm.",
+  "station.arming.confirm.eeprom.changed":
+    "Enable will change settings that survive a power cycle: {count} of the {total} such registers it writes hold another value on this arm, and each one is listed here. The values it writes stay in the servos after this page is closed and after the servos' power was off. They are the values lerobot writes to an SO-101 follower every time it connects.",
   "station.arming.confirm.ram": "It sets these settings anew, which are lost when the servos' power goes off: {rows}.",
   "station.arming.confirm.factory":
     "It also writes {rows}; of that register it is not known whether it survives a power cycle.",
@@ -473,6 +473,7 @@ export const EN = {
     "No answer within {minutes} minutes counts as refused: the Worker then gives the line back, and nothing is written.",
   "station.arming.confirm.tick":
     "The arm's space is clear, the arm rests or is supported, and the switch of the servos' power is within my reach.",
+  "station.arming.confirm.tick.settings": "{tick} I accept that the settings listed above are changed in the servos.",
   "station.arming.confirm.go": "Switch the torque on",
   "station.arming.confirm.cancel": "Cancel",
   "station.arming.confirm.left": "Time left to answer: {seconds} s.",
@@ -1016,7 +1017,7 @@ export const ZH_TW: Record<TextKey, string> = {
   "station.preflight.failed": "交接檢查失敗：{error}",
   "station.arming.run": "在這支手臂上啟用工作站…",
   "station.arming.note":
-    "「在這支手臂上啟用工作站」會先像交接檢查一樣讀取手臂，並顯示讀到的內容以及啟用會做的事。在你確認之前，不會對伺服馬達寫入任何東西。這個步驟到目前為止只在模擬的伺服馬達上執行過，還沒有在真實的手臂上執行過。",
+    "「在這支手臂上啟用工作站」會先像交接檢查一樣讀取手臂，並顯示讀到的內容以及啟用會做的事。在你確認之前，不會對伺服馬達寫入任何東西；斷電重開後仍保留的設定，只有確認清單裡列出來的才會被更動。這個步驟到目前為止只在模擬的伺服馬達上執行過，還沒有在真實的手臂上執行過。",
   "station.arming.why.calibration":
     "載入的校正檔還沒有確認和伺服馬達裡的數值一致，所以不能在這支手臂上啟用工作站：PEAR 只有在兩者一致時才會啟動。請載入這支手臂的校正檔，或移除檔案；沒有檔案時，工作站會使用伺服馬達裡的校正。",
   "station.arming.reading": "讀取手臂中：Worker 已接手手臂的線路並讀取，保護機制不會放行任何寫入。需要幾秒鐘…",
@@ -1030,14 +1031,12 @@ export const ZH_TW: Record<TextKey, string> = {
   "station.arming.blocker.timing":
     "這條線路的計時自我檢查沒有通過（{failures}），控制迴圈在這裡守不住 20 ms 的週期。請關掉其他讓電腦忙碌的分頁和程式，讓這個分頁保持在最前面，把轉接器直接插在電腦上，然後再試一次。",
   "station.arming.blocker.timing.noNumbers": "報告裡沒有數字",
-  "station.arming.blocker.settings":
-    "PEAR 啟用時會更動 {count} 個斷電重開後仍保留的設定：{rows}。這個版本不會更動任何斷電重開後仍保留的設定，所以這支手臂必須先用 lerobot 執行過一次，lerobot 會寫入這些數值。請先用 lerobot 執行這支手臂，然後再試一次。",
   "station.arming.setting.row": "{servo} {register}（位址 {address}）：目前是 {held}，PEAR 會寫入 {pear}",
   "station.arming.blocker.status":
     "這些伺服馬達回報錯誤，Status 暫存器不是 0：{servos}。請檢查伺服馬達的電源，確認沒有東西卡住手臂或讓它過載，把伺服馬達的電源關掉再打開，然後再試一次。",
   "station.arming.servo.value": "{servo}：{value}",
   "station.arming.blocker.phase":
-    "{servos} 的 Phase 暫存器（位址 18）設了 0x10 這個位元。PEAR 啟用時會把它清除，而這個暫存器斷電重開後仍保留；這個版本不會更動這類設定。請先用 lerobot 執行這支手臂一次，lerobot 會清除這個位元，然後再試一次。",
+    "{servos} 的 Phase 暫存器（位址 18）設了 0x10 這個位元。PEAR 啟用時會把它清除，而這個暫存器斷電重開後仍保留；這個版本只會更動確認清單裡列出來的這類設定，而這個位元不在其中。請先用 lerobot 執行這支手臂一次，lerobot 會清除這個位元，然後再試一次。",
   "station.arming.blocker.uncalibrated":
     "這些伺服馬達裡是原廠的數值（偏移 0、範圍 0 到 4095），不是校正值：{servos}。請用 lerobot 校正手臂，lerobot 會把校正寫進伺服馬達，然後再試一次。",
   "station.arming.blocker.calibration":
@@ -1055,6 +1054,8 @@ export const ZH_TW: Record<TextKey, string> = {
   "station.arming.confirm.eeprom":
     "啟用不會更動任何斷電重開後仍保留的設定：它會寫入的 {count} 個這類暫存器，在這支手臂上已經是它要的數值。",
   "station.arming.confirm.eeprom.notRead": "在這支手臂上沒有讀到啟用會寫入哪些伺服馬達設定。",
+  "station.arming.confirm.eeprom.changed":
+    "啟用會更動斷電重開後仍保留的設定：它會寫入的 {total} 個這類暫存器當中，有 {count} 個在這支手臂上是別的數值，逐一列在這裡。它寫入的數值會留在伺服馬達裡，關掉本頁、伺服馬達斷電重開之後都還在。這些數值就是 lerobot 每次連線到 SO-101 follower 時會寫入的數值。",
   "station.arming.confirm.ram": "它會重新設定這些斷電就消失的設定：{rows}。",
   "station.arming.confirm.factory": "它還會寫入 {rows}；這個暫存器斷電重開後是否保留，目前不確定。",
   "station.arming.confirm.row.same": "{register}（位址 {address}）= {pear}，共 {servos} 顆伺服馬達，目前已經是這個數值",
@@ -1069,6 +1070,7 @@ export const ZH_TW: Record<TextKey, string> = {
   "station.arming.confirm.warnings": "下面的報告裡有警告：{count} 則。確認之前請先讀過。",
   "station.arming.confirm.limit": "{minutes} 分鐘內沒有回答就視為拒絕：Worker 會把線路交還，不會寫入任何東西。",
   "station.arming.confirm.tick": "手臂周圍已經淨空，手臂停放穩當或有東西撐住，而且伺服馬達電源的開關就在我伸手可及的地方。",
+  "station.arming.confirm.tick.settings": "{tick}我同意更動上面列出的伺服馬達設定。",
   "station.arming.confirm.go": "打開扭力",
   "station.arming.confirm.cancel": "取消",
   "station.arming.confirm.left": "剩下的回答時間：{seconds} 秒。",

@@ -5,9 +5,10 @@
 // the station's guard (station_guard.ts), reads the same while that guard lets no write through, tells what it
 // read and waits for the operator's confirmation (the request "arm"); only then it lets the station's own writes
 // through the guard and opens PEAR's robot on that line, which is PEAR's enable: the first write to a real servo.
-// The robot is given the guard and nothing beneath it, and no setting that survives a power cycle is changed: an
-// arm whose servos do not hold PEAR's values already is not enabled. station_worker.ts gives this file the
-// Worker's messages and the Worker's serial ports; a test may give it its own.
+// The robot is given the guard and nothing beneath it. PEAR's enable writes its settings whatever the servos
+// hold; the report told before the confirmation shows every setting it will change, and the guard lets PEAR's
+// values through and no others. station_worker.ts gives this file the Worker's messages and the Worker's serial
+// ports; a test may give it its own.
 //
 // A request is started when it arrives and answered when it is done, so that a Stop is taken while an action is
 // under way: nothing here waits for an action before it takes the next message.
@@ -284,9 +285,11 @@ const PHASE_REWRITTEN_BIT = 0x10;
 
 /**
  * Returns the reasons against enabling the station on the arm of `report`, from the report alone, in a fixed
- * order; none when PEAR's enable would change nothing that survives a power cycle on an arm that was read to its
- * end. `calibrationFile` is the calibration the person loaded, or null: it must hold what the servos hold, as the
- * library's own check compares them (the same motors; each one's limits and homing offset).
+ * order; none for an arm that was read to its end and is as PEAR's enable needs it. A setting that PEAR's enable
+ * would change is no reason: PEAR writes its settings at every enable whatever the servos hold, the report shows
+ * each one that differs, and the operator's confirmation is given to that list. `calibrationFile` is the
+ * calibration the person loaded, or null: it must hold what the servos hold, as the library's own check compares
+ * them (the same motors; each one's limits and homing offset).
  */
 export function armingBlockers(
   report: PreflightReport,
@@ -295,8 +298,6 @@ export function armingBlockers(
   const blockers: ArmingBlocker[] = [];
   if (report.stop !== null) blockers.push({ code: "stop", stop: report.stop });
   if (report.timing !== null && report.timing.failures.length > 0) blockers.push({ code: "timing" });
-  const rows = (report.settings ?? []).filter(({ area, held, pear }) => area === "eeprom" && held !== pear);
-  if (rows.length > 0) blockers.push({ code: "settings", rows });
   const servos = report.servos ?? [];
   const idsWhere = (isSo: (servo: PreflightServo) => boolean): number[] => servos.filter(isSo).map(({ id }) => id);
   const faulty = idsWhere(({ status }) => status !== 0);
@@ -337,15 +338,15 @@ const CALIBRATION_FIELDS = [
 
 /**
  * Returns what the station's guard lets PEAR's enable write to each servo of `settings` besides torque, lock and
- * acceleration: every register of the EEPROM area with the value the servo was read to hold, which is PEAR's on
- * an arm without a blocker, and Maximum_Acceleration with PEAR's value whatever the servo holds (lerobot's table
- * puts it into the block "Factory"; a servo may lose it at a power cycle, and PEAR writes it at every enable).
+ * acceleration: each register of the report with the one value PEAR's enable writes to it, and no other value.
+ * Where a servo holds another value, this write changes it, in the EEPROM for good: the report the operator
+ * confirmed shows every such row.
  */
 export function guardSettings(settings: readonly PreflightSetting[]): Record<number, StationSetting[]> {
   const allowed: Record<number, StationSetting[]> = {};
-  for (const { id, address, bytes, area, pear, held } of settings) {
+  for (const { id, address, bytes, pear } of settings) {
     const list = (allowed[id] ??= []);
-    if (SETTING_ADDRESSES.has(address)) list.push({ address, bytes, value: area === "eeprom" ? held : pear });
+    if (SETTING_ADDRESSES.has(address)) list.push({ address, bytes, value: pear });
   }
 
   return allowed;

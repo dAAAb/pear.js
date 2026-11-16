@@ -24,10 +24,13 @@ import {
   allBlockers,
   armingReportParts,
   blockerSentences,
+  changesEeprom,
   confirmationItems,
+  eepromChangesLogged,
   lineSentences,
   refusalsSince,
   refusedSentence,
+  tickLabel,
 } from "./arming_view";
 import { type PreflightPart, preflightParts } from "./preflight_view";
 import { type GuardSelfTest, guardSelfTest } from "./readonly";
@@ -1753,7 +1756,8 @@ function onArming(requestId: number, report: PreflightReport, told: readonly Arm
 /** The operator's answer to what the Worker read. A confirmation is the one place where the page asks for the
  * first write to a servo: it is sent only for the operator's own press (`press.isTrusted`) of the button, while
  * the box of the confirmation that is shown is ticked, no reason stands against enabling and the Worker still
- * waits. */
+ * waits. The log is told with it which settings that survive a power cycle the confirmation listed, the ones
+ * PEAR's enable will change. */
 async function answerArming(isConfirmed: boolean, press: Event): Promise<void> {
   const requestId = arming.requestId;
   if (arming.phase !== "asking" || arming.answer !== null || requestId === null) return;
@@ -1766,8 +1770,10 @@ async function answerArming(isConfirmed: boolean, press: Event): Promise<void> {
   arming.answer = isConfirmed ? "confirmed" : "cancelled";
   if (isConfirmed) arming.phase = "opening";
   arming.shows += 1;
+  const report = arming.report;
+  const listedChanges = isConfirmed && report !== null ? `; ${eepromChangesLogged(report)}` : "";
   log.add(
-    `Station: the operator ${isConfirmed ? "ticked the box and pressed: switch the torque on" : "cancelled"}, ${Math.round(waited / 1000)} s after the report was shown`,
+    `Station: the operator ${isConfirmed ? "ticked the box and pressed: switch the torque on" : "cancelled"}, ${Math.round(waited / 1000)} s after the report was shown${listedChanges}`,
   );
   renderStation();
   await station.request({ type: "arm", requestId, isConfirmed }).catch((error: unknown) => {
@@ -1811,11 +1817,19 @@ function confirmationNode(report: PreflightReport): HTMLElement {
     element(
       "ul",
       {},
-      confirmationItems(report, { t, count, listed }).map((item) =>
-        element("li", { text: item.text, data: { kind: item.kind, tone: item.tone } }),
-      ),
+      confirmationItems(report, { t, count, listed }).map((item) => {
+        const line = element("li", { text: item.text, data: { kind: item.kind, tone: item.tone } });
+        // what the sentence lists, one row each: the settings Enable will change, which the tick is given to
+        if (item.rows.length > 0) {
+          line.append(element("ul", {}, item.rows.map((row) => element("li", { text: row, data: { kind: `${item.kind}-row` } }))));
+        }
+
+        return line;
+      }),
     ),
   );
+  // the tick's words say so where settings that survive a power cycle are listed above: the tick accepts them
+  const tickWords = element("label", { className: "tick", data: { settings: changesEeprom(report) ? "changed" : "same" } });
   arming.isTicked = false;
   const tick = element("input");
   tick.type = "checkbox";
@@ -1837,8 +1851,9 @@ function confirmationNode(report: PreflightReport): HTMLElement {
   cancel.addEventListener("click", (event) => void answerArming(false, event));
   const left = element("p", { className: "status" });
   left.id = "station-arming-left";
+  tickWords.append(tick, document.createTextNode(` ${tickLabel(report, { t, count, listed })}`));
   node.append(
-    element("p", {}, [element("label", { className: "tick" }, [tick, document.createTextNode(` ${t("station.arming.confirm.tick")}`)])]),
+    element("p", {}, [tickWords]),
     element("div", { className: "actions" }, [go, cancel]),
     left,
   );

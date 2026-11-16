@@ -329,16 +329,15 @@ export interface PreflightReport {
   readonly tookMs: number;
 }
 
-/** A reason the station is not enabled on a real arm, found by reads before anything was written. */
+/** A reason the station is not enabled on a real arm, found by reads before anything was written. A setting that
+ * PEAR's enable would change is none: PEAR writes its settings at every enable whatever the servos hold. The
+ * report's `settings` whose `held` is not `pear` are what it will change, those of the area "eeprom" for good; the
+ * page lists them in the confirmation, and the operator's answer is given to that list. */
 export type ArmingBlocker =
   /** The line was not read to its end: the report's `stop` and `detail` say where and why. */
   | { readonly code: "stop"; readonly stop: PreflightStop }
   /** The timing self-check failed on this line: the report's `timing.failures` say why. */
   | { readonly code: "timing" }
-  /** PEAR's enable would change settings that survive a power cycle: `rows` are the report's settings whose area
-   * is "eeprom" and whose `held` is not `pear`. This version changes no such setting: the servos have to hold
-   * PEAR's values already, as they do after lerobot has run the arm. */
-  | { readonly code: "settings"; readonly rows: readonly PreflightSetting[] }
   /** Servos whose Status is not 0. */
   | { readonly code: "status"; readonly ids: readonly number[] }
   /** Servos whose Phase has the bit 0x10 set: PEAR's enable would rewrite that register, which is in the EEPROM. */

@@ -41,6 +41,34 @@ export interface ConfirmItem {
   readonly kind: string;
   readonly tone: "info" | "warn";
   readonly text: string;
+  /** What the sentence lists, one text each, which the page shows as a list under it; empty where it lists
+   * nothing. */
+  readonly rows: readonly string[];
+}
+
+/** Returns the settings of the EEPROM that PEAR's enable will change on the arm of `report`: the rows whose value
+ * is not PEAR's. They survive a power cycle, so the confirmation lists each one, and they are no reason against
+ * enabling: PEAR writes its settings at every enable, whatever the servos hold. */
+export function eepromChanges(report: PreflightReport): PreflightSetting[] {
+  return (report.settings ?? []).filter((setting) => setting.area === "eeprom" && setting.held !== setting.pear);
+}
+
+/** Whether PEAR's enable will change a setting that survives a power cycle on the arm of `report`: whether the
+ * confirmation lists such settings, and the tick is given to that list as well. */
+export function changesEeprom(report: PreflightReport): boolean {
+  return eepromChanges(report).length > 0;
+}
+
+/** One setting that PEAR's enable will change, as the confirmation lists it: the servo's name and id, the
+ * register and its address, the value the servo holds and the value PEAR writes. */
+function settingRow(setting: PreflightSetting, report: PreflightReport, wording: Wording): string {
+  return wording.t("station.arming.setting.row", {
+    servo: servoName(setting.id, report.servos),
+    register: setting.register,
+    address: raw(setting.address),
+    held: raw(setting.held),
+    pear: raw(setting.pear),
+  });
 }
 
 /** The reasons against enabling that the report itself shows, found again on the window's side: the page asks
@@ -49,9 +77,6 @@ export function reportBlockers(report: PreflightReport): ArmingBlocker[] {
   const found: ArmingBlocker[] = [];
   if (report.stop !== null) found.push({ code: "stop", stop: report.stop });
   else if (report.timing === null || report.timing.failures.length > 0) found.push({ code: "timing" });
-
-  const rows = (report.settings ?? []).filter((setting) => setting.area === "eeprom" && setting.held !== setting.pear);
-  if (rows.length > 0) found.push({ code: "settings", rows });
 
   const servos = report.servos ?? [];
   const idsOf = (isOne: (servo: PreflightServo) => boolean): number[] => servos.filter(isOne).map((servo) => servo.id);
@@ -109,25 +134,6 @@ export function blockerSentences(
         return {
           code: blocker.code,
           text: t("station.arming.blocker.timing", { failures: timingFailures(report, wording) }),
-          detail: null,
-        };
-      case "settings":
-        return {
-          code: blocker.code,
-          text: t("station.arming.blocker.settings", {
-            count: count(blocker.rows.length),
-            rows: listed(
-              blocker.rows.map((setting) =>
-                t("station.arming.setting.row", {
-                  servo: servoName(setting.id, report.servos),
-                  register: setting.register,
-                  address: raw(setting.address),
-                  held: raw(setting.held),
-                  pear: raw(setting.pear),
-                }),
-              ),
-            ),
-          }),
           detail: null,
         };
       case "status":
@@ -203,12 +209,14 @@ function reportWarnings(report: PreflightReport, wording: Wording): number {
 
 /** Returns what the operator reads before the first write, in the order the page lists it: what Enable does to
  * the arm and how long the arm is limp on this line, what Enable writes of the settings, what Home, Stop and
- * Disable do, what the servos do when the page is gone, and how long the Worker waits for the answer. */
+ * Disable do, what the servos do when the page is gone, and how long the Worker waits for the answer. Where
+ * Enable will change settings that survive a power cycle, the item "eeprom" is a warning that says how many and
+ * has one row for each: the operator's tick is given to that list. */
 export function confirmationItems(report: PreflightReport, wording: Wording, limitMs: number = ARMING_LIMIT_MS): ConfirmItem[] {
   const { t, count, listed } = wording;
   const items: ConfirmItem[] = [];
-  const add = (kind: string, text: string, tone: ConfirmItem["tone"] = "info"): void => {
-    items.push({ kind, tone, text });
+  const add = (kind: string, text: string, tone: ConfirmItem["tone"] = "info", rows: readonly string[] = []): void => {
+    items.push({ kind, tone, text, rows });
   };
 
   // said first and as a warning: until this step has run on a real arm, whoever confirms must know that it has not
@@ -227,13 +235,17 @@ export function confirmationItems(report: PreflightReport, wording: Wording, lim
 
   const settings = report.settings;
   const kept = (settings ?? []).filter((setting) => setting.area === "eeprom");
+  const changes = eepromChanges(report);
   if (settings === null) add("eeprom", t("station.arming.confirm.eeprom.notRead"), "warn");
-  else if (kept.every((setting) => setting.held === setting.pear)) {
-    add("eeprom", t("station.arming.confirm.eeprom", { count: count(kept.length) }));
-  } else {
-    // never shown beside the confirmation, which a reason of the code "settings" forbids: said all the same,
-    // so that this list holds no sentence that is not true of this arm
-    add("eeprom", blockerSentences(report, reportBlockers(report).filter((blocker) => blocker.code === "settings"), wording)[0]?.text ?? "", "warn");
+  else if (changes.length === 0) add("eeprom", t("station.arming.confirm.eeprom", { count: count(kept.length) }));
+  else {
+    // what the operator's tick is given to: every register of every servo that will hold another value for good
+    add(
+      "eeprom",
+      t("station.arming.confirm.eeprom.changed", { count: count(changes.length), total: count(kept.length) }),
+      "warn",
+      changes.map((setting) => settingRow(setting, report, wording)),
+    );
   }
   if (settings !== null) {
     const ram = settingRows(settings, "ram", wording);
@@ -252,6 +264,29 @@ export function confirmationItems(report: PreflightReport, wording: Wording, lim
   add("limit", t("station.arming.confirm.limit", { minutes: count(Math.round(limitMs / 60_000)) }));
 
   return items;
+}
+
+/** Returns the words beside the confirmation's tick box. Where PEAR's enable will change settings that survive a
+ * power cycle, they end with one more sentence: the person accepts that the settings listed above are changed
+ * in the servos. */
+export function tickLabel(report: PreflightReport, wording: Wording): string {
+  const tick = wording.t("station.arming.confirm.tick");
+
+  return changesEeprom(report) ? wording.t("station.arming.confirm.tick.settings", { tick }) : tick;
+}
+
+/** Returns what the log is told, with the operator's confirmation, of the settings that survive a power cycle:
+ * how many PEAR's enable will change, and each one by its servo's id and its register's address, with the value
+ * held and the value PEAR writes. The log's lines are English, as all of them are. */
+export function eepromChangesLogged(report: PreflightReport): string {
+  if (report.settings === null) return "what Enable writes of the servos' settings was not read";
+  const changes = eepromChanges(report);
+  if (changes.length === 0) return "no setting that survives a power cycle will be changed";
+  const rows = changes.map(
+    (setting) => `servo ${setting.id} address ${setting.address} holds ${setting.held}, PEAR writes ${setting.pear}`,
+  );
+
+  return `${changes.length} of the settings that survive a power cycle will be changed: ${rows.join("; ")}`;
 }
 
 /** Returns the report as the page shows it for the request "enableReal". While the Worker still has the line

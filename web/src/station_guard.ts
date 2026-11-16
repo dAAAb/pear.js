@@ -52,7 +52,7 @@ export const REFUSALS_KEPT = 20;
  * Protection_Current 28, Operating_Mode 33, Overload_Torque 36, Maximum_Acceleration 85. */
 export const SETTING_ADDRESSES: ReadonlySet<number> = new Set([7, 16, 21, 22, 23, 28, 33, 36, 85]);
 
-/** One register a servo may be written, with the only value that passes: the value the servo was read to hold. */
+/** One register a servo may be written, with the only value that passes: the value PEAR's enable writes to it. */
 export interface StationSetting {
   readonly address: number;
   /** How many bytes the register has: 1 or 2. */
@@ -257,9 +257,9 @@ export class StationGuardTransport implements Transport {
 
   /**
    * Puts the guard into the state "station". ``settings`` gives, for each of the six servos, the registers PEAR's
-   * enable may write besides torque, lock and acceleration, each with the one value that passes: the value the
-   * servo was read to hold. Nothing is carried over from before: no goal has been let through and no present
-   * position has been seen. Throws, and changes nothing, for an address that is no setting of the station.
+   * enable may write besides torque, lock and acceleration, each with the one value that passes: the value PEAR's
+   * enable writes, whatever the servo holds. Nothing is carried over from before: no goal has been let through and
+   * no present position has been seen. Throws, and changes nothing, for an address that is no setting of the station.
    */
   enterStation(settings: StationSettings): void {
     const checked = checkedSettings(settings);

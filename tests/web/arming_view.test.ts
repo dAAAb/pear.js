@@ -10,11 +10,15 @@ import {
   allBlockers,
   armingReportParts,
   blockerSentences,
+  changesEeprom,
   confirmationItems,
+  eepromChanges,
+  eepromChangesLogged,
   lineSentences,
   refusalsSince,
   refusedSentence,
   reportBlockers,
+  tickLabel,
 } from "../../web/src/arming_view";
 import type { Wording } from "../../web/src/preflight_view";
 import type {
@@ -120,11 +124,9 @@ describe.each(LANGUAGES)("enabling on a real arm, in %s", (language) => {
       servos: [servo(0, { status: 8 }), servo(1, { phase: 0x1c }), servo(2, { homingOffset: 0, rangeMin: 0, rangeMax: 4095 }), servo(3), servo(4), servo(5)],
       timing: { periods: 150, meanMs: 26, maxMs: 80, over25: 40, maxReadMs: 30, failures: ["mean 26 ms"], reasons: [{ code: "mean", value: 26, limit: 21 }] },
     });
-    const row = setting(6, "Max_Torque_Limit", 16, "eeprom", 500, 1000);
     const blockers: ArmingBlocker[] = [
       { code: "stop", stop: "open-failed" },
       { code: "timing" },
-      { code: "settings", rows: [row] },
       { code: "status", ids: [1] },
       { code: "phase", ids: [2] },
       { code: "uncalibrated", ids: [3] },
@@ -138,10 +140,6 @@ describe.each(LANGUAGES)("enabling on a real arm, in %s", (language) => {
     expect(text("stop")).toContain(wordingOf(language).t("station.preflight.stop.open-failed"));
     expect(sentences[0]?.detail).toBe("NetworkError: Failed to open serial port.");
     expect(text("timing")).toContain("26");
-    expect(text("settings")).toContain("gripper (6) Max_Torque_Limit");
-    expect(text("settings")).toContain("1000");
-    expect(text("settings")).toContain("500");
-    expect(text("settings")).toContain("lerobot");
     expect(text("status")).toContain("shoulder_pan (1)");
     expect(text("status")).toContain("8");
     expect(text("phase")).toContain("shoulder_lift (2)");
@@ -178,15 +176,77 @@ describe.each(LANGUAGES)("enabling on a real arm, in %s", (language) => {
     expect(text("limit")).toContain("2"); // ARMING_LIMIT_MS is two minutes
     expect(items.find((item) => item.kind === "factory")?.tone).toBe("info");
     expect(confirmationItems(reportOf(), wordingOf(language), 180_000).at(-1)?.text).toContain("3");
+    // no setting that survives a power cycle differs on this arm: the list says that Enable changes none, no
+    // item has rows under it, and the tick's words are those of every arm
+    const eeprom = items.find((item) => item.kind === "eeprom");
+    expect(eeprom?.tone).toBe("info");
+    expect(eeprom?.text).toBe(wordingOf(language).t("station.arming.confirm.eeprom", { count: "6" }));
+    expect(eeprom?.text).toContain(language === "en" ? "changes no setting that survives a power cycle" : "不會更動任何斷電重開後仍保留的設定");
+    expect(items.filter((item) => item.rows.length > 0)).toEqual([]);
+    expect(changesEeprom(reportOf())).toBe(false);
+    expect(eepromChanges(reportOf())).toEqual([]);
+    expect(tickLabel(reportOf(), wordingOf(language))).toBe(wordingOf(language).t("station.arming.confirm.tick"));
+    expect(eepromChangesLogged(reportOf())).toBe("no setting that survives a power cycle will be changed");
+    // rows of the RAM and of the factory block that differ are not settings known to survive a power cycle
+    const lost = reportOf({ settings: [setting(1, "Acceleration", 41, "ram", 254, 0), setting(1, "Maximum_Acceleration", 85, "factory", 254, 0)] });
+    expect(changesEeprom(lost)).toBe(false);
+    expect(tickLabel(lost, wordingOf(language))).toBe(wordingOf(language).t("station.arming.confirm.tick"));
   });
 
-  it("does not say that nothing lasting changes when a lasting setting differs or the time was not measured", () => {
-    const changed = reportOf({ settings: settingsOf([setting(6, "Max_Torque_Limit", 16, "eeprom", 500, 1000)]), singleReads: null });
-    const items = confirmationItems(changed, wordingOf(language));
+  it("lists each setting that survives a power cycle and will be changed, and has the tick accept that list", () => {
+    // as an arm on which two servos hold P_Coefficient 32 where PEAR writes 16, and the gripper another limit;
+    // one more row of the EEPROM holds PEAR's value already
+    const rows = [
+      setting(1, "P_Coefficient", 21, "eeprom", 16, 32),
+      setting(3, "P_Coefficient", 21, "eeprom", 16, 32),
+      setting(6, "Max_Torque_Limit", 16, "eeprom", 500, 1000),
+    ];
+    const changed = reportOf({ settings: settingsOf([...rows, setting(2, "P_Coefficient", 21, "eeprom", 16, 16)]), singleReads: null });
+    const wording = wordingOf(language);
+    const items = confirmationItems(changed, wording);
     const eeprom = items.find((item) => item.kind === "eeprom");
     expect(eeprom?.tone).toBe("warn");
-    expect(eeprom?.text).toContain("Max_Torque_Limit");
-    expect(eeprom?.text).not.toBe(wordingOf(language).t("station.arming.confirm.eeprom", { count: "7" }));
+    expectWhole(eeprom?.text ?? "");
+    // how many Enable will change, of how many such registers it writes: 3 of 10
+    expect(eeprom?.text).toBe(wording.t("station.arming.confirm.eeprom.changed", { count: "3", total: "10" }));
+    expect(eeprom?.text).toContain("3");
+    expect(eeprom?.text).toContain("10");
+    // that they survive a power cycle and stay when the page is closed, and whose values they are
+    expect(eeprom?.text).toContain(language === "en" ? "Enable will change settings that survive a power cycle" : "啟用會更動斷電重開後仍保留的設定");
+    expect(eeprom?.text).toContain(language === "en" ? "stay in the servos after this page is closed" : "會留在伺服馬達裡，關掉本頁");
+    expect(eeprom?.text).toContain(language === "en" ? "lerobot writes to an SO-101 follower every time it connects" : "lerobot 每次連線到 SO-101 follower 時會寫入的數值");
+    expect(eeprom?.text).not.toContain(language === "en" ? "changes no setting" : "不會更動");
+    // each one: the servo's name and id, the register and its address, the value held and the value PEAR writes
+    expect(eeprom?.rows).toEqual(
+      language === "en"
+        ? [
+            "shoulder_pan (1) P_Coefficient (address 21): holds 32, PEAR writes 16",
+            "elbow_flex (3) P_Coefficient (address 21): holds 32, PEAR writes 16",
+            "gripper (6) Max_Torque_Limit (address 16): holds 1000, PEAR writes 500",
+          ]
+        : [
+            "shoulder_pan (1) P_Coefficient（位址 21）：目前是 32，PEAR 會寫入 16",
+            "elbow_flex (3) P_Coefficient（位址 21）：目前是 32，PEAR 會寫入 16",
+            "gripper (6) Max_Torque_Limit（位址 16）：目前是 1000，PEAR 會寫入 500",
+          ],
+    );
+    // no other item has rows, and the rows are those the page's own look finds
+    expect(items.filter((item) => item.rows.length > 0).map((item) => item.kind)).toEqual(["eeprom"]);
+    expect(changesEeprom(changed)).toBe(true);
+    expect(eepromChanges(changed)).toEqual(rows);
+    // the tick's words: those of every arm, and one more sentence that accepts the list
+    const label = tickLabel(changed, wording);
+    const accepts = language === "en" ? "I accept that the settings listed above are changed in the servos." : "我同意更動上面列出的伺服馬達設定。";
+    expectWhole(label);
+    expect(label.startsWith(wording.t("station.arming.confirm.tick"))).toBe(true);
+    expect(label.endsWith(accepts)).toBe(true);
+    expect(wording.t("station.arming.confirm.tick")).not.toContain(accepts);
+    // the log's words, which are English in both languages: how many, and each by servo id and address
+    expect(eepromChangesLogged(changed)).toBe(
+      "3 of the settings that survive a power cycle will be changed: servo 1 address 21 holds 32, PEAR writes 16; " +
+        "servo 3 address 21 holds 32, PEAR writes 16; servo 6 address 16 holds 1000, PEAR writes 500",
+    );
+    expect(eepromChangesLogged(reportOf({ settings: null }))).toBe("what Enable writes of the servos' settings was not read");
     expect(items.find((item) => item.kind === "limp")?.tone).toBe("warn");
     expect(items.find((item) => item.kind === "limp")?.text).not.toContain("63");
   });
@@ -240,12 +300,17 @@ describe("the page's own look at the report", () => {
     });
     expect(reportBlockers(bad)).toEqual([
       { code: "timing" },
-      { code: "settings", rows: [row] },
       { code: "status", ids: [1] },
       { code: "phase", ids: [2] },
       { code: "uncalibrated", ids: [3] },
       { code: "guard", refused: 1 },
     ]);
+    // a row of the EEPROM that differs is no reason: PEAR's enable writes it, and the confirmation lists it
+    const differs = reportOf({ settings: settingsOf([row]) });
+    expect(changesEeprom(differs)).toBe(true);
+    expect(reportBlockers(differs)).toEqual([]);
+    expect(allBlockers(differs, [])).toEqual([]);
+    expect(reportBlockers(bad).map((blocker): string => blocker.code)).not.toContain("settings");
     expect(reportBlockers(reportOf({ stop: "line-lost", timing: null }))).toEqual([{ code: "stop", stop: "line-lost" }]);
     // a RAM row that differs is no reason: Enable sets it anew
     expect(reportBlockers(reportOf({ settings: [setting(1, "Acceleration", 41, "ram", 254, 0)] }))).toEqual([]);
@@ -276,7 +341,7 @@ describe("the texts of enabling on a real arm", () => {
       blockerSentences(
         reportOf({ timing: null }),
         [
-          { code: "stop", stop: "other-arm" }, { code: "timing" }, { code: "settings", rows: [] }, { code: "status", ids: [9] },
+          { code: "stop", stop: "other-arm" }, { code: "timing" }, { code: "status", ids: [9] },
           { code: "phase", ids: [1] }, { code: "uncalibrated", ids: [1] }, { code: "calibration", detail: "x" }, { code: "guard", refused: 1 },
         ],
         wording,
@@ -284,12 +349,22 @@ describe("the texts of enabling on a real arm", () => {
       confirmationItems(reportOf(), wording);
       confirmationItems(report, wording);
       confirmationItems(reportOf({ settings: settingsOf([setting(1, "Acceleration", 41, "ram", 254, 254)]) }), wording);
+      const differs = reportOf({ settings: settingsOf([setting(6, "Max_Torque_Limit", 16, "eeprom", 500, 1000)]) });
+      confirmationItems(differs, wording);
+      tickLabel(differs, wording);
+      tickLabel(reportOf(), wording);
       armingReportParts(reportOf(), wording, true);
       for (const answer of ["confirmed", "cancelled", null] as const) refusedSentence(answer, wording);
       lineSentences({ ...LINE, passed: {}, refused: 1, refusals: ["x"], isLost: true }, wording);
     }
     const own = [...used].filter((key) => key.startsWith("station.arming.") || key.startsWith("station.real."));
     expect(own.length).toBeGreaterThan(30);
+    for (const key of ["station.arming.confirm.eeprom.changed", "station.arming.confirm.tick.settings", "station.arming.setting.row"]) {
+      expect(used.has(key), key).toBe(true);
+    }
+    // the reason "settings" is gone, and its text with it
+    expect(Object.keys(EN)).not.toContain("station.arming.blocker.settings");
+    expect(Object.keys(ZH_TW)).not.toContain("station.arming.blocker.settings");
     for (const key of used) {
       expect(EN[key as TextKey], key).toBeTypeOf("string");
       expect(ZH_TW[key as TextKey], key).toBeTypeOf("string");

@@ -3996,6 +3996,8 @@ REAL_SHOWN = """(() => {
         hasConfirm: visible(tick) && visible(go), isTicked: tick !== null && tick.checked,
         isGoDisabled: go === null ? null : go.disabled, go: go === null ? null : go.textContent,
         tick: tick === null ? null : tick.closest('label').textContent.trim(),
+        tickSettings: tick === null ? null : tick.closest('label').dataset.settings,
+        rows: list === null ? [] : [...list.querySelectorAll('li li')].map(row => ({ kind: row.dataset.kind, text: row.textContent })),
         items: list === null ? [] : [...list.children].map(item => ({ kind: item.dataset.kind, tone: item.dataset.tone, text: item.textContent })),
     };
 })()"""
@@ -4119,7 +4121,7 @@ def real_station(check: Check, browser, base: str, service: str) -> None:
     check.ok("the control: with ?preflight=sim-configured it is offered on the simulated arm", real_offered(page), real_shown(page))
     check.equal("the control: a model service with a key is checked, so that the page holds a key and an address", run_model_check(page, f"{service}/v1", MODEL, KEY), "ok")
     note = page.locator("#station-preflight").inner_text()
-    check.ok("the control: its note says that nothing is written until the confirmation, and that this step has so far run on simulated servos only and never on a real arm", "Nothing is written to a servo until you have confirmed there." in note and REAL_UNTRIED in note, note[-500:])
+    check.ok("the control: its note says that nothing is written until the confirmation, that a setting that survives a power cycle is changed only when the confirmation has listed it, and that this step has so far run on simulated servos only and never on a real arm", "Nothing is written to a servo until you have confirmed there, and a setting that survives a power cycle is changed only when the confirmation has listed it." in note and REAL_UNTRIED in note, note[-500:])
     check.equal("the control: before it is pressed no Worker runs and the window has asked nothing", [len(page.workers), real_asked(page)], [0, []])
     # no camera runs from here until Home has been asked once without it
     camera_stop = page.locator("#camera-stop")
@@ -4317,37 +4319,132 @@ def real_station(check: Check, browser, base: str, service: str) -> None:
     numbers["the session's log"] = [line[:160] for line in gained if not line.startswith(REAL_REPORT)]
 
 
-def real_blocked(check: Check, browser, base: str) -> None:
+REAL_SETTING_ROW = "{servo} {register} (address {address}): holds {held}, PEAR writes {pear}"
+REAL_SETTING_ROW_CHINESE = "{servo} {register}（位址 {address}）：目前是 {held}，PEAR 會寫入 {pear}"
+REAL_TICK_SETTINGS = "I accept that the settings listed above are changed in the servos."
+REAL_TICK_SETTINGS_CHINESE = "我同意更動上面列出的伺服馬達設定。"
+REAL_CANCELLED = "Station: not enabled on the real arm: refused (the operator cancelled"
+
+
+def real_changed_settings(check: Check, browser, base: str) -> None:
     """With ?preflight=sim the Worker's simulated servos hold their own settings, as an arm lerobot never ran:
-    PEAR's enable would change settings that survive a power cycle, so nothing is offered and nothing written."""
-    label = "blocked"
+    PEAR's enable will change settings that survive a power cycle. That is no reason against enabling: the
+    confirmation lists each such setting, the tick is given to that list, and after it PEAR's enable writes them.
+    What the servos hold after that enable is not read here: the Worker makes its simulated port anew for each
+    request, so the next report is of servos that hold their own settings again."""
+    label = "the settings"
+    numbers = check.numbers.setdefault("real", {})
     page = real_page(check, browser, base, "?lang=en&preflight=sim")
     connect_sim(page)
     page.wait_for_function("window.pearjs.arm.view.live !== null")
     check.ok(f"{label}: with ?preflight=sim the control is offered on the simulated arm", real_offered(page), real_shown(page))
+
+    def differing(report: dict) -> list:
+        """The report's rows of the EEPROM whose value is not PEAR's: what PEAR's enable will change for good."""
+        return [row for row in report.get("settings") or [] if row.get("area") == "eeprom" and row.get("held") != row.get("pear")]
+
+    def listed(report: dict, wording: str) -> list:
+        """Those rows as the confirmation lists them, in the words of one language."""
+        names = {servo.get("id"): servo.get("name") for servo in report.get("servos") or []}
+        return [wording.format(servo=f"{names.get(row['id'])} ({row['id']})", **{key: str(row[key]).replace("-", "−") for key in ("register", "address", "held", "pear")}) for row in differing(report)]
+
+    def logged(words: str, times: int, timeout_ms: int = 45000) -> bool:
+        """Waits until the page's log holds ``words`` at least ``times`` times; returns whether it did in that time."""
+        return real_wait(page, f"document.getElementById('log-output').value.split({json.dumps(words)}).length > {times}", timeout_ms)
+
+    # the confirmation lists what PEAR's enable will change, in both languages
+    label = "the settings, listed"
     lines = len(log_lines(page))
     page.click("#station-arming-run")
-    check.ok(f"{label}: the request ends blocked, and the log says for which reason and that nothing was written", real_wait_log(page, REAL_BLOCKED + " (settings); nothing was written"), log_lines(page)[-3:])
-    check.ok(f"{label}: the window reads the arm again", real_wait_log(page, REAL_READ_AGAIN, 10000), log_lines(page)[-3:])
+    check.ok(f"{label}: the Worker's report comes and the confirmation is shown", real_asking(page), real_shown(page))
     told = real_told(page)
     report = told.get("report") or {}
-    blockers = told.get("blockers") or []
-    rows = (blockers[0].get("rows") or []) if blockers else []
-    check.numbers.setdefault("real", {})["blocked: the reasons"] = blockers
-    check.ok(f"{label}: the Worker tells one reason, settings, with the rows PEAR's enable would change: registers that survive a power cycle and hold another value", len(blockers) == 1 and blockers[0].get("code") == "settings" and len(rows) > 0 and all(row.get("area") == "eeprom" and row.get("held") != row.get("pear") for row in rows), blockers)
-    check.ok(f"{label}: the guard let through reads only and refused nothing", real_reads_only(report.get("guard")), report.get("guard"))
-    check.equal(f"{label}: the window asked the Worker to enable, got its report, and sent no answer", [entry["type"] for entry in real_asked(page)], ["enableReal", "arming report"])
+    rows = differing(report)
+    kept = [row for row in report.get("settings") or [] if row.get("area") == "eeprom"]
+    numbers["the settings: the arming report's reasons"] = told.get("blockers")
+    numbers["the settings: the rows of the EEPROM that differ"] = rows
     shown = real_shown(page)
-    check.equal(f"{label}: the page shows the reason and offers no confirmation", [shown["isPartShown"], shown["blockers"], shown["hasConfirm"]], [True, "settings", False])
-    check.ok(f"{label}: the page says in sentences that nothing was written, which settings would change and how many, and what to do", all(words in shown["text"] for words in ("The station was not enabled on this arm, and nothing was written to a servo", f"PEAR's enable would change settings that survive a power cycle ({len(rows)}): ", "Run the arm with lerobot, then try again.")), shown["text"][:700])
-    check.ok(f"{label}: the report under it says that the Worker does not hold the line any more", "The Worker does not hold the arm's line any more, so the window can read the arm again." in shown["text"], shown["text"][-600:])
+    check.equal(f"{label}: the Worker read the arm to its end and tells no reason against enabling; the page shows none and asks for the confirmation", [report.get("stop", "absent"), told.get("blockers"), shown["blockers"], shown["hasConfirm"]], [None, [], "", True])
+    check.equal(f"{label}: the report holds 15 rows of the EEPROM whose value is not PEAR's", len(rows), 15)
+    check.ok(f"{label}: the report's guard has let through reads only and refused nothing", real_reads_only(report.get("guard")), report.get("guard"))
+    warning = next((item for item in shown["items"] if item["kind"] == "eeprom"), {})
+    check.equal(f"{label}: the list's item about the EEPROM is a warning with one row for each setting that will change: the servo's name and id, the register and its address, the value held and the value PEAR writes", [warning.get("tone"), [row["text"] for row in shown["rows"]], sorted({row["kind"] for row in shown["rows"]})], ["warn", listed(report, REAL_SETTING_ROW), ["eeprom-row"]])
+    check.ok(f"{label}: the warning says how many settings Enable will change, that they survive a power cycle and stay in the servos after the page is closed, and that they are the values lerobot writes at every connection", all(words in warning.get("text", "") for words in (f"Enable will change settings that survive a power cycle: {len(rows)} of the {len(kept)} such registers it writes hold another value on this arm, and each one is listed here.", "The values it writes stay in the servos after this page is closed and after the servos' power was off.", "They are the values lerobot writes to an SO-101 follower every time it connects.")), warning.get("text"))
+    check.ok(f"{label}: nothing in the confirmation says that Enable changes no setting that survives a power cycle", "changes no setting that survives a power cycle" not in shown["text"], shown["text"][:400])
+    check.equal(f"{label}: the tick's words end with one more sentence, which accepts that the settings listed above are changed in the servos; the box is unticked and the button disabled", [shown["tickSettings"], (shown["tick"] or "").endswith(REAL_TICK_SETTINGS), shown["isTicked"], shown["isGoDisabled"]], ["changed", True, False, True])
     page.click("#language-zh")
-    real_wait(page, "!document.getElementById('station-arming').innerText.includes('The station was not enabled')", 5000)
-    chinese = real_shown(page)["text"]
-    check.numbers["real"]["blocked: the page in Chinese"] = chinese[:500]
-    check.ok("languages: the reason and its sentences are in Chinese", "lerobot" in chinese and not any(words in chinese for words in ("The station was not enabled", "PEAR's enable would change", "Run the arm")), chinese[:400])
+    real_wait(page, "document.getElementById('station-arming-go')?.textContent !== 'Switch the torque on'", 5000)
+    chinese = real_shown(page)
+    chinese_warning = next((item for item in chinese["items"] if item["kind"] == "eeprom"), {})
+    numbers["the settings: the warning and the tick in Chinese"] = [chinese_warning.get("text"), chinese["tick"]]
+    check.equal("languages: the warning's rows are in Chinese, one for each setting that will change", [chinese_warning.get("tone"), [row["text"] for row in chinese["rows"]]], ["warn", listed(report, REAL_SETTING_ROW_CHINESE)])
+    check.ok("languages: the warning says in Chinese how many settings will change, that they survive a power cycle and stay after the page is closed, and whose values they are", all(words in chinese_warning.get("text", "") for words in (f"啟用會更動斷電重開後仍保留的設定：它會寫入的 {len(kept)} 個這類暫存器當中，有 {len(rows)} 個在這支手臂上是別的數值，逐一列在這裡。", "它寫入的數值會留在伺服馬達裡，關掉本頁、伺服馬達斷電重開之後都還在。", "這些數值就是 lerobot 每次連線到 SO-101 follower 時會寫入的數值。")) and not any(words in chinese_warning.get("text", "") for words in ("Enable will change", "holds", "PEAR writes", "address")), chinese_warning.get("text"))
+    check.equal("languages: the tick's extra sentence is in Chinese", [chinese["tickSettings"], (chinese["tick"] or "").endswith(REAL_TICK_SETTINGS_CHINESE), "I accept" in (chinese["tick"] or "")], ["changed", True, False])
     page.click("#language-en")
-    check.equal(f"{label}: the station is off, step 1 reads the arm, and the control is offered again", [station_view(page)["phase"], phase(page), real_offered(page)], ["off", "reading", True])
+    real_wait(page, "document.getElementById('station-arming-go')?.textContent === 'Switch the torque on'", 5000)
+
+    # Cancel: nothing was written
+    label = "the settings, cancelled"
+    page.click("#station-arming-cancel")
+    check.ok(f"{label}: the request ends refused, and the log says that the operator cancelled", logged(REAL_CANCELLED, 1), log_lines(page)[-3:])
+    check.ok(f"{label}: the window reads the arm again", logged(REAL_READ_AGAIN, 1, 10000), log_lines(page)[-3:])
+    guard = (real_told(page).get("report") or {}).get("guard")
+    check.ok(f"{label}: nothing was written: the arming report's guard let through reads only and refused nothing", real_reads_only(guard), guard)
+    check.equal(f"{label}: the window asked the Worker to enable, got its report, and answered it once: not confirmed", [[entry["type"], entry.get("isConfirmed")] for entry in real_asked(page)], [["enableReal", None], ["arming report", None], ["arm", False]])
+    cancels = [line for line in log_lines(page)[lines:] if line.startswith("Station: the operator cancelled")]
+    check.ok(f"{label}: the log's line of the Cancel names no setting", len(cancels) == 1 and "settings" not in cancels[0], cancels)
+    offered = real_offered(page)
+    check.equal(f"{label}: the station is off, step 1 reads the arm, and the control is offered again", [station_view(page)["phase"], phase(page), offered], ["off", "reading", True])
+
+    # again: the tick and a real press, and PEAR's enable writes the settings that were listed
+    label = "the settings, written"
+    lines = len(log_lines(page))
+    page.click("#station-arming-run")
+    check.ok(f"{label}: pressed again, the Worker's report comes and the confirmation is shown", real_asking(page), real_shown(page))
+    second = real_told(page).get("report") or {}
+    shown = real_shown(page)
+    check.equal(f"{label}: after the Cancel the servos hold what they held: the same rows differ, and the confirmation lists them again, unticked", [differing(second), [row["text"] for row in shown["rows"]], shown["tickSettings"], shown["isTicked"], shown["isGoDisabled"]], [rows, listed(report, REAL_SETTING_ROW), "changed", False, True])
+    check.ok(f"{label}: ticked with real input, the button can be pressed", real_input(lambda: page.check("#station-arming-tick", timeout=5000)) and real_wait(page, "document.getElementById('station-arming-go')?.disabled === false", 5000), real_shown(page))
+    check.ok(f"{label}: the button is pressed with real input", real_input(lambda: page.click("#station-arming-go", timeout=5000)), real_shown(page))
+    check.ok(f"{label}: after the tick and a real press the station holds the arm", real_wait_station(page, "view.phase === 'on' && view.status !== null && view.status.robot === 'READY' && view.status.line !== null", 45000), station_view(page)["phase"])
+    check.equal(f"{label}: the window answered each of the two reports once: not confirmed, then confirmed", [entry["isConfirmed"] for entry in real_asked(page, "arm")], [False, True])
+    confirmed = [line for line in log_lines(page)[lines:] if line.startswith("Station: the operator ticked the box and pressed: switch the torque on")]
+    check.ok(f"{label}: the log's line of the confirmation says how many settings that survive a power cycle will be changed, and each one: servo id, address, the value held, PEAR's value", len(confirmed) == 1 and f"; {len(rows)} of the settings that survive a power cycle will be changed: " in confirmed[0] and len(rows) > 0 and all(f"servo {row['id']} address {row['address']} holds {row['held']}, PEAR writes {row['pear']}" in confirmed[0] for row in rows), confirmed)
+    status = station_view(page)["status"] or {}
+    line = status.get("line") or {}
+    numbers["the settings: the line when enabled"] = line
+    passed = line.get("passed") or {}
+    writes = {address: len([row for row in rows if row["address"] == address]) for address in sorted({row["address"] for row in rows})}
+    check.equal(f"{label}: the Worker's status says a real arm, ready and holding", [status.get("arm"), status.get("robot"), status.get("control")], ["real", "READY", "HOLD"])
+    check.ok(f"{label}: the line's counts hold the writes of the settings that were listed, at least one packet for each row of a register, beside WRITE 40, WRITE 55 and SYNC WRITE 42", len(writes) > 0 and all(passed.get(f"WRITE {address}", 0) >= count for address, count in writes.items()) and all(passed.get(name, 0) > 0 for name in ("WRITE 40", "WRITE 55", "SYNC WRITE 42")), [writes, passed])
+    check.equal(f"{label}: the guard refused nothing, and the line reported no error and was not lost", [line.get("refused"), line.get("lineErrors"), line.get("isLost")], [0, 0, False])
+
+    # Disable, behind its second press
+    label = "the settings, disabled"
+    page.click("#station-disable")
+    check.ok(f"{label}: the first press only asks, and the button of the second press is offered and pressed", real_input(lambda: page.click("#station-disable-go", timeout=5000)), station_view(page)["phase"])
+    check.ok(f"{label}: the second press disables", real_wait_station(page, "view.phase === 'off'", 30000), station_view(page)["phase"])
+    check.equal(f"{label}: the Worker was asked to disable once", len(real_asked(page, "disable")), 1)
+    offered = real_offered(page)
+    check.equal(f"{label}: the station is off, step 1 reads the arm, and the control is offered again", [station_view(page)["phase"], phase(page), offered], ["off", "reading", True])
+
+    # the control once more. The Worker makes its simulated port anew for each request, so this report is of servos
+    # that hold their own settings again: it cannot show what the enable wrote, only that the page lists the rows
+    # and asks for the tick again
+    label = "the settings, once more"
+    page.click("#station-arming-run")
+    check.ok(f"{label}: after Disable, pressed once more, the Worker's report comes and the confirmation is shown", real_asking(page), real_shown(page))
+    third = real_told(page)
+    after = third.get("report") or {}
+    numbers["the settings: how many rows of the EEPROM differ in the report after Disable"] = len(differing(after))
+    shown = real_shown(page)
+    check.equal(f"{label}: the Worker's simulated port is new for each request, so its servos hold their own settings again: the same rows differ, no reason stands against enabling, and the confirmation lists them again, unticked, with the tick's extra sentence", [differing(after), third.get("blockers"), [row["text"] for row in shown["rows"]], shown["tickSettings"], (shown["tick"] or "").endswith(REAL_TICK_SETTINGS), shown["isTicked"], shown["isGoDisabled"]], [rows, [], listed(report, REAL_SETTING_ROW), "changed", True, False, True])
+    page.click("#station-arming-cancel")
+    check.ok(f"{label}: cancelled: the request ends refused", logged(REAL_CANCELLED, 2), log_lines(page)[-3:])
+    guard = (real_told(page).get("report") or {}).get("guard")
+    check.ok(f"{label}: cancelled: the arming report's guard let through reads only and refused nothing", real_reads_only(guard), guard)
+    offered = real_offered(page)
+    check.equal(f"{label}: the station is off, step 1 reads the arm, and the control is offered again", [station_view(page)["phase"], phase(page), offered], ["off", "reading", True])
 
 
 def real_real_path(check: Check, browser, base: str) -> None:
@@ -4400,10 +4497,11 @@ def real_real_path(check: Check, browser, base: str) -> None:
 def part_real(check: Check, browser, base: str, service: str) -> None:
     """The station on a real arm (the requests "enableReal" and "arm"): the page asks for the first write only
     after the tick and a real press; Enable, Home, Stop and Disable on the Worker's simulated port that holds
-    PEAR's settings; an arm whose settings PEAR's enable would change; and the real path as far as a headless
-    browser goes. Every way out ends with the arm's line given back and the window reading again."""
+    PEAR's settings; an arm whose settings PEAR's enable will change, which the confirmation lists and the tick
+    accepts before they are written; and the real path as far as a headless browser goes. Every way out ends with
+    the arm's line given back and the window reading again."""
     real_station(check, browser, base, service)
-    real_blocked(check, browser, base)
+    real_changed_settings(check, browser, base)
     real_real_path(check, browser, base)
     ModelService.configure()
 

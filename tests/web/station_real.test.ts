@@ -9,11 +9,12 @@
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { getAddress, MODEL_NUMBER_VALUE, type MotorCalibration, type RegisterName } from "../../src/feetech/index";
+import { getAddress, MODEL_NUMBER_VALUE, type MotorCalibration, protocol, type RegisterName } from "../../src/feetech/index";
 import { CONTROL_TABLE } from "../../src/feetech/tables";
 import { MOTORS, type MotorName } from "../../src/so101/hardware/index";
 import type { MonotonicClock } from "../../src/station/joint/clock";
 import { SIM_CALIBRATION, SIM_START_POSITIONS, SimArm, type SimScenario, simulatedConfiguredPort, simulatedGrantedPort } from "../../web/src/sim_port";
+import type { StationGuardTransport } from "../../web/src/station_guard";
 import { armingBlockers, ENABLE_SETTINGS, GRIPPER_SETTINGS, guardSettings, StationHost } from "../../web/src/station_host";
 import type {
   ArmFingerprint,
@@ -22,6 +23,7 @@ import type {
   FromStation,
   HomeResult,
   PreflightReport,
+  PreflightSetting,
   StationEvent,
   StationRequest,
   StationStatus,
@@ -134,12 +136,39 @@ const keptOf = (arm: SimArm): Record<string, number> =>
 
 const torqueOf = (arm: SimArm): boolean[] => MOTORS.map((motor) => arm.servo(motor).torqueEnabled);
 
+/** Where a servo's EEPROM area ends: the registers below this address survive a power cycle. */
+const EEPROM_END = 40;
+
+/** Every byte of the control table of every servo of `arm`, by the servo's id. */
+const tablesOf = (arm: SimArm): Record<number, number[]> =>
+  Object.fromEntries(MOTORS.map((motor) => [arm.servo(motor).id, [...arm.servo(motor).registers]]));
+
+/** The bytes that are not the same in two such readings, each as "<id> <address>", in the order of the servos. */
+const changedBetween = (before: Record<number, number[]>, after: Record<number, number[]>): string[] =>
+  Object.entries(before).flatMap(([id, bytes]) =>
+    bytes.flatMap((byte, address) => (byte === (after[Number(id)] as number[])[address] ? [] : [`${id} ${address}`])),
+  );
+
+/** Whether such a byte is in the EEPROM area. */
+const isEepromByte = (key: string): boolean => Number(key.split(" ")[1]) < EEPROM_END;
+
+/** The rows of a report that PEAR's enable changes: the servo holds another value than PEAR writes. */
+const differingOf = (report: PreflightReport): PreflightSetting[] => (report.settings ?? []).filter(({ held, pear }) => held !== pear);
+
+/** The bytes of a row's register, each as "<id> <address>". */
+const bytesOf = ({ id, address, bytes }: PreflightSetting): string[] => Array.from({ length: bytes }, (_, index) => `${id} ${address + index}`);
+
+/** The motor whose servo has the id `id`. */
+const motorOf = (id: number): MotorName => MOTORS.find((motor) => SIM_CALIBRATION[motor].id === id) as MotorName;
+
 interface Bench {
   arm: SimArm;
   port: ReturnType<typeof simulatedGrantedPort>;
   /** Every packet the simulated servos were given, in their order. */
   packets: Uint8Array[];
-  /** The state of the guard of the line the station opened last; null before a line is opened. */
+  /** The guard of the line the station opened last, as the station hands it out; null before a line is opened. */
+  guard: () => StationGuardTransport | null;
+  /** The state of that guard; null before a line is opened. */
   guardState: () => string | null;
   events: StationEvent[];
   clock: EventClock;
@@ -178,7 +207,7 @@ function bench(options: { scenario?: SimScenario; isConfigured?: boolean; arming
   const events: StationEvent[] = [];
   const waiting = new Map<number, { resolve: (value: unknown) => void; reject: (error: Error) => void }>();
   let nextId = 0;
-  let guardState: (() => string) | null = null;
+  let lineGuard: StationGuardTransport | null = null;
   const host = new StationHost(
     (message: FromStation) => {
       if (message.kind === "event") events.push(message.event);
@@ -191,7 +220,7 @@ function bench(options: { scenario?: SimScenario; isConfigured?: boolean; arming
     { getPorts: async () => [port] },
     clock,
     // A request that waits for the operator by mistake ends within four seconds, not within two minutes
-    { clock, armingLimitMs: options.armingLimitMs ?? 4000, onGuard: (guard) => (guardState = () => guard.state) },
+    { clock, armingLimitMs: options.armingLimitMs ?? 4000, onGuard: (guard) => (lineGuard = guard) },
   );
   const ask = <Result>(request: StationRequest): Promise<Result> =>
     new Promise<Result>((resolve, reject) => {
@@ -204,7 +233,8 @@ function bench(options: { scenario?: SimScenario; isConfigured?: boolean; arming
     arm,
     port,
     packets,
-    guardState: () => guardState?.() ?? null,
+    guard: () => lineGuard,
+    guardState: () => lineGuard?.state ?? null,
     events,
     clock,
     ask,
@@ -362,7 +392,7 @@ describe("the station on a real arm's line: a whole session", () => {
     expect(b.packets.length).toBe(sent); // nothing is sent after the line is closed
   });
 
-  it("takes the Worker's own simulated ports: a configured one is enabled, one lerobot never ran is blocked", { timeout: 120_000 }, async () => {
+  it("takes the Worker's own simulated ports: a configured one is enabled, and one lerobot never ran once its list is confirmed", { timeout: 120_000 }, async () => {
     const configured = bench();
     const starting = configured.ask<EnableRealResult>(enableReal({ source: "simulated-configured" }));
     await configured.until(() => armingOf(configured.events) !== undefined, "the event arming");
@@ -373,12 +403,20 @@ describe("the station on a real arm's line: a whole session", () => {
     expect(await configured.ask<DisableResult>({ type: "disable" })).toEqual({ positions: {}, isLineClosed: true });
     expect(configured.packets).toEqual([]); // the port of the test's own was never taken
 
+    // one lerobot never ran is not blocked: its report lists what PEAR's enable changes, in the EEPROM as well,
+    // and it is enabled once that list is confirmed
     const plain = bench();
-    const result = await plain.ask<EnableRealResult>(enableReal({ source: "simulated" }));
-    expect(result.outcome).toBe("blocked");
-    expect(result.blockers.map(({ code }) => code)).toEqual(["settings"]);
-    expect(result.report.isClosed).toBe(true);
-    expect(Object.keys(result.report.guard.passed).sort()).toEqual(["PING", "READ", "SYNC READ"]);
+    const waiting = await armed(plain, { source: "simulated" });
+    expect(waiting.arming.blockers).toEqual([]);
+    expect(differingOf(waiting.arming.report).filter(({ area }) => area === "eeprom").length).toBeGreaterThan(0);
+    expect(Object.keys(waiting.arming.report.guard.passed).sort()).toEqual(["PING", "READ", "SYNC READ"]);
+    await plain.ask(answerOf(plain, true));
+    const result = await waiting.enabling;
+    expect(result.outcome).toBe("enabled");
+    expect(result.blockers).toEqual([]);
+    expect(await plain.status()).toMatchObject({ arm: "real", robot: "READY", line: { refused: 0, refusals: [] } });
+    expect(await plain.ask<DisableResult>({ type: "disable" })).toEqual({ positions: {}, isLineClosed: true });
+    expect(plain.packets).toEqual([]); // the port of the test's own was never taken
 
     // a preflight takes the three sources as well, and tells the configured one's settings as PEAR's
     const report = await plain.ask<PreflightReport>({ type: "preflight", source: "simulated-configured", usb: USB, expected: printOf(SIM_CALIBRATION), isHidden: false });
@@ -410,15 +448,52 @@ describe("an arm that is not enabled: only reads reach the servos, and the port 
     return result;
   }
 
-  it("blocks servos lerobot never ran, naming every EEPROM row PEAR's enable would change", async () => {
-    const b = bench({ isConfigured: false });
-    const result = await ended(b, {}, "blocked");
-    expect(result.blockers.map(({ code }) => code)).toEqual(["settings"]);
-    const blocker = result.blockers[0] as Extract<EnableRealResult["blockers"][number], { code: "settings" }>;
-    expect(blocker.rows.length).toBeGreaterThan(0);
-    expect(blocker.rows.every(({ area, held, pear }) => area === "eeprom" && held !== pear)).toBe(true);
-    expect(blocker.rows).toEqual((result.report.settings ?? []).filter(({ area, held, pear }) => area === "eeprom" && held !== pear));
+  it("does not block servos lerobot never ran: it tells every row PEAR's enable would change, and nothing changes while the operator has not confirmed", async () => {
+    const b = bench({ isConfigured: false, armingLimitMs: 60_000 });
+    const before = tablesOf(b.arm);
+    const { enabling, arming } = await armed(b);
+    expect(arming.blockers).toEqual([]);
+
+    // the rows that differ show what each servo holds beside what PEAR writes: the factory's gain in every servo
+    const rows = differingOf(arming.report);
+    expect(rows.length).toBeGreaterThan(0);
+    for (const row of rows) expect(b.arm.servo(motorOf(row.id)).get(row.register as RegisterName)).toBe(row.held);
+    expect(rows.filter(({ register }) => register === "P_Coefficient").map(({ id, area, held, pear }) => ({ id, area, held, pear }))).toEqual(
+      [1, 2, 3, 4, 5, 6].map((id) => ({ id, area: "eeprom", held: 32, pear: 16 })),
+    );
+    expect(rows.some(({ id, register, held, pear }) => id === 6 && register === "Max_Torque_Limit" && held === 1000 && pear === 500)).toBe(true);
+
+    // until the answer the port was given reads only, and no register of any servo has changed
+    await b.clock.sleep(5);
+    expect(b.guardState()).toBe("reads");
+    expect(b.guard()?.counts.refused).toBe(0);
     expect(b.packets.length).toBeGreaterThan(200);
+    expect(b.packets.filter((packet) => !isReading(packet))).toEqual([]);
+    expect(changedBetween(before, tablesOf(b.arm))).toEqual([]);
+    expect(torqueOf(b.arm)).toEqual(MOTORS.map(() => false));
+    // and none could have: while the answer is not given, the guard refuses PEAR's own value for a listed row
+    const pearsWrite = protocol.writePacket(1, 21, [16]);
+    await expect((b.guard() as StationGuardTransport).write(pearsWrite)).rejects.toMatchObject({ reason: "reads-only" });
+    expect(b.arm.servo("shoulder_pan").get("P_Coefficient")).toBe(32);
+
+    // Cancel: nothing was written, and every register is as before
+    await b.ask(answerOf(b, false));
+    const result = await enabling;
+    expect(result).toMatchObject({ outcome: "refused", blockers: [], openMs: null });
+    expect(result.report.isClosed).toBe(true);
+    expect(differingOf(result.report)).toEqual(rows);
+    expect(b.isPortClosed()).toBe(true);
+    expect(b.guardState()).toBe("reads");
+    expect(b.packets.filter((packet) => !isReading(packet))).toEqual([]);
+    expect(changedBetween(before, tablesOf(b.arm))).toEqual([]);
+
+    // no answer within the limit: the same
+    const silent = bench({ isConfigured: false, armingLimitMs: 30 });
+    const silentBefore = tablesOf(silent.arm);
+    const unanswered = await ended(silent, {}, "refused");
+    expect(unanswered.blockers).toEqual([]);
+    expect(differingOf(unanswered.report)).toEqual(rows);
+    expect(changedBetween(silentBefore, tablesOf(silent.arm))).toEqual([]);
   });
 
   it("blocks an arm that is not the one the window read (stop)", async () => {
@@ -470,7 +545,7 @@ describe("an arm that is not enabled: only reads reach the servos, and the port 
     expect(extra.blockers).toEqual([{ code: "calibration", detail: "thumb: in the file, not among the servos" }]);
   });
 
-  it("gives every blocker of a report, in a fixed order, and the guard's refusals among them (guard)", async () => {
+  it("gives every blocker of a report, in a fixed order, and the guard's refusals among them (guard); a setting that differs is none", async () => {
     const b = bench();
     const report = await b.ask<PreflightReport>({ type: "preflight", source: "granted", usb: USB, expected: printOf(SIM_CALIBRATION), isHidden: false });
     expect(armingBlockers(report, null)).toEqual([]);
@@ -481,10 +556,12 @@ describe("an arm that is not enabled: only reads reach the servos, and the port 
     const servos = (report.servos ?? []).map((servo) => (servo.id === 2 ? { ...servo, status: 1, phase: 0x1c } : servo));
     const settings = (report.settings ?? []).map((row) => (row.id === 6 && row.address === 16 ? { ...row, held: 1000 } : row));
     const all = armingBlockers({ ...report, stop: "line-lost", servos, settings, guard: { passed: {}, refused: 1 } }, null);
-    expect(all.map(({ code }) => code)).toEqual(["stop", "settings", "status", "phase", "guard"]);
-    // Maximum_Acceleration is no blocker whatever the servo holds, and the guard is given PEAR's value for it
-    const lost = (report.settings ?? []).map((row) => (row.address === 85 ? { ...row, held: 0 } : row));
+    expect(all.map(({ code }) => code)).toEqual(["stop", "status", "phase", "guard"]);
+    // a setting PEAR's enable would change is no blocker, whatever the servo holds and wherever it keeps it
+    expect(armingBlockers({ ...report, settings }, null)).toEqual([]);
+    const lost = (report.settings ?? []).map((row) => ({ ...row, held: row.pear + 1 }));
     expect(armingBlockers({ ...report, settings: lost }, null)).toEqual([]);
+    // and the guard is given PEAR's value for each one, not the value the servo holds
     const allowed = guardSettings(lost);
     expect(Object.keys(allowed)).toEqual(["1", "2", "3", "4", "5", "6"]);
     expect(allowed[1]?.find(({ address }) => address === 85)?.value).toBe(254);
@@ -539,6 +616,127 @@ describe("an arm that is not enabled: only reads reach the servos, and the port 
     const silent = bench({ armingLimitMs: 30 });
     const result = await ended(silent, {}, "refused");
     expect(result.blockers).toEqual([]);
+  });
+});
+
+describe("servos that hold other settings than PEAR's: PEAR's enable changes them, and only once the operator has confirmed the list", () => {
+  /** Enables the station on an arm lerobot never ran, with the operator's confirmation; gives what the servos held
+   * before anything was read, the rows that were told to differ, and how many packets the reads were. */
+  async function enabledUnconfigured(): Promise<{
+    b: Bench;
+    before: Record<number, number[]>;
+    rows: PreflightSetting[];
+    readsBefore: number;
+    result: EnableRealResult;
+  }> {
+    const b = bench({ isConfigured: false });
+    const before = tablesOf(b.arm);
+    const { enabling, arming } = await armed(b);
+    expect(arming.blockers).toEqual([]);
+    const rows = differingOf(arming.report);
+    const readsBefore = b.packets.length;
+    expect(b.packets.every(isReading)).toBe(true);
+    expect(changedBetween(before, tablesOf(b.arm))).toEqual([]);
+    await b.ask(answerOf(b, true));
+
+    return { b, before, rows, readsBefore, result: await enabling };
+  }
+
+  it("enables such an arm once confirmed: READY, nothing refused, each listed row holds PEAR's value, and no other register of the EEPROM changed", { timeout: 120_000 }, async () => {
+    const { b, before, rows, readsBefore, result } = await enabledUnconfigured();
+    expect(result.outcome).toBe("enabled");
+    expect(result.blockers).toEqual([]);
+    expect(b.guardState()).toBe("station");
+    expect(b.packets.slice(0, readsBefore).every(isReading)).toBe(true);
+    const status = await b.status();
+    expect(status).toMatchObject({ arm: "real", robot: "READY" });
+    expect(status.line).toMatchObject({ refused: 0, refusals: [], lineErrors: 0, isLost: false });
+    expect(torqueOf(b.arm)).toEqual(MOTORS.map(() => true));
+    // PEAR's enable ends with every servo's Lock set: its EEPROM is closed again once the settings are written
+    expect(MOTORS.map((motor) => b.arm.servo(motor).get("Lock"))).toEqual(MOTORS.map(() => 1));
+
+    // each row that differed holds PEAR's value now, and so does every other row of the report
+    expect(rows.filter(({ area }) => area === "eeprom").length).toBeGreaterThan(0);
+    for (const { id, register, pear } of result.report.settings ?? []) {
+      expect(`${id} ${register}: ${b.arm.servo(motorOf(id)).get(register as RegisterName)}`).toBe(`${id} ${register}: ${pear}`);
+    }
+
+    // of the EEPROM area (every address below 40 of every servo) nothing changed but bytes of the listed rows:
+    // Return_Delay_Time (7) and P_Coefficient (21) of every servo, and of the gripper's servo Max_Torque_Limit
+    // (16 and 17), Protection_Current (28) and Overload_Torque (36)
+    const listed = rows.flatMap(bytesOf);
+    const changed = changedBetween(before, tablesOf(b.arm)).filter(isEepromByte);
+    expect(changed.filter((key) => !listed.includes(key))).toEqual([]);
+    expect(changed).toEqual([...[1, 2, 3, 4, 5].flatMap((id) => [`${id} 7`, `${id} 21`]), "6 7", "6 16", "6 17", "6 21", "6 28", "6 36"]);
+    // above it, the one register a servo may keep without power is a listed row as well
+    expect(rows.filter(({ area }) => area === "factory").map(({ id, address }) => `${id} ${address}`)).toEqual([1, 2, 3, 4, 5, 6].map((id) => `${id} 85`));
+
+    // Disable: the torque off, the port closed, and the EEPROM as the enable left it
+    const afterEnable = tablesOf(b.arm);
+    expect(await b.ask<DisableResult>({ type: "disable" })).toEqual({ positions: {}, isLineClosed: true });
+    expect(b.isPortClosed()).toBe(true);
+    expect(b.guardState()).toBe("reads");
+    expect(torqueOf(b.arm)).toEqual(MOTORS.map(() => false));
+    expect(await b.status()).toMatchObject({ robot: "OFF", arm: null, line: null });
+    expect(changedBetween(afterEnable, tablesOf(b.arm)).filter(isEepromByte)).toEqual([]);
+    expect([...new Set(b.packets.map(keyOf))].filter((key) => !ROWS.includes(key))).toEqual([]);
+    expect(warningsOf(b.events)).toEqual([]);
+  });
+
+  it("gives the guard, for every setting of a report, the one value PEAR's enable writes, and no row that is no setting of the station", async () => {
+    const b = bench({ isConfigured: false });
+    const report = await b.ask<PreflightReport>({ type: "preflight", source: "granted", usb: USB, expected: printOf(SIM_CALIBRATION), isHidden: false });
+    const settings = report.settings ?? [];
+    expect(differingOf(report).length).toBeGreaterThan(0);
+    const allowed = guardSettings(settings);
+    expect(Object.keys(allowed)).toEqual(["1", "2", "3", "4", "5", "6"]);
+    // Acceleration (41) is a row of the report and no setting: the guard knows that register by itself
+    const given = settings.filter(({ address }) => address !== 41);
+    expect(given.length).toBe(settings.length - 6);
+    for (const id of [1, 2, 3, 4, 5, 6]) {
+      expect(allowed[id]).toEqual(given.filter((row) => row.id === id).map(({ address, bytes, pear }) => ({ address, bytes, value: pear })));
+    }
+    // whatever the servos hold: the values given do not follow `held`
+    expect(guardSettings(settings.map((row) => ({ ...row, held: row.pear === 0 ? 1 : 0 })))).toEqual(allowed);
+    // a row whose address is no setting of the station gives nothing, in the EEPROM or not
+    const foreign: PreflightSetting[] = [
+      { id: 3, register: "ID", address: 5, bytes: 1, area: "eeprom", pear: 9, held: 3 },
+      { id: 3, register: "Homing_Offset", address: 31, bytes: 2, area: "eeprom", pear: 0, held: 100 },
+      { id: 3, register: "Goal_Position", address: 42, bytes: 2, area: "ram", pear: 2048, held: 2048 },
+    ];
+    expect(guardSettings(foreign)).toEqual({ 3: [] });
+    expect(guardSettings([...settings, ...foreign])).toEqual(allowed);
+  });
+
+  it("lets no other value through to a setting, and no other register of the EEPROM, while the station holds such an arm", { timeout: 120_000 }, async () => {
+    const { b, result } = await enabledUnconfigured();
+    expect(result.outcome).toBe("enabled");
+    const guard = b.guard() as StationGuardTransport;
+    const afterEnable = tablesOf(b.arm);
+    const word = (value: number): number[] => protocol.splitIntoByteChunks(value, 2);
+    const attempts: Array<[packet: Uint8Array, refusal: string]> = [
+      [protocol.writePacket(1, 21, [32]), "value 1 21"], // what the servo held before PEAR's enable
+      [protocol.writePacket(1, 21, [17]), "value 1 21"],
+      [protocol.writePacket(4, 7, [250]), "value 4 7"],
+      [protocol.writePacket(6, 16, word(1000)), "value 6 16"],
+      [protocol.writePacket(6, 28, word(500)), "value 6 28"],
+      [protocol.writePacket(1, 16, word(500)), "address 1 16"], // the gripper's setting, to another servo
+      [protocol.writePacket(2, 5, [9]), "address 2 5"], // the servo's ID
+      [protocol.writePacket(2, 31, word(100)), "address 2 31"], // Homing_Offset
+    ];
+    for (const [packet, refusal] of attempts) await expect(guard.write(packet)).rejects.toMatchObject({ reason: refusal.split(" ")[0] });
+    expect(guard.status().refusals.map(({ reason, id, address }) => `${reason} ${id} ${address}`)).toEqual(attempts.map(([, refusal]) => refusal));
+    const status = await b.status();
+    expect(status.robot).toBe("READY"); // a refusal is told, and the station goes on
+    expect(status.line?.refused).toBe(attempts.length);
+    expect(status.line?.refusals.length).toBe(5); // the last five, in words
+
+    // none of them reached the servos: the EEPROM is as the enable left it
+    const sent = new Set(b.packets.map((packet) => packet.join(" ")));
+    expect(attempts.filter(([packet]) => sent.has(packet.join(" ")))).toEqual([]);
+    expect(changedBetween(afterEnable, tablesOf(b.arm)).filter(isEepromByte)).toEqual([]);
+    expect(await b.ask<DisableResult>({ type: "disable" })).toEqual({ positions: {}, isLineClosed: true });
+    expect(b.isPortClosed()).toBe(true);
   });
 });
 

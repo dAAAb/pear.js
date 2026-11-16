@@ -11,14 +11,16 @@ station in a Worker of the page, driven by hand ("The station in a Worker, on a 
 State: published. The first, read-only version on 2026-11-15; the second version's stage A on 2026-11-16, and on
 the same day stage B's first two parts (the camera's frames reach the station; ask the model once), the
 read-only hand-over of a real arm's line to the Worker, and the station on a real arm behind a confirmation
-(Enable, Home, Stop, Disable), which has run on simulated servos only.
+(Enable, Home, Stop, Disable). Of that stage the reading has run on a real arm; the enabling itself has run on
+simulated servos only.
 
 Checked on 2026-11-16, on the files as published: `npm run typecheck` passes; `npm run build:web` gives three
-files; 1,673 browser checks pass in 28 parts, 0 failed; `npx vitest run` passes (89 files, 9,408 tests).
+files; 1,699 browser checks pass in 28 parts, 0 failed; `npx vitest run` passes (89 files, 9,411 tests).
 The read-only part met a real adapter, real servos, a real camera, a browser with a visible window and macOS
-once, on 2026-11-16 ("What the first try showed" below). **Nothing that writes to a servo has met a real arm.** A
-real model service has answered the published page once, with the simulated arm ("The first answer of a real
-model" below).
+once, on 2026-11-16 ("What the first try showed" below), and on the same day the station's Worker took a real
+arm's line and read it ("What the second try showed"). **Nothing that writes to a servo has met a real arm.** A
+real model service has answered the published page with the simulated arm ("The first answer of a real model")
+and with a real arm's state and its camera's frame ("What the second try showed").
 
 A session that restarts continues from "Left" and changes the files it finds in place.
 
@@ -614,8 +616,8 @@ What it is:
 - The Worker takes the granted port as the hand-over check does and reads all that a preflight reads, behind the
   station's guard in its state "reads" (below), which lets no write through. From the report alone it finds the
   reasons against enabling (`armingBlockers` in `web/src/station_host.ts`): the line was not read to its end; the
-  timing self-check failed on this line; a register of the EEPROM that PEAR's enable writes holds another value
-  than PEAR's; a servo's Status is not 0; a servo's Phase has the bit that PEAR's enable would clear by rewriting
+  timing self-check failed on this line; a servo's Status is not 0; a servo's Phase has the bit that PEAR's enable
+  would clear by rewriting
   the register; a servo holds the factory's values in place of a calibration; a loaded calibration file differs
   from the registers; the guard refused something while the line was only read. With a reason the Worker closes
   the line and answers "blocked", and the page says each reason with what the person can do.
@@ -626,6 +628,13 @@ What it is:
   and does not look for obstacles; Stop brakes and holds with the torque on; Disable lets the arm go limp; and
   when the cable is pulled, the tab is closed or the browser stops, the servos hear nothing and hold their last
   goal until their power is cut. Under the list are a tick box and the button "Switch the torque on".
+- A setting that differs is no reason against enabling. PEAR's enable writes its settings whatever the servos
+  hold, as lerobot does every time it connects. So where a servo holds another value than PEAR's in a register
+  of the EEPROM that PEAR's enable writes, the confirmation's list has a warning with one row for each such
+  register (the servo, the register and its address, the value held, the value PEAR writes) and says that the
+  change stays in the servos after the page is closed and the power was off; the tick's label then ends with
+  the sentence that the person accepts it. The stage's first version refused such an arm and told the person to
+  run lerobot first; "What the second try showed" says why that was wrong.
 - The answer (`arm`) is sent only for a press the browser calls trusted, with the box ticked, within two
   minutes of the report. It names the request it answers, and the Worker refuses an answer that names another
   request than the one that waits. A Stop or a hidden page while the Worker waits counts as a refusal, and so
@@ -655,12 +664,10 @@ guard. In the state "station" these pass, and nothing else:
 | 5 | WRITE | Acceleration (41) | one of the six | 254 |
 | 6 | WRITE | a setting given on entering "station" | the servo it was given for | exactly the value given |
 
-- Row 6 is how the settings of PEAR's enable pass. For the registers of the EEPROM (Return_Delay_Time,
-  Operating_Mode, the three gains, and the gripper's torque limit, protection current and overload torque) the
-  value given is the one the servo was read to hold, which is PEAR's on an arm without a reason against enabling:
-  so this stage changes no setting that survives a power cycle, and an arm whose servos hold other values (one
-  that lerobot never ran) is told to run lerobot once. Maximum_Acceleration (85), which lerobot's table puts in
-  a block of its own, is let through with PEAR's value whatever the servo holds.
+- Row 6 is how the settings of PEAR's enable pass (Return_Delay_Time, Maximum_Acceleration, Operating_Mode, the
+  three gains, and the gripper's torque limit, protection current and overload torque): each with the one value
+  PEAR's enable writes to it, and no other. Where a servo holds another value the write changes it, in the
+  EEPROM for good; the confirmation has listed every such row.
 - No jump: a goal passes only when it is within 40 steps (about 3.5 degrees) of that servo's last goal that
   passed, or within 40 steps of the servo's present position as the guard itself saw it in the answers to the
   last SYNC READ of Present_Position, not more than 250 ms ago. PEAR's station writes goals of two kinds: a
@@ -680,27 +687,33 @@ What is proven, all of it on simulated servos:
   and answers that arrive in pieces; and PEAR's station run through the guard on a simulated arm (enable, Home
   stopped on its way from a far pose, Home to its end, disable): nothing was refused, and what passed is exactly
   the table. Eight breaks of the guard made in scratch copies each fail tests.
-- The Worker (`tests/web/station_real.test.ts`, 15 tests): a whole session with a record of every packet the
+- The Worker (`tests/web/station_real.test.ts`, 18 tests): a whole session with a record of every packet the
   port was given (only reads before the confirmation; afterwards the table's rows and nothing else; at the end
-  the torque off, the port closed, and no register of the EEPROM changed); servos that lerobot never ran are
-  blocked with their rows; the other reasons; a refusal, a Stop, a hidden page and no answer; an answer that
+  the torque off, the port closed, and no register of the EEPROM changed); servos that hold other settings than
+  PEAR's are not blocked: until the answer the guard refuses PEAR's own write and no register changes, after a
+  refusal none has changed, and after the confirmation exactly the listed rows hold PEAR's values and no other
+  register of the EEPROM area has changed; the reasons against enabling; a refusal, a Stop, a hidden page and no
+  answer; an answer that
   names another request; an enable that PEAR's own checks refuse (torque off, port closed, the robot's error);
   the cable pulled while the station holds (FAULT, the line told lost, Disable still ends). Five breaks each
-  fail tests: the confirmation not awaited, the guard entered before it, a setting that differs let through,
-  the port left open after "blocked", the answer's request not compared.
+  fail tests: the confirmation not awaited, the guard entered before it, the guard given the values the servos
+  hold (PEAR's write is then refused), a setting that differs made a reason again, the port left open after
+  "blocked", the answer's request not compared, a Stop that does not refuse, a Disable that leaves the line
+  open.
 - The page's sentences (`tests/web/arming_view.test.ts`, 17 tests): every reason, the confirmation's list with
   its numbers, the line's messages, in both languages.
 
-What is proven, by the part `real` of `web/tests/browser_check.py` (95 checks; headless Chromium; alone it takes
-about seventeen seconds), of the station on a real arm (the requests "enableReal" and "arm", the control "Enable
+What is proven, by the part `real` of `web/tests/browser_check.py` (121 checks; headless Chromium; alone it takes
+about twenty-four seconds), of the station on a real arm (the requests "enableReal" and "arm", the control "Enable
 the station on this arm…"). What the window asked the Worker is taken from a record the check keeps beneath the
 page (a subclass of `Worker` that notes every request posted, and the arrival of the arming report), not from
 the page's own log.
 
 - The whole session (`?preflight=sim-configured`, the page's simulated arm; the Worker takes a simulated port of
   its own whose servos hold PEAR's settings, as an arm that lerobot has run). Before the control is pressed no
-  Worker runs and nothing was asked; its note says that nothing is written until the confirmation and that this
-  step has so far run on simulated servos only and never on a real arm. Pressed, the Worker's report comes with
+  Worker runs and nothing was asked; its note says that nothing is written until the confirmation, that a
+  setting that survives a power cycle is changed only when the confirmation has listed it, and that this step
+  has so far run on simulated servos only and never on a real arm. Pressed, the Worker's report comes with
   no stop and no reason against enabling, its guard having let through reads only (PING, READ, SYNC READ) and
   refused nothing; the confirmation shows its list in its order, first and as a warning the sentence about
   simulated servos, the limp time and the count of transactions measured on this line, and how many registers
@@ -722,10 +735,21 @@ the page's own log.
 - Refused: Cancel sends one answer, not confirmed, that names its request; the page says that nothing was
   written, reads the arm again and offers the control again. A switch of the language while the confirmation is
   shown builds it anew, unticked, with every sentence in Chinese.
-- Blocked (`?preflight=sim`, servos with their own settings, as an arm lerobot never ran): one reason,
-  `settings`, with its 15 rows; the page says in one sentence which settings PEAR's enable would change, how
-  many, and to run the arm with lerobot first, in English and in Chinese; no confirmation is offered, no answer
-  is sent, the guard let through reads only, and the window reads the arm again.
+- The settings (`?preflight=sim`, servos with their own settings, as an arm lerobot never ran): the Worker's
+  report comes with no stop and no reason against enabling, and 15 of its rows of the EEPROM hold another value
+  than PEAR's. The confirmation's item about the EEPROM is a warning: it says how many settings Enable will
+  change, of how many such registers it writes, that they survive a power cycle and stay in the servos after the
+  page is closed and after the power was off, and that they are the values lerobot writes to an SO-101 follower
+  every time it connects; under it is one row for each setting (the servo's name and id, the register and its
+  address, the value held and the value PEAR writes), in English and in Chinese. The tick's words end with one
+  more sentence, in both languages: the settings listed above are changed in the servos. Cancel sends one
+  answer, not confirmed; the arming report's guard let through reads only, the log's line of the Cancel names no
+  setting, and the window reads the arm again. Pressed again, the same rows differ and are listed again; after
+  the tick and a real press the window sends one answer, confirmed, and the station holds the arm. The log's
+  line of the confirmation says how many settings that survive a power cycle will be changed and each one. The
+  line's counts hold a `WRITE` to every register that was listed beside `WRITE 40`, `WRITE 55` and
+  `SYNC WRITE 42`; 0 refused, no line error. Disable's second press disables, and the window reads the arm
+  again.
 - The real path (no `?preflight=...`), on a stand-in of a browser's serial port that answers as a calibrated arm
   of six servos: the control is offered; pressed, the Worker's own `getPorts()` gives no port, so the request
   ends blocked at `no-port` and the page says so. By the port's own record the window had closed the port when
@@ -740,17 +764,27 @@ no way to go: the plan, the approval, Stop and the result are seen, a move at sp
 not. The limp time in the list is that of simulated servos. The two-minute limit for the answer is not waited
 for (the host's test holds it). Not in the part: a lost line, a refusing guard, a Worker that is gone or a page
 that is closed or hidden while a real arm is enabled, an error after the confirmation, the reasons against
-enabling other than `settings` and the stop `no-port`, and a press by the keyboard. The check's own tick and
+enabling other than the stop `no-port`, and a press by the keyboard. That the servos hold PEAR's values
+after the enable is not read back in the browser: the Worker makes its simulated port anew for each request
+(the host's test reads the registers). The check's own tick and
 press are input the browser calls trusted because automation made it: whatever can make such input can confirm.
 
 What no test shows, besides everything a real arm does:
 
-- The Worker with a granted port. In a headless browser `getPorts()` gives none, so opening a granted port,
-  reading it, the confirmation and the first write have never run on a port of a browser. The hand-over check on
-  the owner's arm is what answers the first of these.
-- What a servo does when its torque comes on, how far an arm sags in the limp time, and whether the timing
-  self-check passes on a real line. The values another program left in Goal_Velocity and Torque_Limit, which
-  PEAR's station never writes, are shown in the report and not judged.
+- The first write on a port of a browser. In a headless browser `getPorts()` gives none; on the owner's arm the
+  Worker opened the granted port, read it and passed the timing self-check ("What the second try showed"), and
+  that version stopped there. The confirmation and everything after it have run on simulated servos only.
+- What a servo does when its torque comes on, and how far an arm sags in the limp time. The values another
+  program left in Goal_Velocity and Torque_Limit, which PEAR's station never writes, are shown in the report and
+  not judged.
+- The list is as old as the read. After the confirmation the Worker reads nothing again, and the answer may
+  come two minutes after the report. Servos exchanged behind the same adapter meanwhile would be written
+  PEAR's settings without their rows having been listed, unless PEAR's own comparison of the calibration, which
+  comes before its first write, tells the arms apart.
+- That a real servo's EEPROM keeps what was written: the simulated servos keep every write whatever their Lock
+  holds. PEAR's enable leaves Lock at 1, and Disable at 0, as lerobot's does.
+- When the robot fails to open after the confirmation, some of the listed settings may have been written and
+  others not; the page's sentence for that failure does not say so.
 - The jump rule on servos that lag: the simulated servos follow their goals within its limit, so the run through
   the guard passes also with its first condition dropped.
 - The page closed, reloaded or hidden while a real arm is enabled: the Worker ends with the page, nothing is
@@ -920,9 +954,10 @@ and the servos' answer time are the real cost: `docs/progress/sim-bridge.md`), m
     `web/src/station_guard.ts`: only the writes of PEAR's station pass, each pinned to its register, its servos
     and, for a setting, its value, and a goal passes only when it does not jump ("The station on a real arm").
     PEAR's own station sends whatever its code writes.
-15. **No setting that survives a power cycle is changed.** PEAR's enable writes its settings into the servos'
-    EEPROM at every enable, whatever they hold. The page lets these writes through only with the value the servo
-    holds already, and does not enable an arm whose servos hold other values.
+15. **A setting that survives a power cycle is changed only after the confirmation has listed it.** PEAR's
+    enable writes its settings into the servos' EEPROM at every enable, whatever they hold, and tells nobody. The
+    page reads them first, lists each register that the enable will change with the value held and the value
+    PEAR writes, and the guard lets PEAR's values through and no others.
 16. **A real arm is enabled without a calibration file** when none is loaded: the robot is given what the servos
     hold, with drive mode 0. PEAR does not start without the file, nor with a file that differs from the
     registers; the page refuses the second as well, and an arm whose servos hold the factory's values.
@@ -964,11 +999,19 @@ and the servos' answer time are the real cost: `docs/progress/sim-bridge.md`), m
 10. **An echo must be checked even when every servo answered.** When the line echoes, the echo of a servo's ping
     looks like a status packet with a non-zero error byte; the bus counts it as an answering servo. The echo is
     detected reliably only by a sync read, where a broadcast packet returning is no servo's answer.
+11. **PEAR's prompt and PEAR's code disagree about the gripper's observation.** The SO-101's prompt says
+    "Observations: unitless -1 closed, +1 open (0 halfway)" (`control/robots/so101/prompts/single_arm_pose.md`).
+    The station computes the quantity as a width between the settings' `gripper_width_cm`, 0.0 and 6.0, from the
+    gripper's opening (`control/robots/so101/motion/kinematics.py`, `quantities`): 3.3 for a gripper 55 % open,
+    6.0 for an open one. pear.js does as PEAR's code does, so a model reads from the page what it would read
+    from PEAR's own station. On the first ask with a real arm the model said in its reasoning that 3.3 is odd for
+    a quantity it was told lies between -1 and 1. Not changed: which of the two the model was trained on is not
+    known here.
 
 ## Not verified
 
-- On a real arm, anything beyond what "What the first try showed" below lists as seen; Chrome itself on macOS (the
-  first try was in Brave 157, which is Chromium 157) and the text of its permission prompts.
+- On a real arm, anything beyond what the two tries below list as seen; Chrome itself on macOS (both tries were
+  in Brave 157, which is Chromium 157) and the text of its permission prompts.
 - That real STS3215 servos answer a broadcast PING one after another (the simulated ones do; lerobot's broadcast
   ping relies on this).
 - Reopening a real adapter at other baud rates.
@@ -982,8 +1025,10 @@ and the servos' answer time are the real cost: `docs/progress/sim-bridge.md`), m
   through a stand-in. A camera without a 640 x 480 mode: Chromium's fake camera has one.
 - A vLLM server reached directly from the page. The one real service that has answered ("The first answer of a
   real model" below) stood behind a gateway that answers the CORS preflight itself.
-- Chrome's mixed-content and local-network-access behaviour on a public origin (only headless Chromium 159 was
-  measured; what Chrome on macOS asks a person on the real GitHub Pages address is not known).
+- Chrome's mixed-content and local-network-access behaviour on a public origin: headless Chromium 159 was
+  measured, and in Brave 157 on macOS the first check of a service on a private network address timed out while
+  the permission was asked and the second passed ("What the second try showed"); the prompt's own text was not
+  recorded.
 - GitHub Pages itself and the job's `npm ci` on Linux.
 - Firefox and Safari (the message for a browser without Web Serial was shown by taking `navigator.serial` away
   from Chromium); a screen reader; a hidden tab.
@@ -1060,6 +1105,43 @@ HTTPS on a private network address and answers CORS for the page's origin alone.
   local, and a headless browser has nowhere to show the permission's prompt. With the checks on, the same page
   said "Nothing answers at this address" with its paragraph about the browser's permission, and the log held
   `local-network=prompt`. What a person is asked in a browser with a window is still not known.
+
+### What the second try showed (2026-11-16): the Worker on a real line, and a real frame to a real model
+
+The same arm, Mac and browser as the first try (Brave 157, Chromium 157), on the page as published at 8706d4b.
+From the page's log and two screenshots:
+
+- **The Worker reached the real port.** "Enable the station on this arm..." was pressed. The window closed its
+  port; the Worker's `getPorts()` gave one port, the adapter's (USB vendor 1a86, product 55d3); it opened it
+  behind the guard, made the handshake and found the six servos the window had read. Its guard let through 6
+  PING, 81 READ and 177 SYNC READ packets and refused none; the line had no error; the whole took 3.1 s; the
+  Worker closed the port and the window read the arm again. This is what no source had settled: in this browser
+  a Worker started from a Blob gets the port the page was granted.
+- **The control loop's timing on the real line** (the timing self-check: 150 control periods of one SYNC READ of
+  the six positions): mean 20 ms, longest 20.9 ms, none over 25 ms, the longest read 1.4 ms. It passed.
+- **The limp time**: 63 single READs one after another took 26.2 ms, the longest 0.6 ms. PEAR's enable leaves a
+  servo without torque for as many transactions.
+- **The servos**: torque on at all six (as on the first try), Status 0, 11.8 to 12.0 V, 34 to 37 簞C,
+  Goal_Velocity 0, Torque_Limit 1000 (the gripper's 500), Phase 12, Lock 1 at two servos and 0 at four. Of the
+  45 settings PEAR's enable writes, 43 held PEAR's values; shoulder_lift and elbow_flex held P_Coefficient 32
+  where PEAR writes 16.
+- **So that version did not enable the arm**: it refused an arm on which PEAR's enable would change a setting
+  that survives a power cycle, and told the person to run lerobot first. Nothing was written. The owner had
+  lerobot and a leader arm at hand and said what is wrong with the rule: whoever has only the arm and a browser
+  cannot do that. The rule was changed on the same day ("The station on a real arm").
+- **The permission to reach the local network** (the model service was on a private network address): the
+  first check of step 3 ended after its time limit with the log's `local-network=prompt`, while the browser
+  asked; four seconds later the second check passed.
+- **"Ask the model once" with the real arm's state and the wrist camera's frame**, to a PEAR model on a GPU
+  elsewhere: the instruction was to pick up a white tube. The request held a system prompt of 4,177 characters,
+  a turn text of 198 and one JPEG of 24,490 bytes; the answer came after 13.7 s (1,401 input and 2,790 output
+  tokens) and ends in an action, a move of 2.5 cm in y with the gripper held, which the page showed and did not
+  execute. In its reasoning the model found the tube and a can in the frame, placed the tube at about two
+  thirds of the frame's width and moved it towards PEAR's reference at 80 %. It also called the gripper's width
+  of 3.3 odd ("Found", 11).
+
+Not tried in it: the hand-over check by itself, the enabling (nothing has written to a real servo yet), a tab
+that is hidden, pulling the cable.
 
 ## Requests
 
