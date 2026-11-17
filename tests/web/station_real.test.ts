@@ -822,11 +822,14 @@ describe("servos that hold other settings than PEAR's: PEAR's enable changes the
 describe("the station on a real arm's line: what fails, and the rules of state", () => {
   it("rejects with the robot's error when PEAR's enable fails: torque off, the port closed, and a warning says so", { timeout: 120_000 }, async () => {
     const b = bench();
-    // the wrist's roll, whose calibrated range begins at zero, stands five steps below it: outside PEAR's bounds
-    for (const motor of MOTORS) b.arm.setPosition(motor, motor === "wrist_roll" ? -5 : SIM_START_POSITIONS[motor]);
-    const before = keptOf(b.arm);
+    for (const motor of MOTORS) b.arm.setPosition(motor, SIM_START_POSITIONS[motor]);
     const { enabling, arming } = await armed(b);
     expect(arming.blockers).toEqual([]);
+    // The arm is limp while the operator reads: the wrist's roll, whose calibrated range begins at zero, is moved
+    // five steps below it, outside PEAR's bounds, after the report and before the confirmation. Had it stood there
+    // when the Worker read the arm, the report would hold the reason "bounds" and nothing would be asked.
+    b.arm.setPosition("wrist_roll", -5);
+    const before = keptOf(b.arm);
     await b.ask(answerOf(b, true));
     await expect(enabling).rejects.toThrow("outside commissioned bounds: wrist_roll=");
     expect(b.guardState()).toBe("reads");

@@ -28,6 +28,7 @@ import {
   changesEeprom,
   confirmationItems,
   eepromChangesLogged,
+  isBoundsRefusal,
   lineSentences,
   refusalsSince,
   refusedSentence,
@@ -44,6 +45,7 @@ import type {
   ArmingBlocker,
   PortSource,
   HomeResult,
+  MotorSteps,
   PreflightReport,
   StationEvent,
   StationStatus,
@@ -1320,6 +1322,22 @@ const preflightParameter = new URLSearchParams(location.search).get("preflight")
 const simulatedSource: PortSource | null =
   preflightParameter === "sim" ? "simulated" : preflightParameter === "sim-configured" ? "simulated-configured" : null;
 const isPreflightSimulated = simulatedSource !== null;
+/** Where the address asks the servos of that simulated port to stand when the Worker makes it
+ * (?preflight=sim-configured&pose=shoulder_pan:758,elbow_flex:837: motors by their names, each with its steps): a
+ * check of the page reaches a pose with it. Null without a simulated source, so that nothing of the address
+ * reaches a real arm, and without the parameter. What it names is not judged here: steps that are no whole number
+ * are sent as NaN, and the Worker refuses what is no motor and what is no step. */
+const poseParameter = new URLSearchParams(location.search).get("pose");
+const simulatedPose: MotorSteps | null =
+  simulatedSource === null || poseParameter === null
+    ? null
+    : Object.fromEntries(
+        poseParameter.split(",").map((part): [string, number] => {
+          const [name = "", steps = ""] = part.split(":", 2);
+
+          return [name, /^\d+$/.test(steps) ? Number(steps) : Number.NaN];
+        }),
+      );
 
 /** Enabling the station on a real arm (the request "enableReal"), as the page follows it. */
 interface ArmingView {
@@ -1676,6 +1694,7 @@ async function runPreflight(): Promise<void> {
       usb,
       expected: offer.expected,
       isHidden: document.hidden,
+      ...(simulatedPose === null ? {} : { pose: simulatedPose }),
     });
     preflight.report = report;
     preflight.reports += 1;
@@ -1776,6 +1795,7 @@ async function enableOnArm(): Promise<void> {
       expected: offer.expected,
       calibrationFile,
       isHidden: document.hidden,
+      ...(simulatedPose === null ? {} : { pose: simulatedPose }),
     });
     isGivenBack = result.report.isClosed;
     arming.isLineOpen = false;
@@ -1803,7 +1823,13 @@ async function enableOnArm(): Promise<void> {
     const words = errorText(error);
     arming.message = {
       tone: "error",
-      text: () => t(wasConfirmed ? "station.arming.failedAfter" : "station.arming.failed", { error: words }),
+      // PEAR's refusal of a joint that left its bounds after the report was read has its own text: the torque is
+      // off again and the line is closed, which the general text cannot say
+      text: () =>
+        t(
+          !wasConfirmed ? "station.arming.failed" : isBoundsRefusal(words) ? "station.arming.failedBounds" : "station.arming.failedAfter",
+          { error: words },
+        ),
     };
     log.add(`Station: enabling on the real arm failed${wasConfirmed ? " after the operator confirmed" : ""}: ${words}`);
   }

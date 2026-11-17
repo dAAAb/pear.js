@@ -4,6 +4,7 @@
 // numbers; and a real arm's line is told while the station holds it. Nothing here touches the document; main.ts
 // only puts the parts on the page.
 
+import { LAYOUT } from "../../src/so101/layout";
 import { type PreflightPart, preflightParts, type Wording } from "./preflight_view";
 import {
   ARMING_LIMIT_MS,
@@ -113,7 +114,17 @@ function timingFailures(report: PreflightReport, wording: Wording): string {
   return t("station.arming.blocker.timing.noNumbers");
 }
 
-/** Returns each of `blockers` as a sentence that says what was found on this arm and what the person can do. */
+/** How PEAR's refusal of a pose outside its position bounds begins: the library's own text, up to its details. */
+const BOUNDS_REFUSAL = LAYOUT.texts.outside_bounds.slice(0, LAYOUT.texts.outside_bounds.indexOf("{")).trim();
+
+/** Whether `error`, the words of a failed enabling, is PEAR's refusal of a joint that stands outside its position
+ * bounds: after it PEAR has switched the torque off again, and the Worker has closed the line. */
+export function isBoundsRefusal(error: string): boolean {
+  return error.includes(BOUNDS_REFUSAL);
+}
+
+/** Returns each of `blockers` as a sentence that says what was found on this arm and what the person can do; a
+ * joint outside PEAR's bounds has a sentence of its own. */
 export function blockerSentences(
   report: PreflightReport,
   blockers: readonly ArmingBlocker[],
@@ -122,8 +133,19 @@ export function blockerSentences(
   const { t, count, listed } = wording;
   const names = (ids: readonly number[]): string => listed(ids.map((id) => servoName(id, report.servos)));
 
-  return blockers.map((blocker): BlockerSentence => {
+  return blockers.flatMap((blocker): BlockerSentence | BlockerSentence[] => {
     switch (blocker.code) {
+      case "bounds":
+        return blocker.joints.map((joint) => ({
+          code: blocker.code,
+          text: t("station.arming.blocker.bounds", {
+            servo: `${joint.name} (${joint.id})`,
+            position: joint.position,
+            first: joint.firstAccepted,
+            last: joint.lastAccepted,
+          }),
+          detail: null,
+        }));
       case "stop":
         return {
           code: blocker.code,

@@ -14,6 +14,7 @@ import {
   confirmationItems,
   eepromChanges,
   eepromChangesLogged,
+  isBoundsRefusal,
   lineSentences,
   refusalsSince,
   refusedSentence,
@@ -117,6 +118,52 @@ function expectWhole(text: string): void {
 }
 
 describe.each(LANGUAGES)("enabling on a real arm, in %s", (language) => {
+  it("says each joint outside PEAR's bounds in a sentence of its own: where it stands, the steps PEAR accepts, and what to do", () => {
+    const blockers: ArmingBlocker[] = [
+      {
+        code: "bounds",
+        joints: [
+          { id: 1, name: "shoulder_pan", position: 758, firstAccepted: 838, lastAccepted: 3212 },
+          { id: 3, name: "elbow_flex", position: 3069, firstAccepted: 838, lastAccepted: 3067 },
+        ],
+      },
+    ];
+    const sentences = blockerSentences(reportOf(), blockers, wordingOf(language));
+    expect(sentences.map((sentence) => sentence.code)).toEqual(["bounds", "bounds"]);
+    for (const sentence of sentences) {
+      expectWhole(sentence.text);
+      expect(sentence.detail).toBeNull();
+      expect(sentence.text).not.toMatch(/\brad\b/); // in steps, as the page speaks everywhere else
+    }
+    const [pan, elbow] = sentences.map((sentence) => sentence.text) as [string, string];
+    expect(pan).toMatch(/^shoulder_pan \(1\)\D+758\D+838\D+3212\D+$/);
+    expect(elbow).toMatch(/^elbow_flex \(3\)\D+3069\D+838\D+3067\D+$/);
+    const said =
+      language === "en"
+        ? ["stands at step 758", "838 to 3212", "nothing was written to a servo", "by hand towards the middle of its range", "“Enable the station on this arm” again"]
+        : ["停在第 758 步", "第 838 步到第 3212 步", "沒有對伺服馬達寫入任何東西", "用手把這個關節往它活動範圍的中間移動", "再按一次「在這支手臂上啟用工作站」"];
+    for (const words of said) expect(pan).toContain(words);
+  });
+
+  it("has a text of its own for PEAR's refusal of the pose after the confirmation, and keeps the general one for other failures", () => {
+    const refusal =
+      "ValueError: Joint or gripper target outside commissioned bounds: shoulder_pan=-1.944028 rad, bounds=[-1.762300, 1.762300], allowance=0.060000";
+    expect(isBoundsRefusal(refusal)).toBe(true);
+    expect(isBoundsRefusal("RuntimeError: Enable requires the arm to settle; startup timed out")).toBe(false);
+    expect(isBoundsRefusal("ValueError: Command leaves the position bounds: shoulder_pan=1.900000 rad")).toBe(false);
+    const { t } = wordingOf(language);
+    const text = t("station.arming.failedBounds", { error: refusal });
+    expectWhole(text);
+    expect(text.endsWith(refusal)).toBe(true); // PEAR's sentence follows as the detail
+    const said =
+      language === "en"
+        ? ["PEAR refused the pose of the arm", "switched the torque off again", "the Worker has closed the line", "towards the middle of its range"]
+        : ["PEAR 拒絕了手臂的姿勢", "把扭力再關掉", "Worker 也已經關閉線路", "往它活動範圍的中間移動"];
+    for (const words of said) expect(text).toContain(words);
+    // the general text is not for this case: it tells to switch the power off, which a closed line does not need
+    for (const words of said.slice(0, 3)) expect(t("station.arming.failedAfter", { error: refusal })).not.toContain(words);
+  });
+
   it("says every reason against enabling with what was found on this arm", () => {
     const report = reportOf({
       stop: "open-failed",
@@ -344,6 +391,7 @@ describe("the texts of enabling on a real arm", () => {
         [
           { code: "stop", stop: "other-arm" }, { code: "timing" }, { code: "status", ids: [9] },
           { code: "phase", ids: [1] }, { code: "uncalibrated", ids: [1] }, { code: "calibration", detail: "x" }, { code: "guard", refused: 1 },
+          { code: "bounds", joints: [{ id: 1, name: "shoulder_pan", position: 758, firstAccepted: 838, lastAccepted: 3212 }] },
         ],
         wording,
       );

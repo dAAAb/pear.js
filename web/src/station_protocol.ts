@@ -60,13 +60,17 @@ export type StationRequest =
    * is written to a servo and the robot is not opened. The window must have closed its own use of the port first.
    * `usb` is the adapter as the window knows it (null: the browser gave no ids), `expected` what the window read
    * of the six servos, `isHidden` whether the page is hidden. With `source` "simulated" the Worker takes a
-   * simulated port of its own in place of a granted one: the browser check's way through the same code. */
+   * simulated port of its own in place of a granted one: the browser check's way through the same code. `pose` is
+   * where servos of that simulated port stand when the Worker makes it, by the motor's name, the others at their
+   * start; it is taken only with a simulated source, and with the source "granted" the Worker refuses a request
+   * that has one: nothing of the page's address may reach a real arm. */
   | {
       readonly type: "preflight";
       readonly source: PortSource;
       readonly usb: UsbIds | null;
       readonly expected: ArmFingerprint;
       readonly isHidden: boolean;
+      readonly pose?: MotorSteps;
     }
   /** Enables the station on a real arm: the one request after which the page writes to a servo. The Worker takes
    * the line as a preflight does and reads all a preflight reads, behind a guard that lets no write through
@@ -77,7 +81,9 @@ export type StationRequest =
    * and answers "enabled". The window must have closed its own use of the port first. `source`, `usb`, `expected`
    * and `isHidden` are a preflight's. `calibrationFile` is the lerobot calibration file the person loaded, when
    * the page found it equal to the registers; null when none is loaded: the robot is then given the calibration
-   * the servos hold, with lerobot's drive mode 0 for every motor. */
+   * the servos hold, with lerobot's drive mode 0 for every motor. `pose` is a preflight's too: where servos of a
+   * simulated port stand when the Worker makes it, taken only with a simulated source and refused with the source
+   * "granted". */
   | {
       readonly type: "enableReal";
       readonly source: PortSource;
@@ -85,6 +91,7 @@ export type StationRequest =
       readonly expected: ArmFingerprint;
       readonly calibrationFile: Readonly<Record<string, MotorCalibration>> | null;
       readonly isHidden: boolean;
+      readonly pose?: MotorSteps;
     }
   /** The operator's answer to the event "arming" of the request "enableReal" that waits for it. `requestId` is
    * that event's: an answer that names another request than the one that waits is refused with an error, so that
@@ -329,6 +336,20 @@ export interface PreflightReport {
   readonly tookMs: number;
 }
 
+/** A joint that stands where PEAR's enable would refuse the arm: PEAR's position bounds are fixed angles about the
+ * middle of a joint's calibrated range, and the first feedback its control loop reads must lie within them and
+ * their feedback tolerance. */
+export interface BoundsFinding {
+  /** The servo's id and its motor's name in PEAR's layout. */
+  readonly id: number;
+  readonly name: string;
+  /** Where the joint stands: Present_Position, steps. */
+  readonly position: number;
+  /** The first and the last step at which PEAR accepts this joint with the calibration the robot is given. */
+  readonly firstAccepted: number;
+  readonly lastAccepted: number;
+}
+
 /** A reason the station is not enabled on a real arm, found by reads before anything was written. A setting that
  * PEAR's enable would change is none: PEAR writes its settings at every enable whatever the servos hold. The
  * report's `settings` whose `held` is not `pear` are what it will change, those of the area "eeprom" for good; the
@@ -347,6 +368,9 @@ export type ArmingBlocker =
   /** The loaded calibration file is not equal to what the Worker read of the servos: `detail` names the
    * differences. */
   | { readonly code: "calibration"; readonly detail: string }
+  /** Joints that stand outside PEAR's position bounds: PEAR's enable would write its settings, switch the torque
+   * on, refuse its first feedback and switch the torque off again. */
+  | { readonly code: "bounds"; readonly joints: readonly BoundsFinding[] }
   /** The guard refused packets while the line was only read: a defect of the page. */
   | { readonly code: "guard"; readonly refused: number };
 

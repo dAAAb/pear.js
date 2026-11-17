@@ -5073,15 +5073,136 @@ def real_real_path(check: Check, browser, base: str) -> None:
     check.equal(f"{label}: the station is off, step 1 reads the arm, the window's guard refused nothing, and the control is offered again", [station_view(page)["phase"], phase(page), page.locator("#guard-line").get_attribute("data-refused"), real_offered(page)], ["off", "reading", "0", True])
 
 
+# How the page's sentence about a joint outside PEAR's bounds begins, in its two languages: the servo, the step it
+# stands at, and the first and the last step PEAR accepts of it with this arm's calibration.
+REAL_BOUNDS = "{servo} stands at step {position}, outside the steps PEAR accepts of it with this arm's calibration: {first} to {last}. "
+REAL_BOUNDS_CHINESE = "{servo} 停在第 {position} 步，超出 PEAR 依這支手臂的校正所接受的範圍：第 {first} 步到第 {last} 步。"
+# The sentences the page shows about joints outside PEAR's bounds, in the order it shows them.
+REAL_BOUNDS_SHOWN = "[...document.querySelectorAll('#station-arming li[data-code=\"bounds\"]')].map(item => item.textContent)"
+
+
+def real_bounds(check: Check, browser, base: str) -> None:
+    """With ?preflight=sim-configured&pose=... the Worker's simulated servos stand where the address says. A joint
+    outside PEAR's bounds is said before the operator is asked: no confirmation, one sentence for each such joint
+    with the steps PEAR accepts, and nothing written. At the first step PEAR accepts, the confirmation is asked and
+    the station is enabled. The simulated calibration: shoulder_pan's range is 758 to 3292, of which PEAR accepts
+    838 to 3212; elbow_flex's is 836 to 3069, of which PEAR accepts 838 to 3067. A joint that leaves the bounds
+    between the report and the press is not checked here: the page cannot move the Worker's servos."""
+    numbers = check.numbers.setdefault("real", {})
+
+    def posed(pose: str) -> Page:
+        """Opens the page on the Worker's simulated port with its servos at ``pose``, and connects the window's arm."""
+        page = real_page(check, browser, base, f"?lang=en&preflight=sim-configured&pose={pose}")
+        connect_sim(page)
+        page.wait_for_function("window.pearjs.arm.view.live !== null")
+        return page
+
+    def positions(report: dict) -> dict:
+        """Where the report's servos stand, by their names."""
+        return {servo.get("name"): servo.get("position") for servo in report.get("servos") or []}
+
+    def finding(joint: tuple) -> dict:
+        """A joint as the Worker's report names it among its reasons."""
+        name, number, position, first, last = joint
+        return {"id": number, "name": name, "position": position, "firstAccepted": first, "lastAccepted": last}
+
+    def begins(said: list, joints: list, wording: str) -> bool:
+        """Whether the sentences are one for each joint, in their order, each beginning with its own numbers."""
+        expected = [wording.format(servo=f"{name} ({number})", position=position, first=first, last=last) for name, number, position, first, last in joints]
+        return len(said) == len(expected) and all(text.startswith(beginning) for text, beginning in zip(said, expected))
+
+    def blocked(label: str, page: Page, joints: list) -> list:
+        """Presses the control and holds what follows where joints stand outside: the request ends blocked before
+        the operator is asked, by reads only, and the arm is read again. Returns the sentences the page shows."""
+        check.ok(f"{label}: the control is offered on the simulated arm", real_offered(page), real_shown(page))
+        lines = len(log_lines(page))
+        check.ok(f"{label}: the control is pressed with real input", real_input(lambda: page.click("#station-arming-run", timeout=5000)), real_shown(page))
+        check.ok(f"{label}: the request ends blocked, and the log's line of the outcome names bounds and says that nothing was written", real_wait_log(page, REAL_BLOCKED + " (bounds); nothing was written"), log_lines(page)[-3:])
+        check.ok(f"{label}: the Worker gave the line back: the log says once that the window reads the arm again, on the same port", real_wait_log(page, REAL_READ_AGAIN, 10000) and len([line for line in log_lines(page)[lines:] if line.startswith(REAL_READ_AGAIN)]) == 1, log_lines(page)[-3:])
+        told = real_told(page)
+        report = told.get("report") or {}
+        numbers[f"{label}: the arming report's reasons"] = told.get("blockers")
+        check.equal(
+            f"{label}: the Worker read the arm to its end, each such joint where the address put it, and tells one reason against enabling: those joints in the servos' order, each with the step it stands at and the first and the last step PEAR accepts",
+            [report.get("stop", "absent"), [positions(report).get(name) for name, *_ in joints], told.get("blockers")],
+            [None, [position for _, _, position, *_ in joints], [{"code": "bounds", "joints": [finding(joint) for joint in joints]}]],
+        )
+        guard = report.get("guard") or {}
+        check.equal(f"{label}: the report's guard let through PING, READ and SYNC READ, nothing else, and refused nothing: reads only", [real_reads_only(guard), sorted(guard.get("passed") or {}), guard.get("refused")], [True, ["PING", "READ", "SYNC READ"], 0])
+        shown = real_shown(page)
+        check.equal(f"{label}: no confirmation is asked: the page shows the reason, no tick box and no \"Switch the torque on\"", [shown["isPartShown"], shown["blockers"], shown["hasConfirm"], shown["tick"], shown["go"], "Switch the torque on" in shown["text"]], [True, "bounds", False, None, None, False])
+        check.ok(f"{label}: the page says that the station was not enabled on this arm and that nothing was written to a servo", "The station was not enabled on this arm, and nothing was written to a servo" in shown["text"], shown["text"][:400])
+        check.equal(f"{label}: the window asked the Worker to enable, got its report, and sent no answer", [entry["type"] for entry in real_asked(page)], ["enableReal", "arming report"])
+        real_input(lambda: wait_phase(page, "reading", 10000))
+        check.equal(f"{label}: the station is off, step 1 reads the arm, and the control is offered again", [station_view(page)["phase"], phase(page), real_offered(page)], ["off", "reading", True])
+        return page.evaluate(REAL_BOUNDS_SHOWN)
+
+    # one joint outside: said before the operator is asked, in both languages
+    label = "the bounds"
+    one = [("shoulder_pan", 1, 758, 838, 3212)]
+    page = posed("shoulder_pan:758")
+    said = blocked(label, page, one)
+    numbers["the bounds: the sentence"] = said
+    check.ok(f"{label}: one sentence names shoulder_pan (1), the step 758 it stands at, and the steps 838 to 3212 that PEAR accepts", begins(said, one, REAL_BOUNDS), said)
+    check.ok(f"{label}: the sentence holds no angle in rad, and says to move the joint by hand and to press the control again", len(said) == 1 and "rad" not in said[0] and all(words in said[0] for words in ("Move that joint by hand towards the middle of its range", "“Enable the station on this arm” again")), said)
+    page.click("#language-zh")
+    real_wait(page, "document.getElementById('station-arming').innerText.includes('停在')", 5000)
+    chinese = page.evaluate(REAL_BOUNDS_SHOWN)
+    chinese_shown = real_shown(page)
+    numbers["the bounds: the sentence in Chinese"] = chinese
+    check.ok("languages: the sentence about the joint outside PEAR's bounds is in Chinese, with shoulder_pan (1), the step 758 and the steps 838 to 3212", begins(chinese, one, REAL_BOUNDS_CHINESE), chinese)
+    check.ok("languages: the Chinese sentence holds no angle in rad and none of the English words, and the page says in Chinese that the station was not enabled and nothing was written", len(chinese) == 1 and not any(words in chinese[0] for words in ("rad", "stands at", "outside the steps", "Move that joint")) and "沒有在這支手臂上啟用工作站，也沒有對伺服馬達寫入任何東西" in chinese_shown["text"] and not chinese_shown["hasConfirm"], [chinese, chinese_shown["text"][:300]])
+    page.click("#language-en")
+    real_wait(page, "document.getElementById('station-arming').innerText.includes('stands at step')", 5000)
+    check.ok(f"{label}: back in English the sentence is the one it was", page.evaluate(REAL_BOUNDS_SHOWN) == said, page.evaluate(REAL_BOUNDS_SHOWN))
+
+    # two joints outside, named in the address in the other order: two sentences, in the servos' order
+    label = "the bounds, two joints"
+    two = [("shoulder_pan", 1, 3213, 838, 3212), ("elbow_flex", 3, 837, 838, 3067)]
+    page = posed("elbow_flex:837,shoulder_pan:3213")
+    said = blocked(label, page, two)
+    numbers["the bounds, two joints: the sentences"] = said
+    check.ok(f"{label}: two sentences, in the servos' order, each with its own numbers: shoulder_pan (1) at 3213 of 838 to 3212, then elbow_flex (3) at 837 of 838 to 3067", begins(said, two, REAL_BOUNDS) and all("rad" not in text for text in said), said)
+
+    # the first step PEAR accepts: the confirmation is asked, and after the tick and a real press the station is enabled
+    label = "the bounds, the first accepted step"
+    page = posed("shoulder_pan:838")
+    check.ok(f"{label}: the control is offered on the simulated arm", real_offered(page), real_shown(page))
+    check.ok(f"{label}: the control is pressed with real input", real_input(lambda: page.click("#station-arming-run", timeout=5000)), real_shown(page))
+    check.ok(f"{label}: the Worker's report comes and the confirmation is shown", real_asking(page), real_shown(page))
+    told = real_told(page)
+    shown = real_shown(page)
+    check.equal(
+        f"{label}: the Worker read shoulder_pan at step 838 and tells no reason against enabling; the page shows none and asks for the confirmation, the box unticked and \"Switch the torque on\" disabled",
+        [positions(told.get("report") or {}).get("shoulder_pan"), told.get("blockers"), shown["blockers"], shown["hasConfirm"], shown["isTicked"], shown["isGoDisabled"], shown["go"]],
+        [838, [], "", True, False, True, "Switch the torque on"],
+    )
+    check.ok(f"{label}: ticked with real input, the button can be pressed", real_input(lambda: page.check("#station-arming-tick", timeout=5000)) and real_wait(page, "document.getElementById('station-arming-go')?.disabled === false", 5000), real_shown(page))
+    check.ok(f"{label}: the button is pressed with real input", real_input(lambda: page.click("#station-arming-go", timeout=5000)), real_shown(page))
+    check.ok(f"{label}: after the tick and a real press the station holds the arm", real_wait_station(page, "view.phase === 'on' && view.status !== null && view.status.robot === 'READY' && view.status.line !== null", 45000), station_view(page)["phase"])
+    status = station_view(page)["status"] or {}
+    status_line = page.locator("#station-status").inner_text()
+    check.equal(f"{label}: the Worker's status says a real arm, ready and holding, and the window answered the report once: confirmed", [status.get("arm"), status.get("robot"), status.get("control"), [entry["isConfirmed"] for entry in real_asked(page, "arm")]], ["real", "READY", "HOLD", [True]])
+    check.ok(f"{label}: the status line says that the station holds the real arm, torque on", status_line.startswith("The station holds the real arm, torque on: robot READY, control loop HOLD."), status_line)
+    page.click("#station-disable")
+    check.ok(f"{label}: Disable's first press only asks, and the button of the second press is offered and pressed", real_input(lambda: page.click("#station-disable-go", timeout=5000)), station_view(page)["phase"])
+    check.ok(f"{label}: the second press disables", real_wait_station(page, "view.phase === 'off'", 30000), station_view(page)["phase"])
+    check.equal(f"{label}: the Worker was asked to disable once", len(real_asked(page, "disable")), 1)
+    offered = real_offered(page)
+    check.equal(f"{label}: the station is off, step 1 reads the arm, and the control is offered again", [station_view(page)["phase"], phase(page), offered], ["off", "reading", True])
+
+
 def part_real(check: Check, browser, base: str, service: str) -> None:
     """The station on a real arm (the requests "enableReal" and "arm"): the page asks for the first write only
     after the tick and a real press; Enable, Home, Stop and Disable on the Worker's simulated port that holds
     PEAR's settings; an arm whose settings PEAR's enable will change, which the confirmation lists and the tick
-    accepts before they are written; and the real path as far as a headless browser goes. Every way out ends with
-    the arm's line given back and the window reading again."""
+    accepts before they are written; the real path as far as a headless browser goes; and an arm of which a joint
+    stands outside PEAR's bounds, which is said before the operator is asked. Every way out ends with the arm's
+    line given back and the window reading again."""
     real_station(check, browser, base, service)
     real_changed_settings(check, browser, base)
     real_real_path(check, browser, base)
+    real_bounds(check, browser, base)
     ModelService.configure()
 
 

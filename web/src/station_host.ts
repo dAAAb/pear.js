@@ -23,16 +23,19 @@ import { WristCamera, type WristFrameReader } from "../../src/so101/hardware/cam
 import {
   DEFAULT_FOLLOWER_CONFIG,
   followerMotors,
+  MOTORS,
+  type MotorName,
   simulatedArm,
   SO101Follower,
   SO101Hardware,
 } from "../../src/so101/hardware/index";
 import { SO101ControlLoop } from "../../src/so101/joint/control_loop";
-import { ARM } from "../../src/so101/layout";
+import { ARM, LAYOUT } from "../../src/so101/layout";
 import { SO101Robot } from "../../src/so101/robot";
 import {
   encodeSignMagnitude,
   ENCODING_TABLE,
+  FeetechMotorsBus,
   getAddress,
   OperatingMode,
   protocol,
@@ -45,10 +48,11 @@ import { CameraFeed } from "../../src/station/cameras";
 import type { MonotonicClock } from "../../src/station/joint/clock";
 import { DEFAULT_CONTROL_SETTINGS } from "../../src/station/joint/config";
 import { realTimeClock } from "../../src/station/joint/deadline_clock";
+import { JointLimits } from "../../src/station/joint/limits";
 import { MotionStatus, type MotionResult } from "../../src/station/motion/results";
 import type { ControlLoopClass, StationConfig } from "../../src/station/robot";
 import type { DetailedStatus, HomePlan, Observation } from "../../src/station/schemas";
-import { SIM_CALIBRATION, simulatedConfiguredPort, simulatedGrantedPort } from "./sim_port";
+import { SIM_CALIBRATION, SimArm, simulatedConfiguredPort, simulatedGrantedPort } from "./sim_port";
 import { SETTING_ADDRESSES, type StationSetting } from "./station_guard";
 import {
   type GrantedPort,
@@ -65,6 +69,7 @@ import {
   type ArmFingerprint,
   ARMING_LIMIT_MS,
   type ArmingBlocker,
+  type BoundsFinding,
   type CameraNumbers,
   type CameraTelling,
   type ClockNumbers,
@@ -324,9 +329,125 @@ export function armingBlockers(
     }
     if (differences.length > 0) blockers.push({ code: "calibration", detail: differences.join("; ") });
   }
+  // the calibration the robot would be given: the loaded file when it is equal to the registers, else the registers;
+  // a servo with the factory's values has no calibration to check a pose with
+  const isFileHeld = calibrationFile !== null && !blockers.some(({ code }) => code === "calibration");
+  const outside = boundsFindings(
+    servos.filter(({ id }) => !uncalibrated.includes(id)),
+    isFileHeld ? calibrationFile : heldCalibration(servos),
+  );
+  if (outside.length > 0) blockers.push({ code: "bounds", joints: outside });
   if (report.guard.refused > 0) blockers.push({ code: "guard", refused: report.guard.refused });
 
   return blockers;
+}
+
+/** A line on which nothing is sent: the bus that only turns steps into a joint's angle is made on it. */
+const NO_LINE: Transport = {
+  write: () => Promise.reject(new RuntimeError("This bus only converts positions")),
+  read: () => Promise.reject(new RuntimeError("This bus only converts positions")),
+  close: () => Promise.resolve(),
+};
+
+/** The last step of a servo's turn: Present_Position counts 0 to 4095. */
+const LAST_STEP = 4095;
+
+/**
+ * Refuses a request "preflight" or "enableReal" whose `pose` cannot be taken. A pose says where the servos of a
+ * simulated port stand, so a request for the granted port may have none: nothing of the page's address may reach
+ * a real arm. With a simulated source it must name motors of the arm, each with a whole number of steps from 0
+ * to LAST_STEP.
+ */
+function checkPose(request: Pick<PreflightRequest, "source" | "pose">): void {
+  if (request.pose === undefined) return;
+  if (request.source === "granted") {
+    throw new RuntimeError("A pose is taken only with a simulated port: this request is for the granted port");
+  }
+  for (const [name, steps] of Object.entries(request.pose)) {
+    if (!(MOTORS as readonly string[]).includes(name)) {
+      throw new RuntimeError(`The pose names "${name}", which is no motor of the arm: ${MOTORS.join(", ")}`);
+    }
+    if (!Number.isInteger(steps) || steps < 0 || steps > LAST_STEP) {
+      throw new RuntimeError(
+        `The pose puts ${name} at ${String(steps)}, which is no whole number of steps from 0 to ${LAST_STEP}`,
+      );
+    }
+  }
+}
+
+/** Makes a simulated arm of the Worker's own: its servos stand at their start, but for those `pose` names,
+ * which stand where it says. The pose is one that `checkPose` has let through. */
+function simulatedArmAt(pose: MotorSteps | undefined): SimArm {
+  const arm = new SimArm();
+  for (const [name, steps] of Object.entries(pose ?? {})) arm.setPosition(name as MotorName, steps);
+
+  return arm;
+}
+
+/**
+ * Returns the joints of `servos` that PEAR's enable would refuse where they stand, each with the first and the last
+ * step PEAR accepts of it. The rule is the library's own and no number of it is repeated here: the bus turns a
+ * servo's steps into the joint's angle with `calibration` (what the robot would be given), the hardware turns that
+ * into PEAR's position, and the limits of the configuration the real arm's robot is made with check it with their
+ * feedback tolerance, as the control loop checks the first feedback it reads. The accepted steps come of the same
+ * check at every step of a turn, so they cannot differ from PEAR's refusal. Each joint is checked alone, in a pose
+ * whose other joints are at the middle of PEAR's bounds. The gripper is checked like a joint: the bus reads it as a
+ * share of its calibrated range. A servo whose steps the bus cannot convert (a range of no steps, a name PEAR does
+ * not know) is left to PEAR's enable, which says so.
+ */
+export function boundsFindings(
+  servos: readonly PreflightServo[],
+  calibration: Readonly<Record<string, MotorCalibration>>,
+): BoundsFinding[] {
+  const config = REAL_STATION_CONFIG.robot;
+  const limits = JointLimits.fromConfig(config);
+  const offsets = (config.hardware as HardwareSection).joint_offsets;
+  const motors = followerMotors(DEFAULT_FOLLOWER_CONFIG.useDegrees);
+  const bus = new FeetechMotorsBus(NO_LINE, motors, { ...calibration });
+  const middle = limits.lowerBounds.map((lower, index) => (lower + (limits.upperBounds[index] as number)) / 2);
+  const atRest = Object.fromEntries(MOTORS.map((motor) => [motor, 0]));
+  /** Whether PEAR accepts `motor` at `steps`; null when the bus cannot convert them. */
+  const isAccepted = (motor: MotorName, steps: number): boolean | null => {
+    const { id } = motors[motor];
+    let reading: number;
+    try {
+      reading = bus.normalize(new Map([[id, steps]])).get(id) as number;
+    } catch (error) {
+      if (isValueError(error) || error instanceof RuntimeError) return null;
+      throw error;
+    }
+    const index = MOTORS.indexOf(motor);
+    const pose = [...middle];
+    pose[index] = SO101Hardware.busPosition({ ...atRest, [motor]: reading }, offsets)[index] as number;
+    try {
+      limits.checkPositions(pose, LAYOUT, limits.feedbackTolerance);
+    } catch (error) {
+      if (isValueError(error)) return false;
+      throw error;
+    }
+
+    return true;
+  };
+
+  const found: BoundsFinding[] = [];
+  for (const { id, name, position } of servos) {
+    if (!(MOTORS as readonly string[]).includes(name)) continue;
+    const motor = name as MotorName;
+    if (isAccepted(motor, position) !== false) continue;
+    let firstAccepted: number | null = null;
+    let lastAccepted: number | null = null;
+    for (let steps = 0; steps <= LAST_STEP; steps++) {
+      if (isAccepted(motor, steps) !== true) continue;
+      firstAccepted ??= steps;
+      lastAccepted = steps;
+    }
+    if (firstAccepted === null || lastAccepted === null) {
+      throw new RuntimeError(`PEAR's bounds accept no step of ${name} with this calibration`);
+    }
+    found.push({ id, name, position, firstAccepted, lastAccepted });
+  }
+
+  return found;
 }
 
 /** What a calibration and a servo's registers are compared by, with the registers' names as a difference is told. */
@@ -748,6 +869,7 @@ export class StationHost {
   /** The request "preflight": refused while the robot is open or being opened, and while another preflight has
    * the line. */
   private async preflight(request: PreflightRequest): Promise<PreflightReport> {
+    checkPose(request);
     if (this.robot !== null || this.isEnabling) {
       throw new RuntimeError("Station already open: a preflight of a real arm needs the station disabled");
     }
@@ -810,18 +932,18 @@ export class StationHost {
     };
   }
 
-  /** Returns the one port a preflight reads: the simulated port of the Worker's own, or the one port the page
-   * was granted (of the adapter `usb`, when the window knows it). Null with the stop in `found` when there is no
-   * such port or more than one. */
+  /** Returns the one port a preflight reads: the simulated port of the Worker's own, whose servos stand where
+   * the request's `pose` says, or the one port the page was granted (of the adapter `usb`, when the window knows
+   * it). Null with the stop in `found` when there is no such port or more than one. */
   private async preflightPort(
-    request: Pick<PreflightRequest, "source" | "usb">,
+    request: Pick<PreflightRequest, "source" | "usb" | "pose">,
     found: PreflightFindings,
   ): Promise<GrantedPort | null> {
     let ports: GrantedPort[];
     if (request.source === "simulated") {
-      ports = [simulatedGrantedPort()];
+      ports = [simulatedGrantedPort(simulatedArmAt(request.pose))];
     } else if (request.source === "simulated-configured") {
-      ports = [simulatedConfiguredPort(ENABLE_SETTINGS, GRIPPER_SETTINGS)];
+      ports = [simulatedConfiguredPort(ENABLE_SETTINGS, GRIPPER_SETTINGS, simulatedArmAt(request.pose))];
     } else if (this.serial === null) {
       found.stop = "no-serial";
       found.detail = "The Worker's navigator has no serial: this browser gives a Worker no serial ports";
@@ -980,6 +1102,7 @@ export class StationHost {
   /** The request "enableReal": refused while the robot is open or being opened, and while a preflight or another
    * "enableReal" has the line. */
   private async enableReal(requestId: number, request: EnableRealRequest): Promise<EnableRealResult> {
+    checkPose(request);
     if (this.robot !== null || this.isEnabling) {
       throw new RuntimeError("Station already open: enabling a real arm needs the station disabled");
     }

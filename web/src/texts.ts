@@ -463,6 +463,8 @@ export const EN = {
     "These servos hold the factory's values (offset 0, range 0 to 4095) in place of a calibration: {servos}. Calibrate the arm with lerobot, which writes the calibration into the servos, then try again.",
   "station.arming.blocker.calibration":
     "The loaded calibration file is not equal to what the Worker read of the servos ({detail}). PEAR starts only when they are equal. Load this arm's file or remove the file, and try again; without a file the station uses the calibration the servos hold.",
+  "station.arming.blocker.bounds":
+    "{servo} stands at step {position}, outside the steps PEAR accepts of it with this arm's calibration: {first} to {last}. PEAR would switch the torque on, refuse this pose and switch the torque off again, so the station was not enabled and nothing was written to a servo. Move that joint by hand towards the middle of its range, then press “Enable the station on this arm” again.",
   "station.arming.blocker.guard":
     "The Worker's guard refused packets ({refused}) while the line was only read. Nothing was written, but this is a defect of the page: do not enable the station on this arm with this version, and please copy the log at the bottom of the page and send it.",
   "station.arming.confirm.untried":
@@ -515,6 +517,8 @@ export const EN = {
     "Enabling the station on this arm failed: {error}. No confirmation was sent, and without one the Worker writes nothing to a servo.",
   "station.arming.failedAfter":
     "Enabling failed after you confirmed: {error}. The page does not know how far the Worker came: the servos may have their torque on and hold, or be limp. Support the arm. To release it, switch the servos' power off; then reload the page.",
+  "station.arming.failedBounds":
+    "PEAR refused the pose of the arm after you confirmed: a joint stands outside the positions PEAR accepts. PEAR has switched the torque off again, and the Worker has closed the line. Move the joint PEAR names by hand towards the middle of its range, then press “Enable the station on this arm” again. PEAR's words: {error}",
   "station.real.line": "The arm's line: the guard let through {passed}; it refused {refused}; line errors: {errors}.",
   "station.real.line.nothing": "nothing yet",
   "station.real.lost":
@@ -1090,6 +1094,8 @@ export const ZH_TW: Record<TextKey, string> = {
     "這些伺服馬達裡是原廠的數值（偏移 0、範圍 0 到 4095），不是校正值：{servos}。請用 lerobot 校正手臂，lerobot 會把校正寫進伺服馬達，然後再試一次。",
   "station.arming.blocker.calibration":
     "載入的校正檔和 Worker 從伺服馬達讀到的不一致（{detail}）。PEAR 只有在兩者一致時才會啟動。請載入這支手臂的校正檔，或移除檔案，然後再試一次；沒有檔案時，工作站會使用伺服馬達裡的校正。",
+  "station.arming.blocker.bounds":
+    "{servo} 停在第 {position} 步，超出 PEAR 依這支手臂的校正所接受的範圍：第 {first} 步到第 {last} 步。PEAR 會先開啟扭力、拒絕這個姿勢，再把扭力關掉，所以沒有啟用工作站，也沒有對伺服馬達寫入任何東西。請用手把這個關節往它活動範圍的中間移動，然後再按一次「在這支手臂上啟用工作站」。",
   "station.arming.blocker.guard":
     "在只讀取線路的期間，Worker 的保護機制擋下了 {refused} 個封包。沒有寫入任何東西，但這是頁面的缺陷：請不要用這個版本在這支手臂上啟用工作站，並請複製頁面最下方的紀錄傳回來。",
   "station.arming.confirm.untried":
@@ -1136,6 +1142,8 @@ export const ZH_TW: Record<TextKey, string> = {
     "無法在這支手臂上啟用工作站：{error}。頁面沒有送出確認，而沒有確認，Worker 不會對伺服馬達寫入任何東西。",
   "station.arming.failedAfter":
     "在你確認之後啟用失敗：{error}。頁面不知道 Worker 做到哪一步：伺服馬達的扭力可能是開著並撐住手臂，也可能是鬆軟的。請扶住手臂。要放開它，請關掉伺服馬達的電源；然後重新載入頁面。",
+  "station.arming.failedBounds":
+    "在你確認之後，PEAR 拒絕了手臂的姿勢：有關節停在 PEAR 接受的位置之外。PEAR 已經把扭力再關掉，Worker 也已經關閉線路。請用手把 PEAR 指出的那個關節往它活動範圍的中間移動，然後再按一次「在這支手臂上啟用工作站」。PEAR 的原話：{error}",
   "station.real.line": "手臂的線路：保護機制放行了 {passed}；擋下 {refused} 個；線路錯誤：{errors}。",
   "station.real.line.nothing": "還沒有任何封包",
   "station.real.lost":

@@ -14,10 +14,12 @@ State: published. The first, read-only version on 2026-11-15; the second version
 the same day stage B's first two parts (the camera's frames reach the station; ask the model once), the
 read-only hand-over of a real arm's line to the Worker, and the station on a real arm behind a confirmation
 (Enable, Home, Stop, Disable), which ran on a real arm the same day ("What the third try showed"); and steps by
-hand and one action of a model at the operator's press, which have run on simulated servos only.
+hand and one action of a model at the operator's press, which have run on simulated servos only. On 2026-11-17 a
+joint that stands outside PEAR's bounds became a reason against enabling that is said before the operator
+confirms.
 
-Checked on 2026-11-16, on the files as published: `npm run typecheck` passes; `npm run build:web` gives three
-files; 1,845 browser checks pass in 28 parts, 0 failed; `npx vitest run` passes (90 files, 9,434 tests).
+Checked on 2026-11-17, on the files as published: `npm run typecheck` passes; `npm run build:web` gives three
+files; 1,884 browser checks pass in 28 parts, 0 failed; `npx vitest run` passes (91 files, 9,449 tests).
 The read-only part met a real adapter, real servos, a real camera, a browser with a visible window and macOS
 once, on 2026-11-16 ("What the first try showed" below), and on the same day the station's Worker took a real
 arm's line and read it ("What the second try showed"); then the page enabled the station on that arm and sent it
@@ -905,11 +907,58 @@ hook seven requests are rejected and Stop is answered; the row of the second pre
 "Don't", and the warning of a large action; a held Enter gives one step; the clock's line when the page is
 visible again; the confirmation's two new items in both languages.
 
-The checks can fail, as far as one run shows: with the trusted presses, the hook's rule, `window.pearjs.jog`'s
-rule and the held key's rule taken out of the page together (seven places), `ask` fails 4 checks and `real` 4,
-among them the script's click on Execute, on Home and on the approval, and the hook's refusal for the granted
-port. Both parts stop early in that run, so the checks after that point (the steps, the hook while an arm is
-held, Disable's second press, Execute on a real arm, the held key) were not reached in it.
+The checks can fail. With the trusted presses, the hook's rule, `window.pearjs.jog`'s rule and the held key's
+rule taken out of the page together (seven places), `ask` fails 4 checks and `real` 4, among them the script's
+click on Execute, on Home and on the approval, and the hook's refusal for the granted port; both parts stop early
+in that run. Each rule taken out alone, in the part `real`: the trusted press of a step, 4 checks fail; of
+"Execute on the arm", 3; of Disable's second press, 2; the held key's rule, 2 (the step ran twice); the hook's
+rule while an arm is held together with `window.pearjs.jog`'s, 5 and more (a script's `jog` moved the arm, and
+the hook's requests reached the Worker).
+
+### A joint outside PEAR's bounds is said before the confirmation (2026-11-17)
+
+PEAR refuses to enable an arm of which a joint stands outside PEAR's own bounds: fixed angles about the middle
+of the calibrated range (`limits` in `src/so101/config.ts`), with a tolerance of 0.06 rad for the first feedback.
+With a calibration as lerobot makes it that is, from the middle of the range, 1,187 steps for shoulder_pan,
+1,184 for shoulder_lift, 1,114 for elbow_flex, 1,160 for wrist_flex and 1,745 for wrist_roll; the gripper is
+never refused. A folded arm rests near these bounds (PEAR's own comment expects a folded pose just outside lift
+and elbow to pass through the tolerance): the owner's shoulder_lift rests 6 to 7 steps inside.
+
+Until this stage the page found the refusal out after the operator had confirmed: the report held no reason
+against enabling, PEAR wrote its settings and switched the torque on, refused its first feedback and switched
+the torque off again, and the page showed its general text for a failure after the first write, with PEAR's
+sentence in radians. A browser check of 2026-11-16 met the same refusal on the simulated arm, where a slider had
+put shoulder_pan at the end of its range, and took it for a station that did not come up.
+
+What it is:
+
+- **A reason against enabling, `bounds`** (`boundsFindings` in `web/src/station_host.ts`): for each joint PEAR
+  would refuse where it stands, the servo, the step it stands at, and the first and the last step PEAR accepts
+  with this arm's calibration. The rule is the library's own, called and not copied: the bus's reading of the
+  steps, the hardware's position, and the limits' check with the feedback tolerance, as the control loop checks
+  its first feedback; the accepted steps come of the same check at every step of a turn. Nothing is written and
+  no confirmation is asked. The page says one sentence a joint, in steps, with what to do: move the joint by hand
+  towards the middle of its range and press the control again.
+- **After the confirmation too.** The arm is limp while the operator reads, so a joint can leave the bounds
+  between the report and the press; then PEAR's own refusal still comes. The page says that PEAR refused the
+  pose, that the torque is off again and the Worker has closed the line, and to move the joint inward, with
+  PEAR's sentence as the detail.
+- **For the browser check**, the address's parameter `pose` beside `preflight` says where the simulated servos
+  of a real arm's path stand. The Worker refuses a request that has a pose for the granted port.
+
+How it was verified. In Node, on a real arm's path over simulated servos (`tests/web/station_limits.test.ts`):
+13 poses beyond the bounds are blocked with the exact joint and steps, nothing but reads passed the guard, no
+torque came on and the port was closed; the last accepted step enables and the first refused one is blocked, for
+four joints; a pose reached after the report gets PEAR's words, the torque off and the port closed. In a browser
+(the part `real`, 39 new checks): the blocked outcome with its sentence in both languages, two joints in the
+servos' order, and the first accepted step enabling. The checks fail when the rule is broken: in Node the check
+taken out, an accepted step off by one, the tolerance left out; in the browser the sentence's two steps swapped.
+
+What does not hold: a joint within a step or two of the bound can pass the report and be refused after the
+confirmation. The hand-over check does not show the finding. The simulated arm's Enable still gets PEAR's
+refusal after its self-check. A joint that stands outside its own calibrated range is pulled to the range's end
+by the servo's own limit when the torque comes on, and nothing says so beforehand. None of this has met a real
+arm.
 
 ## What the camera hands to a turn, in PEAR
 
@@ -1321,13 +1370,10 @@ For the coordinator's files:
   port's close and for the robot's open and close in the Worker; a Recover control; a watchdog for the camera
   while an action runs; whether the guard's limit of 40 steps should grow with a late period; then the task that
   a model drives (Start, Pause, Resume, Clear), on the simulated arm first.
-- Seen once in the browser check and not looked into: on a page of the simulated arm that had been through many
-  states (shoulder_pan moved to the lower end of its range, the cable pulled and the arm started again, three
-  calibration files loaded, one ask answered), a press of Enable did not bring the station up within 20 s. What
-  the page said then was not read; it may be PEAR's refusal of a joint at its limit.
-- The breaks of this stage's browser checks one rule at a time (the steps, the hook while an arm is held,
-  Disable's second press, Execute on a real arm, the held key): the one run with all rules out stopped before
-  them.
+- PEAR's bounds ("A joint outside PEAR's bounds" above): the same finding in the hand-over check's report and
+  before the simulated arm's Enable, whose slider runs over the whole calibrated range; a reason against enabling
+  for a joint that stands outside its own calibrated range, which the servo's limit moves when the torque comes
+  on.
 - `web/tests/build_check.mjs`: on the second version only its comparison of names was run, in a checkout
   without the installed packages (1,316 references; the one it did not find is a file of an installed
   package). Its clean build was not run; the job's steps (install, type check, tests, build) were run on
