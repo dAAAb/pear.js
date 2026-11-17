@@ -259,14 +259,22 @@ describe("the texts of executing", () => {
       expect(ZH_TW[key], key).toContain("執行這個動作");
     }
     for (const key of ["page.notice", "task.notice"] as const) {
-      expect(EN[key], key).toContain("Nothing runs by itself");
-      expect(EN[key], key).toContain("one at a time");
-      expect(ZH_TW[key], key).toContain("不會有任何動作自行執行");
-      expect(ZH_TW[key], key).toContain("一次只執行一個");
+      // an answer's action is executed at the operator's press for it. That nothing runs by itself is no longer
+      // said: a task runs on either arm, on a real arm after a confirmation, and the model then moves the arm
+      expect(EN[key], key).toMatch(/when you press “Execute this action” for/);
+      expect(EN[key], key).not.toContain("Nothing runs by itself");
+      expect(EN[key], key).toMatch(/the model moves the arm by itself/);
+      expect(ZH_TW[key], key).toMatch(/為它按下「執行這個動作」/);
+      expect(ZH_TW[key], key).not.toContain("不會有任何動作自行執行");
+      expect(ZH_TW[key], key).toMatch(/自行移動手臂/);
     }
-    // beside the disabled Start: a task the model runs by itself is not in this version
-    expect(EN["task.startNote"]).toContain("not in this version");
-    expect(ZH_TW["task.startNote"]).toContain("這個版本還沒有");
+    // beside Start: a task runs on a real arm too, after a confirmation, and Execute stays the operator's own press
+    expect(EN["task.startNote"]).not.toContain("not in this version");
+    expect(EN["task.startNote"]).toMatch(/on a real arm after a confirmation/);
+    expect(EN["task.startNote"]).toContain("Execute this action");
+    expect(ZH_TW["task.startNote"]).not.toContain("這個版本還沒有");
+    expect(ZH_TW["task.startNote"]).toMatch(/在真實的手臂上要先經過一次確認/);
+    expect(ZH_TW["task.startNote"]).toContain("執行這個動作");
     // the note of a real arm's steps: each press moves the real arm at once, and an action needs the camera
     expect(EN["station.real.steps"]).toContain("at once");
     expect(EN["station.real.steps"]).toContain("camera of step 2");

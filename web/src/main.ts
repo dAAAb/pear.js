@@ -21,6 +21,7 @@ import {
 import { applyStaticTexts, count, initialLanguage, language, listed, onLanguageChange, setLanguage, t } from "./i18n";
 import { PageLog, redact } from "./log";
 import { checkModel, type ModelCheck } from "./model";
+import { forget, keep, KEPT_NAME, type KeptService, recall } from "./remember";
 import {
   allBlockers,
   armingReportParts,
@@ -38,7 +39,7 @@ import { type PreflightPart, preflightParts } from "./preflight_view";
 import { type GuardSelfTest, guardSelfTest } from "./readonly";
 import { SIM_CALIBRATION, SIM_SCENARIOS, SimArm, type SimScenario } from "./sim_port";
 import { StationClient } from "./station_client";
-import { ARMING_LIMIT_MS, CLOCK_NUMBERS } from "./station_protocol";
+import { ARMING_LIMIT_MS, CLOCK_NUMBERS, TURNS_LIMIT_MAX } from "./station_protocol";
 import type {
   ActionReport,
   ArmFingerprint,
@@ -48,9 +49,51 @@ import type {
   MotorSteps,
   PreflightReport,
   StationEvent,
+  StationRequest,
   StationStatus,
+  TaskCommand,
+  TaskLimits,
   TimingCheck,
 } from "./station_protocol";
+import type { TaskEvent } from "./task_host";
+import {
+  actionLimitLabel,
+  actionWords,
+  eventLogLine,
+  gapWords,
+  hasTask,
+  isDisableOffered,
+  isStartStanding,
+  isStationFailed,
+  limitsOf,
+  noTurns,
+  pausedByWords,
+  performanceWords,
+  resultWords,
+  type StartAsked,
+  startAsked,
+  type StartFacts,
+  startLogLine,
+  startOffer,
+  startPress,
+  startRow,
+  takeEvent,
+  taskControls,
+  taskError,
+  taskStatus,
+  TURNS_LIMIT_DEFAULT,
+  isEndedWhenLost,
+  isResumeStanding,
+  limitsHeld,
+  type ResumeAsked,
+  type ResumeFacts,
+  resumeAsked,
+  resumeLogLine,
+  resumePress,
+  resumeRow,
+  turnLine,
+  turnsNote,
+} from "./task_view";
 import type { TextKey } from "./texts";
 import { formatStats, measureTiming, READS, TIMER_PERIOD_MS, TIMER_PERIODS, type TimingReport } from "./timing";
 
@@ -184,6 +227,26 @@ let stationReleases = 0;
 let askOrigin: { source: AskSource; actions: number; releases: number } | null = null;
 /** Whether "Execute this action" was pressed on a real arm and waits for its second press. */
 let isExecuteAsked = false;
+/** What the console's events have told of the task (./task_view.ts): its turns, the newest turn's reasoning and
+ * answer as they streamed, and the last stop. */
+let taskTurns = noTurns();
+/** The command of a task that waits for the Worker's answer; null when none does. */
+let taskCommand: TaskCommand | null = null;
+/** The Worker's last refusal of a command of a task, in PEAR's words: it stays until the next command is given. */
+let taskRefusal: { command: TaskCommand; error: string } | null = null;
+/** What the row of a real arm's Start is shown for (./task_view.ts): the instruction and the limits its sentence
+ * names. null while the row is not shown: Start was not pressed on a real arm, or the row was taken away. */
+let taskStartAsked: StartAsked | null = null;
+/** What the row of a real arm's Resume was shown for (./task_view.ts): the limits the station told of the task.
+ * null while the row is not shown: Resume was not pressed on a real arm, or the row was taken away. */
+let taskResumeAsked: ResumeAsked | null = null;
+/** What the operator set in the two fields of the limits before a task was there: while a task is there the
+ * fields show the limits the Worker holds for it, and the operator's own come back when the task is gone. */
+let ownLimits: { turns: string; isActionLimited: boolean } | null = null;
+/** The arm of a task that was ended with its Worker because the station was lost; null while none was. */
+let taskEndedOn: "simulated" | "real" | null = null;
+/** The key of the model service the last task was started with: kept out of every line the log gets of a task. */
+let taskKey = "";
 let timingState: { kind: "idle" | "needsArm" | "done" } | { kind: "running"; step: string } = { kind: "idle" };
 
 interface SerialLike {
@@ -1054,9 +1117,104 @@ function renderModel(): void {
   result.dataset.outcome = modelCheck === null ? "" : modelCheck === "checking" ? "checking" : modelCheck.outcome.kind;
   result.dataset.signature = "";
   result.replaceChildren(...modelResult());
+  renderRemember();
+}
+
+// The tick of the model step: while it is set, the three fields are kept on this browser (./remember.ts) and
+// kept again whenever one of them changes; taking it away removes them at once. Nothing is sent by any of this,
+// and none of the three values is written to the log.
+
+/** What the browser refused, for the note under the tick: to keep the fields, or to remove what it kept. */
+let rememberTrouble: "none" | "refused" | "notRemoved" = "none";
+
+/** The browser's storage for this site. Reading it can throw, so it is read where remember.ts catches that. */
+const siteStorage = (): Storage => localStorage;
+
+function modelFields(): KeptService {
+  return {
+    baseUrl: byId<HTMLInputElement>("model-url").value,
+    model: byId<HTMLInputElement>("model-name").value,
+    apiKey: byId<HTMLInputElement>("model-key").value,
+  };
+}
+
+function renderRemember(): void {
+  const isKept = byId<HTMLInputElement>("model-remember").checked;
+  const note = byId<HTMLElement>("model-remember-note");
+  note.dataset.kept = String(isKept);
+  note.dataset.trouble = rememberTrouble;
+  setText(
+    note,
+    t(
+      rememberTrouble === "refused"
+        ? "model.remember.refused"
+        : rememberTrouble === "notRemoved"
+          ? "model.remember.notRemoved"
+          : isKept
+            ? "model.remember.on"
+            : "model.remember.off",
+    ),
+  );
+}
+
+/** Keeps the three fields as they stand, while the tick is set, and returns whether they are kept. A browser
+ * that refuses takes the tick away, and the note says that nothing could be kept. */
+function keepModelFields(): boolean {
+  const box = byId<HTMLInputElement>("model-remember");
+  if (!box.checked) return false;
+  if (keep(siteStorage, modelFields())) return true;
+  box.checked = false;
+  rememberTrouble = "refused";
+  log.add("Model service: this browser refused its storage; nothing is kept and the tick was taken away");
+  renderRemember();
+
+  return false;
+}
+
+/** The person set the tick or took it away. */
+function changeRemember(): void {
+  rememberTrouble = "none";
+  if (byId<HTMLInputElement>("model-remember").checked) {
+    if (keepModelFields()) log.add("Model service: its address, the model's name and the key are kept on this browser");
+  } else if (forget(siteStorage)) {
+    log.add("Model service: nothing is kept on this browser any more");
+  } else {
+    rememberTrouble = "notRemoved";
+    log.add("Model service: this browser's storage could not be reached; what it kept may still be there");
+  }
+  renderRemember();
+}
+
+/** Fills the three fields with what this browser kept, once, when the page loads, and sets the tick. Nothing is
+ * sent anywhere: the person presses the check as always. */
+function recallModelFields(): void {
+  const recalled = recall(siteStorage);
+  byId<HTMLInputElement>("model-remember").checked = recalled.kind === "kept";
+  if (recalled.kind === "kept") {
+    byId<HTMLInputElement>("model-url").value = recalled.service.baseUrl;
+    byId<HTMLInputElement>("model-name").value = recalled.service.model;
+    byId<HTMLInputElement>("model-key").value = recalled.service.apiKey;
+    log.add("Model service: the fields were filled with what this browser kept");
+  } else if (recalled.kind === "removed") {
+    log.add("Model service: what this browser kept was not the three fields; it was removed");
+  }
+  renderRemember();
+}
+
+/** Another window of this page took the tick away, or this site's data was cleared: this window keeps nothing
+ * either, so that a later change of a field here does not bring back what the person removed. */
+function forgottenElsewhere(event: StorageEvent): void {
+  const box = byId<HTMLInputElement>("model-remember");
+  if ((event.key !== KEPT_NAME && event.key !== null) || event.newValue !== null || !box.checked) return;
+  box.checked = false;
+  rememberTrouble = "none";
+  log.add("Model service: nothing is kept on this browser any more");
+  renderRemember();
 }
 
 async function runModelCheck(): Promise<void> {
+  // a name that the page itself put into its field is kept like one that was typed
+  keepModelFields();
   if (modelCheck === "checking") return;
   const key = byId<HTMLInputElement>("model-key").value;
   const baseUrl = byId<HTMLInputElement>("model-url").value;
@@ -1073,6 +1231,7 @@ async function runModelCheck(): Promise<void> {
     if (check.outcome.kind === "ok") {
       byId<HTMLInputElement>("model-name").value = check.outcome.model;
       checkedService = { baseUrl, model: check.outcome.model, apiKey: key };
+      keepModelFields();
     }
   } catch (error) {
     modelCheck = {
@@ -1094,6 +1253,8 @@ async function runModelCheck(): Promise<void> {
 
 /** What an ask still lacks, as a text's key; null when the model can be asked. */
 function askMissing(): TextKey | null {
+  // a task asks the model itself: nothing is asked by hand until the task is cleared
+  if (isTaskThere()) return "task.blocks.ask";
   if (stationView.phase !== "off") {
     // the station has the arm: the state is the station's, told in a status that saw no action under way
     const status = stationView.status;
@@ -1126,6 +1287,8 @@ function renderAskPanel(): void {
   setText(note, ask !== null ? "" : missing !== null ? t(missing) : isAskWithoutFrame ? t("ask.noFrame") : "");
   renderAsk(ask, askResult);
   renderExecute();
+  // Start is decided on the same things: the station, the camera, the checked service and the instruction
+  renderTask();
 }
 
 async function runAsk(): Promise<void> {
@@ -1187,6 +1350,8 @@ function executeFacts(): ExecuteFacts {
     isSpent: askOrigin === null || askOrigin.actions !== actionsStarted,
     isIdle:
       isOn &&
+      !isTaskThere() &&
+      taskCommand === null &&
       stationView.action === null &&
       stationView.lost === null &&
       status !== null &&
@@ -1208,11 +1373,13 @@ function renderExecute(): void {
   const part = byId("ask-execute");
   part.hidden = !offer.isShown;
   part.dataset.offered = String(offer.isOffered);
-  part.dataset.why = offer.why ?? "";
+  // while a task is there the arm is the task's: the sentence says to clear the task first
+  const why: TextKey | null = offer.isShown && isTaskThere() ? "task.blocks.execute" : offer.why;
+  part.dataset.why = why ?? "";
   part.dataset.arm = stationView.phase !== "on" ? "" : isReal ? "real" : "simulated";
   part.dataset.asked = String(isExecuteAsked);
   byId<HTMLButtonElement>("ask-execute-run").disabled = !offer.isOffered || isExecuteAsked;
-  setText(byId("ask-execute-why"), offer.why === null ? "" : t(offer.why));
+  setText(byId("ask-execute-why"), why === null ? "" : t(why));
   const row = isExecuteAsked && action !== null ? executeRow(action, { t, count, listed }) : null;
   byId("ask-execute-confirm").hidden = row === null;
   setText(byId("ask-execute-ask"), row?.ask ?? "");
@@ -1386,6 +1553,14 @@ const station = new StationClient({
     stationView.lost = { reason, detail };
     stationReleases += 1; // what the arm does now is unknown: no answer asked before this is executed
     if (stationView.real !== null) stationView.isRealLost = true;
+    // a task must not go on asking the model and moving an arm that this page can no longer stop: with a task
+    // there or the console busy the Worker is ended at once, on either arm, and what it ran is gone with it
+    if (taskEndedOn === null && isEndedWhenLost(stationView.status)) {
+      taskEndedOn = stationView.real !== null ? "real" : "simulated";
+      station.terminate();
+      stationView.lost = { reason: "died", detail };
+      log.add(`Task: ended with the station's Worker on the ${taskEndedOn} arm: the station was lost (${detail}) and the page ended the Worker; the task cannot be resumed`);
+    }
     renderStation();
   },
 });
@@ -1454,6 +1629,8 @@ function onStationEvent(event: StationEvent): void {
     log.add(`Station: the observation held frame ${event.number} of the wrist camera: JPEG, ${event.jpeg.length} bytes, ${event.ageMs} ms old`);
   } else if (event.type === "arming") {
     onArming(event.requestId, event.report, event.blockers);
+  } else if (event.type === "task") {
+    onTaskEvents(event.events);
   } else if (event.type === "timing") {
     stationView.timing = event.timing;
     log.add(`Station: timing self-check ${JSON.stringify(event.timing)}`);
@@ -1608,7 +1785,7 @@ async function enableStation(): Promise<void> {
 
 /** "Look" again: closes the station and gives the simulated arm, where it stands, back to the window's reading. */
 async function disableStation(): Promise<void> {
-  if (stationView.phase !== "on") return;
+  if (!isDisableOffered({ isOn: stationView.phase === "on", hasTask: isTaskThere(), isFailed: isStationDown() })) return;
   stationView.phase = "disabling";
   stationReleases += 1; // the arm goes limp and may be moved: no answer asked before this is executed
   const real = stationView.real;
@@ -2086,7 +2263,7 @@ async function stopStation(): Promise<void> {
  * whose action it is, a step by hand or the one action a model asked for. Every caller is a press of the
  * operator's for this action; on a real arm the callers take only a press the browser calls trusted. */
 async function runAction(name: string, action: Record<string, unknown>, asker: "hand" | "model" = "hand"): Promise<void> {
-  if (stationView.phase !== "on" || stationView.action !== null) return;
+  if (stationView.phase !== "on" || stationView.action !== null || isTaskThere() || taskCommand !== null) return;
   const running: NonNullable<StationView["action"]> = { name, phase: null, endedBy: null };
   stationView.action = running;
   // the arm is no longer as a model saw it: an answer asked before this action is spent
@@ -2130,7 +2307,7 @@ async function runAction(name: string, action: Record<string, unknown>, asker: "
 
 /** Home: PEAR's plan is shown and waits for the person's answer; only an approved plan moves the arm. */
 async function runHome(): Promise<void> {
-  if (stationView.phase !== "on" || stationView.action !== null) return;
+  if (stationView.phase !== "on" || stationView.action !== null || isTaskThere() || taskCommand !== null) return;
   const name = t("station.home");
   const running: NonNullable<StationView["action"]> = { name, phase: null, endedBy: null };
   stationView.action = running;
@@ -2209,8 +2386,12 @@ function renderStation(): void {
   enable.disabled = view.phase !== "off" || why !== null || preflight.isRunning;
   const disable = byId<HTMLButtonElement>("station-disable");
   disable.hidden = !isHeld;
-  disable.disabled = !isOn;
+  // while a task is there the station is not disabled: the task is cleared first. A station that has failed is
+  // the exception: the Worker then ends the task with the station
+  const canDisable = isDisableOffered({ isOn, hasTask: isTaskThere(), isFailed: isStationDown() });
+  disable.disabled = !canDisable;
   byId("station-disable-note").hidden = !isHeld;
+  byId("station-disable-task").hidden = !isTaskThere() || canDisable;
   const whyNode = byId("station-why");
   whyNode.hidden = view.phase !== "off";
   whyNode.dataset.why = why ?? "station.why.ready";
@@ -2433,8 +2614,13 @@ function renderStation(): void {
     }),
   );
   const isLineLost = status?.line?.isLost === true;
-  for (const button of byId("station-jog").querySelectorAll("button")) button.disabled = !isIdle || isLineLost;
-  byId<HTMLButtonElement>("station-home").disabled = !isIdle || isLineLost;
+  // while a task is there, or a command of one waits for its answer, the arm is not moved by hand
+  const isTaskBusy = isTaskThere() || taskCommand !== null;
+  for (const button of byId("station-jog").querySelectorAll("button")) {
+    button.disabled = !isIdle || isLineLost || isTaskBusy;
+  }
+  byId<HTMLButtonElement>("station-home").disabled = !isIdle || isLineLost || isTaskBusy;
+  byId("station-task-note").hidden = !isTaskThere();
   // a real arm: the note that each step moves it at once, and Disable asks for a second press
   byId("station-jog-part").dataset.arm = view.real !== null ? "real" : "simulated";
   byId("station-real-note").hidden = view.real === null;
@@ -2493,6 +2679,372 @@ function renderStation(): void {
   byId<HTMLButtonElement>("task-stop").disabled = !isHeld;
   // what the station is decides whether the model can be asked and whether its action can be executed
   renderAskPanel();
+}
+
+// ---------------------------------------------------------------- a task
+//
+// A task (./task_view.ts): from the operator's press of Start the station asks the model, executes its action and
+// begins the next turn by itself, until the operator pauses it or the limit of turns the operator set is reached.
+// On the simulated arm Start's press starts the task; on a real arm it only shows a row that says what the model
+// will do by itself, and the press of that row starts the task. The station tells what the task does in its
+// status (`task`, `taskPausedBy`) and in the events "task"; the page shows both and gives the operator's commands.
+
+/** The label of each command of a task, for the message of a refusal. */
+const TASK_LABELS: Record<TaskCommand, TextKey> = {
+  start: "task.start",
+  pause: "task.pause",
+  resume: "task.resume",
+  clear: "task.clear",
+  stop: "task.stop",
+  reset_stop: "task.resetStop",
+};
+
+/** Whether the console has a task, running or paused, as the enabled station last told it. A Worker that is lost
+ * tells nothing: what is offered then is the lost station's to say. */
+function isTaskThere(): boolean {
+  return stationView.phase === "on" && stationView.lost === null && hasTask(stationView.status?.task);
+}
+
+/** Whether the enabled station has failed, as it last told (./task_view.ts): the robot is in FAULT or OFF, or a
+ * real arm's line is lost. Nothing of a task goes on then, and Disable is offered also while a task is there. */
+function isStationDown(): boolean {
+  const status = stationView.status;
+
+  return stationView.phase === "on" && status !== null && isStationFailed(status.robot, status.line?.isLost === true);
+}
+
+/** What Start is decided on (./task_view.ts). */
+function startFacts(): StartFacts {
+  const status = stationView.status;
+  const view = arm.view;
+  const held = stationView.real !== null ? "real" : "simulated";
+  const read = view.phase === "idle" || view.phase === "failed" ? null : view.isSimulated ? "simulated" : "real";
+
+  return {
+    arm: stationView.phase !== "off" ? held : read,
+    isEnabled: stationView.phase === "on" && stationView.lost === null && status !== null,
+    isFailed: isStationDown(),
+    hasTask: isTaskThere(),
+    isStopLatched: status?.task?.isStopLatched === true,
+    isActionUnderWay: stationView.action !== null || (status !== null && status.action !== null) || taskCommand !== null,
+    isVisible: status?.isHidden !== true && !document.hidden,
+    isCameraLive: camera.view.phase === "live",
+    isServiceChecked: checkedService !== null,
+    instruction: byId<HTMLTextAreaElement>("task-instruction").value,
+    turnsLimit: byId<HTMLInputElement>("task-limit-turns").value,
+    isActionLimited: byId<HTMLInputElement>("task-limit-action").checked,
+  };
+}
+
+/** Gives the station a command of a task and shows what the console tells right after it. A refusal, in PEAR's
+ * words, is shown until the next command and logged. Pause is never held back by a command that still waits for
+ * its answer. */
+async function sendTask(request: Extract<StationRequest, { type: "task" }>): Promise<void> {
+  const command = request.command;
+  if (stationView.phase !== "on" || (taskCommand !== null && command !== "pause")) return;
+  taskCommand = command;
+  taskRefusal = null;
+  renderStation();
+  try {
+    const answer = await station.request(request);
+    // what the console tells right after the command, ahead of the next status
+    if (stationView.status !== null) stationView.status = { ...stationView.status, task: answer.task };
+  } catch (error) {
+    const told = redact(errorText(error), taskKey);
+    taskRefusal = { command, error: told };
+    log.add(`Task: ${command} refused: ${told}`);
+  }
+  if (taskCommand === command) taskCommand = null;
+  renderStation();
+}
+
+/** Starts a task of the instruction with the limits given: from here on the model moves the arm without another
+ * press. The checked service goes to the station with the command; its key goes nowhere else, and into no line
+ * of the log. Only the two presses below call this, each after it has looked at Start's offer. */
+function startTask(instruction: string, limits: TaskLimits): void {
+  const service = checkedService;
+  if (service === null) return;
+  // the arm will not stay as a model saw it: an answer asked before the task is spent
+  actionsStarted += 1;
+  isExecuteAsked = false;
+  taskStartAsked = null;
+  taskKey = service.apiKey;
+  log.add(redact(startLogLine(instruction, limits, stationView.real !== null ? "real" : "simulated"), taskKey));
+  void sendTask({
+    type: "task",
+    command: "start",
+    instruction,
+    service: { baseUrl: service.baseUrl, model: service.model, apiKey: service.apiKey },
+    limits,
+  });
+}
+
+/** Start, for the operator's own press only (`press.isTrusted`), while it is offered. On the simulated arm the
+ * press starts the task. On a real arm it starts nothing: it only asks, in the row that then shows with the
+ * limits as they are set, and the press there starts the task. */
+function pressTaskStart(press: Event): void {
+  if (!press.isTrusted) return;
+  const facts = startFacts();
+  const what = startPress(facts);
+  if (what === "ask") {
+    taskStartAsked = startAsked(facts);
+    renderTask();
+    return;
+  }
+  const limits = limitsOf(facts);
+  // a real arm is never started by this press, whatever the facts say
+  if (what !== "start" || limits === null || stationView.real !== null) return;
+  startTask(facts.instruction, limits);
+}
+
+/** The second press on a real arm, "Start on the arm": the operator's own press, of a row that still stands at
+ * this moment: Start is still offered, and the instruction and the limits are the ones the row was shown for. A
+ * row that no longer stands is taken away and nothing starts. */
+function pressTaskStartGo(press: Event): void {
+  const resume = taskResumeAsked;
+  if (resume !== null) {
+    // the row of a resume: "resume" is sent only if a resume is still offered at this moment, with the limits
+    // the row was shown for
+    if (!press.isTrusted || stationView.real === null) return;
+    if (!isResumeStanding(resume, resumeFacts())) {
+      taskResumeAsked = null;
+      renderTask();
+      return;
+    }
+    resumeTask(resumeLogLine(resume));
+    return;
+  }
+  const asked = taskStartAsked;
+  if (!press.isTrusted || stationView.real === null || asked === null) return;
+  if (!isStartStanding(asked, startFacts())) {
+    taskStartAsked = null;
+    renderTask();
+    return;
+  }
+  startTask(asked.instruction, asked.limits);
+}
+
+/** Takes the row of a real arm's Start away: "Don't", and a change of the instruction or of a limit. */
+function dropStartAsked(): void {
+  taskStartAsked = null;
+  taskResumeAsked = null;
+  renderTask();
+}
+
+/** What Resume is decided on (./task_view.ts): a resume is offered while Resume shows, the station is on and
+ * its Worker answers, and no command of a task waits for its answer. */
+function resumeFacts(): ResumeFacts {
+  const status = stationView.status;
+
+  return {
+    arm: stationView.phase === "off" ? null : stationView.real !== null ? "real" : "simulated",
+    isOffered:
+      stationView.phase === "on" && stationView.lost === null && taskCommand === null && taskControls(status?.task).resume,
+    limits: status?.taskLimits,
+  };
+}
+
+/** Resumes the task: from here on the model moves the arm again without a press. Only the two presses below
+ * call this, each after it has looked at whether a resume is offered. */
+function resumeTask(line: string): void {
+  actionsStarted += 1;
+  taskResumeAsked = null;
+  log.add(line);
+  void sendTask({ type: "task", command: "resume" });
+}
+
+/** Resume, for the operator's own press only (`press.isTrusted`), while a resume is offered. On the simulated
+ * arm the press resumes the task. On a real arm it resumes nothing, as Start starts nothing: it only asks, in
+ * Start's row with a resume's sentence and the limits the station tells of the task, and the press of "Resume on
+ * the arm" there resumes it. */
+function pressTaskResume(press: Event): void {
+  if (!press.isTrusted) return;
+  const facts = resumeFacts();
+  const what = resumePress(facts);
+  if (what === "ask") {
+    taskResumeAsked = resumeAsked(facts);
+    renderTask();
+    return;
+  }
+  // a real arm is never resumed by this press, whatever the facts say
+  if (what !== "resume" || stationView.real !== null) return;
+  resumeTask("Task: resume");
+}
+
+/** Pause, Clear the task and Reset STOP MOTION: each while its control shows. None of them starts a motion. */
+function pressTask(command: "pause" | "clear" | "reset_stop"): void {
+  const controls = taskControls(stationView.status?.task);
+  const isShown = command === "pause" ? controls.pause : command === "clear" ? controls.clear : controls.resetStop;
+  if (!isShown || stationView.lost !== null) return;
+  log.add(`Task: ${command}`);
+  void sendTask({ type: "task", command });
+}
+
+/** Takes the console's events: the turns' list grows by them, and the log gets a line for a turn's action and
+ * result, a stop, a failure and the clearing of the task; never for a streamed piece, and never the key. */
+function onTaskEvents(events: readonly TaskEvent[]): void {
+  for (const event of events) {
+    const missed = taskTurns.missed;
+    taskTurns = takeEvent(taskTurns, event);
+    if (taskTurns.missed > missed) {
+      log.add(`Task: ${taskTurns.missed - missed} events before event ${event.id} did not reach the page`);
+    }
+    const line = eventLogLine(event);
+    if (line !== null) log.add(redact(line, taskKey));
+  }
+}
+
+/** Shows the task: its controls, why Start is not offered, its state, what the Worker refused, the console's
+ * failure with what can be done about it, the newest turn as it streams, and the list of the turns. */
+function renderTask(): void {
+  const isOn = stationView.phase === "on";
+  const told = isOn ? (stationView.status?.task ?? null) : null;
+  if (stationView.phase === "off") taskRefusal = null; // a refusal is of the station that is gone
+  const words = { t, count, listed };
+  // while a task is there the two fields show the limits the Worker holds for it, as its status tells them, and
+  // not the ones this page sent; the operator's own come back when the task is gone
+  const toldLimits = hasTask(told) ? (stationView.status?.taskLimits ?? null) : null;
+  const heldLimits = hasTask(told) ? limitsHeld(toldLimits) : null;
+  const turnsField = byId<HTMLInputElement>("task-limit-turns");
+  const actionField = byId<HTMLInputElement>("task-limit-action");
+  if (heldLimits !== null) {
+    ownLimits ??= { turns: turnsField.value, isActionLimited: actionField.checked };
+    turnsField.value = String(heldLimits.turns);
+    actionField.checked = heldLimits.isActionLimited;
+  } else if (ownLimits !== null) {
+    turnsField.value = ownLimits.turns;
+    actionField.checked = ownLimits.isActionLimited;
+    ownLimits = null;
+  }
+  const facts = startFacts();
+  const offer = startOffer(facts);
+  // a row that waits for its press goes with the offer, and with a change of what it was shown for
+  if (!isStartStanding(taskStartAsked, facts)) taskStartAsked = null;
+  if (!isResumeStanding(taskResumeAsked, resumeFacts())) taskResumeAsked = null;
+  const controls = taskControls(told);
+  const canPause = isOn && stationView.lost === null;
+  const canCommand = canPause && taskCommand === null;
+
+  const panel = byId("task-run");
+  panel.dataset.task = !hasTask(told) ? "none" : told?.isBusy === true ? "running" : "paused";
+  panel.dataset.latched = String(told?.isStopLatched === true);
+  panel.dataset.command = taskCommand ?? "";
+  const start = byId<HTMLButtonElement>("task-start");
+  start.hidden = !controls.start;
+  start.disabled = !offer.isOffered || taskStartAsked !== null;
+
+  // the two limits beside Start, on either arm: changeable only while no task is there
+  const limits = limitsOf(facts);
+  const canSetLimits = controls.start && taskCommand === null;
+  const limitsNode = byId("task-limits");
+  limitsNode.dataset.turns = limits === null ? "" : String(limits.turns);
+  limitsNode.dataset.action = String(facts.isActionLimited);
+  limitsNode.dataset.held = heldLimits === null ? "" : toldLimits === null ? "none" : "limits";
+  // a task for which the station tells no limits runs without limits, and the page says so
+  const noLimits = byId("task-limits-none");
+  noLimits.hidden = heldLimits === null || toldLimits !== null;
+  setText(noLimits, noLimits.hidden ? "" : t("task.limits.none"));
+  byId<HTMLInputElement>("task-limit-turns").disabled = !canSetLimits;
+  byId<HTMLInputElement>("task-limit-action").disabled = !canSetLimits;
+  setText(byId("task-limit-action-label"), actionLimitLabel(words));
+
+  // the row of a real arm's Start: what the model will do by itself, with the limits as they are set; with both
+  // limits off it is a warning that says so
+  // the same row asks for a real arm's Resume, with a resume's sentence and the limits the station tells
+  const row =
+    taskResumeAsked !== null ? resumeRow(taskResumeAsked, words) : taskStartAsked === null ? null : startRow(taskStartAsked.limits, words);
+  const rowNode = byId("task-start-confirm");
+  rowNode.hidden = row === null;
+  rowNode.dataset.for = row === null ? "" : taskResumeAsked !== null ? "resume" : "start";
+  setText(byId("task-start-go"), t(taskResumeAsked !== null ? "task.resume.go" : "task.confirm.go"));
+  rowNode.dataset.unlimited = String(row !== null && row.warning !== null);
+  setText(byId("task-start-ask"), row?.ask ?? "");
+  const unlimited = byId("task-start-unlimited");
+  unlimited.hidden = row === null || row.warning === null;
+  setText(unlimited, row?.warning ?? "");
+  const shown: ReadonlyArray<readonly [id: string, isShown: boolean, isReady: boolean]> = [
+    ["task-pause", controls.pause, canPause],
+    ["task-resume", controls.resume, canCommand && taskResumeAsked === null],
+    ["task-clear", controls.clear, canCommand],
+    ["task-reset-stop", controls.resetStop, canCommand],
+  ];
+  for (const [id, isShown, isReady] of shown) {
+    const button = byId<HTMLButtonElement>(id);
+    button.hidden = !isShown;
+    button.disabled = !isShown || !isReady;
+  }
+  const whyNode = byId("task-why");
+  whyNode.dataset.why = offer.why ?? "";
+  setText(whyNode, offer.why === null ? "" : t(offer.why));
+
+  const line = taskStatus(told, words);
+  const statusNode = byId("task-status");
+  statusNode.dataset.phase = line.phase;
+  statusNode.dataset.turn = told?.activeTurn == null ? "" : String(told.activeTurn.turn_number);
+  statusNode.dataset.steps = told === null ? "" : String(told.totalSteps);
+  setText(statusNode, line.text);
+  // why the Worker itself paused the task: its limit of turns, or a hidden page
+  const pausedBy = isOn && hasTask(told) && told?.isBusy !== true ? (stationView.status?.taskPausedBy ?? null) : null;
+  const pausedWords = pausedByWords(pausedBy, toldLimits, words);
+  const pausedNode = byId("task-paused-by");
+  pausedNode.hidden = pausedWords === null;
+  pausedNode.dataset.by = pausedWords === null ? "" : (pausedBy ?? "");
+  setText(pausedNode, pausedWords ?? "");
+  // a task that was ended with its Worker because the station was lost: what that means, and on a real arm what
+  // the servos do now
+  const endedOn = stationView.lost !== null ? taskEndedOn : null;
+  const endedNode = byId("task-ended");
+  endedNode.hidden = endedOn === null;
+  endedNode.dataset.arm = endedOn ?? "";
+  setText(endedNode, endedOn === null ? "" : t(endedOn === "real" ? "task.ended.lostReal" : "task.ended.lost"));
+
+  const refusal = byId("task-refusal");
+  refusal.hidden = taskRefusal === null;
+  refusal.dataset.command = taskRefusal?.command ?? "";
+  setText(
+    refusal,
+    taskRefusal === null ? "" : t("task.refused", { command: t(TASK_LABELS[taskRefusal.command]), error: taskRefusal.error }),
+  );
+  const failure = taskError(told, words);
+  const failureNode = byId("task-error");
+  failureNode.hidden = failure === null;
+  setText(failureNode, failure === null ? "" : redact(failure, taskKey));
+  const stopNode = byId("task-stop-message");
+  stopNode.hidden = taskTurns.stop === null;
+  setText(stopNode, taskTurns.stop === null ? "" : t("task.stopMessage", { message: taskTurns.stop }));
+  const gap = gapWords(taskTurns, words);
+  const gapNode = byId("task-gap");
+  gapNode.hidden = gap === null;
+  gapNode.dataset.missed = String(taskTurns.missed);
+  setText(gapNode, gap ?? "");
+
+  // the newest turn: the model's reasoning and answer as they stream, the action in words, the result
+  const newest = taskTurns.turns[0] ?? null;
+  const turnNode = byId("task-turn");
+  turnNode.hidden = newest === null;
+  turnNode.dataset.turn = newest === null ? "" : String(newest.number);
+  setText(byId("task-turn-number"), newest === null ? "" : t("task.turn.number", { turn: count(newest.number) }));
+  byId("task-reasoning-part").hidden = taskTurns.reasoning === "";
+  setText(byId("task-reasoning"), taskTurns.reasoning);
+  byId("task-answer-part").hidden = taskTurns.answer === "";
+  setText(byId("task-answer"), taskTurns.answer);
+  setText(byId("task-action"), newest === null ? "" : actionWords(newest, words));
+  const resultNode = byId("task-result");
+  resultNode.dataset.status = newest?.result?.status ?? "";
+  setText(resultNode, newest === null ? "" : resultWords(newest, words));
+  const numbers = performanceWords(taskTurns.performance ?? told?.performance ?? null);
+  byId("task-performance-part").hidden = numbers === null;
+  setText(byId("task-performance"), numbers ?? "");
+
+  // the task's turns, the newest first; a cleared task's turns stay until the next task starts
+  byId("task-turns-part").hidden = taskTurns.turns.length === 0;
+  byId("task-cleared").hidden = !taskTurns.isCleared;
+  setText(byId("task-turns-note"), turnsNote(taskTurns, words));
+  renderOnce(byId("task-turns"), JSON.stringify(taskTurns.turns), () =>
+    taskTurns.turns.map((turn) =>
+      element("li", { text: turnLine(turn, words), data: { turn: turn.number, status: turn.result?.status ?? "" } }),
+    ),
+  );
 }
 
 // ---------------------------------------------------------------- timing
@@ -2593,6 +3145,13 @@ const hookClient = {
     if ((stationView.real !== null || isGranted) && request.type !== "stop") {
       return Promise.reject(
         new Error(`The page's hook sends nothing but Stop to the station of a real arm: "${request.type}" was not sent`),
+      );
+    }
+    // a task's Start and Resume let a model move the arm without a press for each action: they take only the
+    // operator's own press of the page's control, on either arm, and never a script's request
+    if (request.type === "task" && (request.command === "start" || request.command === "resume")) {
+      return Promise.reject(
+        new Error(`The page's hook does not start or resume a task: "${request.command}" was not sent`),
       );
     }
     return station.request(request, limitMs);
@@ -2719,6 +3278,22 @@ byId("station-arming-run").addEventListener("click", () => void enableOnArm());
   });
   byId("station-refuse").addEventListener("click", () => void answerPlan(false));
   byId("task-stop").addEventListener("click", () => void stopStation());
+  byId("task-start").addEventListener("click", pressTaskStart);
+  byId("task-start-go").addEventListener("click", pressTaskStartGo);
+  byId("task-start-keep").addEventListener("click", dropStartAsked);
+  // the limits as they are at first; a change of one takes the row of a real arm's Start away
+  const turnsLimit = byId<HTMLInputElement>("task-limit-turns");
+  turnsLimit.max = String(TURNS_LIMIT_MAX);
+  turnsLimit.value = String(TURNS_LIMIT_DEFAULT);
+  byId<HTMLInputElement>("task-limit-action").checked = true;
+  for (const id of ["task-limit-turns", "task-limit-action"]) {
+    byId(id).addEventListener("input", dropStartAsked);
+    byId(id).addEventListener("change", dropStartAsked);
+  }
+  byId("task-resume").addEventListener("click", pressTaskResume);
+  byId("task-pause").addEventListener("click", () => pressTask("pause"));
+  byId("task-clear").addEventListener("click", () => pressTask("clear"));
+  byId("task-reset-stop").addEventListener("click", () => pressTask("reset_stop"));
   document.addEventListener("visibilitychange", () => void tellVisibility());
   // a key held down presses a button once: the repeats of a held Enter would else press a step again and again
   document.addEventListener(
@@ -2732,6 +3307,8 @@ byId("station-arming-run").addEventListener("click", () => void enableOnArm());
   );
 
   byId("model-check").addEventListener("click", () => void runModelCheck());
+  byId("model-remember").addEventListener("change", changeRemember);
+  window.addEventListener("storage", forgottenElsewhere);
   byId("ask-once").addEventListener("click", () => void runAsk());
   byId("ask-cancel").addEventListener("click", () => ask?.cancel());
   byId("ask-execute-run").addEventListener("click", pressExecute);
@@ -2740,11 +3317,16 @@ byId("station-arming-run").addEventListener("click", () => void enableOnArm());
     isExecuteAsked = false;
     renderExecute();
   });
-  byId("task-instruction").addEventListener("input", renderAskPanel);
+  byId("task-instruction").addEventListener("input", () => {
+    // a change of the instruction takes the row of a real arm's Start away
+    taskStartAsked = null;
+    renderAskPanel();
+  });
   // a service that was checked is the one that is asked: a change of what names it needs a new check
   for (const id of ["model-url", "model-name", "model-key"]) {
     byId(id).addEventListener("input", () => {
       checkedService = null;
+      keepModelFields();
       renderAskPanel();
     });
   }
@@ -2769,6 +3351,8 @@ byId("station-arming-run").addEventListener("click", () => void enableOnArm());
       `Web Serial ${webSerial() === null ? "absent" : "present"}; camera ${CameraSession.isAvailable ? "available" : "unavailable"}; ` +
       `language ${language()}; viewport ${window.innerWidth}x${window.innerHeight}`,
   );
+  // after the log's first lines: what this browser kept of the model service, when the person ticked so
+  recallModelFields();
 
   if (webSerial() === null) pageProblem = { kind: window.isSecureContext ? "noSerial" : "insecure" };
   renderAll();

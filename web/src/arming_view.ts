@@ -280,6 +280,7 @@ export function confirmationItems(report: PreflightReport, wording: Wording, lim
   add("home", t("station.arming.confirm.home"));
   add("steps", t("station.arming.confirm.steps"));
   add("execute", t("station.arming.confirm.execute"));
+  add("task", t("station.arming.confirm.task"));
   add("stop", t("station.arming.confirm.stop"));
   add("disable", t("station.arming.confirm.disable"));
   add("lost", t("station.arming.confirm.lost"));

@@ -427,6 +427,17 @@ pre {
   margin-bottom: 0.25rem;
 }
 
+.remember {
+  margin: 0.6rem 0 0.2rem;
+}
+
+.remember label {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.45rem;
+  font-weight: 600;
+}
+
 .hint {
   color: var(--muted);
   font-size: 0.86rem;
@@ -589,4 +600,61 @@ footer {
   * {
     scroll-behavior: auto !important;
   }
+}
+
+/* A task: the state's line, and the list of the turns, the newest first. Each turn says its own number. */
+#task-status {
+  font-weight: 600;
+}
+
+/* The task's two limits beside Start: each field with its sentence. */
+.task-limits {
+  display: grid;
+  gap: 0.4rem;
+  margin: 0.5rem 0;
+}
+
+.task-limit {
+  display: flex;
+  gap: 0.5rem;
+  align-items: baseline;
+}
+
+.task-limit input[type="number"] {
+  width: 5.5rem;
+  flex: none;
+}
+
+.task-limit input[type="checkbox"] {
+  flex: none;
+}
+
+/* The row of a real arm's Start. With both limits off it is a warning in the colour of an error. */
+#task-start-confirm[data-unlimited="true"] {
+  background: var(--error-ground);
+  border-left-color: var(--error);
+}
+
+.task-unlimited {
+  font-weight: 600;
+}
+
+/* The newest turn's result is shown whole: a refused action's message is the sentence the model reads. */
+#task-result {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.task-turns {
+  list-style: none;
+  padding: 0;
+  margin: 0.4rem 0 0;
+  max-height: 22rem;
+  overflow-y: auto;
+}
+
+.task-turns li {
+  border-top: 1px solid var(--line);
+  padding: 0.35rem 0;
+  font-size: 0.92rem;
 }

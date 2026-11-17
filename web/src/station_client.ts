@@ -56,6 +56,8 @@ export class StationClient {
   expectsStatus = false;
   private nextId = 0;
   private lastMessageAt = 0;
+  /** Whether the last look found the Worker silent: silence is told only when two looks in a row find it. */
+  private wasSilent = false;
   private readonly waiting = new Map<number, Waiting>();
   private watch: ReturnType<typeof setInterval> | null = null;
 
@@ -77,8 +79,18 @@ export class StationClient {
       // a hidden page's timers are slowed down, the Worker's perhaps too: silence is judged on a visible page
       if (!this.expectsStatus || document.hidden) {
         this.lastMessageAt = performance.now();
+        this.wasSilent = false;
       } else if (performance.now() - this.lastMessageAt > SILENT_AFTER_MS) {
-        this.hooks.onLost("silent", `no message for ${Math.round(performance.now() - this.lastMessageAt)} ms`);
+        // a window that stood still itself (a long task, a debugger, a machine that slept) runs this look before
+        // the messages that waited meanwhile: the Worker is taken as silent only when the next look, half a
+        // second later, still finds no message. The page ends a Worker that is lost during a task, and must
+        // not do so for the window's own pause.
+        if (this.wasSilent) {
+          this.hooks.onLost("silent", `no message for ${Math.round(performance.now() - this.lastMessageAt)} ms`);
+        }
+        this.wasSilent = true;
+      } else {
+        this.wasSilent = false;
       }
     }, 500);
   }

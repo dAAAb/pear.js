@@ -143,6 +143,13 @@
             <p class="hint" data-i18n="model.keyHint"></p>
           </div>
         </div>
+        <div class="remember">
+          <label for="model-remember">
+            <input type="checkbox" id="model-remember" autocomplete="off" aria-describedby="model-remember-note" />
+            <span data-i18n="model.remember"></span>
+          </label>
+          <p class="hint" id="model-remember-note" role="status" data-kept="false"></p>
+        </div>
         <div class="actions">
           <button type="button" id="model-check" class="primary" data-i18n="model.check"></button>
         </div>
@@ -172,6 +179,7 @@
             <p class="status" id="station-preflight-status" role="status" aria-live="polite"></p>
           </div>
           <p class="hint" id="station-disable-note" data-i18n="station.disableNote" hidden></p>
+          <p class="muted" id="station-disable-task" role="status" data-i18n="task.blocks.disable" hidden></p>
           <p class="status" id="station-status" role="status" aria-live="polite"></p>
           <p class="muted small" id="station-timing"></p>
           <p class="muted small" id="station-periods" aria-hidden="true"></p>
@@ -205,6 +213,7 @@
             <pre id="station-turn"></pre>
 
             <p class="hint" id="station-real-note" data-i18n="station.real.steps" hidden></p>
+            <p class="muted" id="station-task-note" role="status" data-i18n="task.blocks.steps" hidden></p>
             <div id="station-jog-part">
               <h3 data-i18n="station.jogTitle"></h3>
               <p class="lead" data-i18n="station.jogLead"></p>
@@ -301,10 +310,64 @@
           </div>
         </div>
 
-        <div class="actions">
-          <button type="button" id="task-start" class="primary" data-i18n="task.start" disabled></button>
+        <div id="task-run" class="panel" data-task="none">
+          <h3 data-i18n="task.run.title"></h3>
+          <p class="lead" id="task-start-note" data-i18n="task.startNote"></p>
+          <div id="task-limits" class="task-limits" data-turns="" data-action="">
+            <div class="task-limit">
+              <input type="number" id="task-limit-turns" min="0" max="1000" step="1" value="30" inputmode="numeric" autocomplete="off" />
+              <label for="task-limit-turns" data-i18n="task.limit.turns"></label>
+            </div>
+            <div class="task-limit">
+              <input type="checkbox" id="task-limit-action" autocomplete="off" checked />
+              <label for="task-limit-action" id="task-limit-action-label"></label>
+            </div>
+          </div>
+          <div class="actions">
+            <button type="button" id="task-start" class="primary" data-i18n="task.start" disabled></button>
+            <button type="button" id="task-pause" data-i18n="task.pause" hidden disabled></button>
+            <button type="button" id="task-resume" class="primary" data-i18n="task.resume" hidden disabled></button>
+            <button type="button" id="task-clear" data-i18n="task.clear" hidden disabled></button>
+            <button type="button" id="task-reset-stop" data-i18n="task.resetStop" hidden disabled></button>
+          </div>
+          <div id="task-start-confirm" class="box warn" data-unlimited="false" hidden>
+            <p id="task-start-ask"></p>
+            <p id="task-start-unlimited" class="task-unlimited" hidden></p>
+            <div class="actions">
+              <button type="button" id="task-start-go" data-i18n="task.confirm.go"></button>
+              <button type="button" id="task-start-keep" data-i18n="task.confirm.keep"></button>
+            </div>
+          </div>
+          <p id="task-limits-none" class="box warn" role="status" hidden></p>
+          <p id="task-why" class="muted" role="status" data-why=""></p>
+          <p id="task-status" role="status" data-phase=""></p>
+          <p id="task-paused-by" class="box warn" role="status" data-by="" hidden></p>
+          <p id="task-ended" class="box error" role="alert" data-arm="" hidden></p>
+          <p id="task-refusal" class="box error" role="alert" hidden></p>
+          <p id="task-error" class="box error" role="alert" hidden></p>
+          <p id="task-stop-message" class="box warn" role="status" hidden></p>
+          <p id="task-gap" class="box warn" role="status" hidden></p>
+          <div id="task-turn" hidden>
+            <h4 id="task-turn-number"></h4>
+            <details id="task-reasoning-part" open>
+              <summary data-i18n="ask.reasoning"></summary>
+              <pre id="task-reasoning"></pre>
+            </details>
+            <div id="task-answer-part">
+              <h4 data-i18n="ask.answer"></h4>
+              <pre id="task-answer"></pre>
+            </div>
+            <p id="task-action"></p>
+            <p id="task-result"></p>
+            <p id="task-performance-part" hidden><span data-i18n="ask.performance"></span> <span id="task-performance"></span></p>
+          </div>
+          <div id="task-turns-part" hidden>
+            <h4 data-i18n="task.turns.title"></h4>
+            <p id="task-cleared" class="muted" data-i18n="task.cleared" hidden></p>
+            <p id="task-turns-note" class="muted small"></p>
+            <ol id="task-turns" class="task-turns"></ol>
+          </div>
         </div>
-        <p class="hint" id="task-start-note" data-i18n="task.startNote"></p>
       </section>
 
       <section id="log" aria-labelledby="log-title">

@@ -16,6 +16,8 @@
 // The robot's wrist camera is the library's own (CameraFeed over WristCamera); its frame reader is fed by the
 // window, which has the camera: a Worker cannot open one.
 
+import type { Sleep } from "../../src/agent/clock";
+import type { ModelState, SingleArmDelta } from "../../src/protocol/types";
 import { pythonErrorMessage, pythonErrorName, isValueError, RuntimeError } from "../../src/python/errors";
 import { type HardwareSection, SO101_DEFAULT_CONFIG, type SO101Config } from "../../src/so101/config";
 import { SINGLE_ARM_POSE_FORMAT } from "../../src/so101/formats";
@@ -50,7 +52,7 @@ import { DEFAULT_CONTROL_SETTINGS } from "../../src/station/joint/config";
 import { realTimeClock } from "../../src/station/joint/deadline_clock";
 import { JointLimits } from "../../src/station/joint/limits";
 import { MotionStatus, type MotionResult } from "../../src/station/motion/results";
-import type { ControlLoopClass, StationConfig } from "../../src/station/robot";
+import { AgentRobotAdapter, type ControlLoopClass, type StationConfig } from "../../src/station/robot";
 import type { DetailedStatus, HomePlan, Observation } from "../../src/station/schemas";
 import { SIM_CALIBRATION, SimArm, simulatedConfiguredPort, simulatedGrantedPort } from "./sim_port";
 import { SETTING_ADDRESSES, type StationSetting } from "./station_guard";
@@ -91,11 +93,16 @@ import {
   type StationRequest,
   type StationStatus,
   type StepPeriods,
+  type TaskAnswer,
+  type TaskLimits,
+  type TaskService,
   type TimingCheck,
   type TimingFailure,
   type ToStation,
   type UsbIds,
 } from "./station_protocol";
+import { ACTION_LIMIT_CM, ACTION_LIMIT_RAD, TURNS_LIMIT_MAX } from "./station_protocol";
+import { TaskHost, type TaskHostLimits } from "./task_host";
 
 /** How fast a simulated servo goes to its goal, steps a second: an STS3215 without load turns at about 45 turns
  * a minute. It is several times the arm's fastest joint (1 rad/s is 652 steps a second), so the simulated arm
@@ -278,6 +285,36 @@ interface PreflightFindings {
 
 type PreflightRequest = Extract<StationRequest, { type: "preflight" }>;
 type EnableRealRequest = Extract<StationRequest, { type: "enableReal" }>;
+type TaskRequest = Extract<StationRequest, { type: "task" }>;
+
+/** Returns the limits a "start" was given as the console takes them; a "start" without limits runs without any,
+ * as PEAR's does. Anything that is not a whole number of turns from 0 to TURNS_LIMIT_MAX with a boolean is
+ * refused: a task on a real arm never runs on limits its operator did not set. */
+function hostLimits(limits: TaskLimits | undefined): TaskHostLimits {
+  if (limits === undefined) return TaskHost.NO_LIMITS;
+  const given = limits as { readonly turns?: unknown; readonly isActionLimited?: unknown } | null;
+  const turns = given?.turns;
+  const isActionLimited = given?.isActionLimited;
+  if (
+    typeof given !== "object" ||
+    given === null ||
+    typeof turns !== "number" ||
+    !Number.isInteger(turns) ||
+    turns < 0 ||
+    turns > TURNS_LIMIT_MAX ||
+    typeof isActionLimited !== "boolean"
+  ) {
+    throw new RuntimeError(`A task's limits are a whole number of turns from 0 to ${TURNS_LIMIT_MAX} and whether an action's size is limited`);
+  }
+
+  return { turns, action: isActionLimited ? { cm: ACTION_LIMIT_CM, rad: ACTION_LIMIT_RAD } : null };
+}
+
+/** Returns the limits the console was given, as the status tells them back (StationStatus.taskLimits): what the
+ * task runs with, for a page that shows what the Worker holds and not what it sent. */
+function limitsTold(limits: TaskHostLimits): TaskLimits {
+  return { turns: limits.turns, isActionLimited: limits.action !== null };
+}
 
 /** What reading an arm needs of its line: the guard as a transport, and why the line failed, if it did. Both
  * the read-only line and the station's line are one. */
@@ -557,6 +594,16 @@ class StampedControlLoop extends SO101ControlLoop {
   }
 }
 
+/** Returns the waits of a console on the station's clock `clock`: a wait ends at its time, or when `wake` is
+ * aborted. */
+function sleepOn(clock: Pick<MonotonicClock, "sleep">): Sleep {
+  return (seconds, wake) =>
+    new Promise((resolve) => {
+      void clock.sleep(seconds).then(resolve);
+      wake?.addEventListener("abort", () => resolve(), { once: true });
+    });
+}
+
 /** The SO-101 on the loop above; a frame of its wrist camera is a JPEG's bytes. */
 class StationRobot extends SO101Robot<Uint8Array> {
   static override readonly CONTROL_LOOP_CLASS: ControlLoopClass = StampedControlLoop;
@@ -681,13 +728,33 @@ export class StationHost {
   /** The frames of the window's camera: what the wrist camera of the robot that is open reads. A station that
    * is enabled anew has been told nothing of the camera yet. */
   private frames = new WindowFrames();
+  /** The camera feed of the robot that is open, simulated or real: what a task's console is made with. */
+  private cameraFeed: CameraFeed<Uint8Array> | null = null;
+  /** PEAR's console for the robot that is open, simulated or real (task_host.ts); null until a task is started,
+   * and again once the station is disabled. */
+  private taskHost: TaskHost<Uint8Array> | null = null;
+  /** The limits the task that is there runs with: the ones the console took with the "start" that made it. null
+   * while no "start" was accepted for a task that is there. */
+  private taskLimits: TaskLimits | null = null;
+  /** The limits of a "start" that is under way, which the task it makes runs with from its first turn; null while
+   * none is. */
+  private startLimits: TaskLimits | null = null;
+  /** The model service that console was made with. It is kept here and in the console and nowhere else: no
+   * message to the window holds it. */
+  private taskService: TaskService | null = null;
+  /** Whether the station is being disabled: no console is made meanwhile. */
+  private isDisabling = false;
 
   /** `serial` is where a preflight finds the port the page was granted (station_port.ts); null when the Worker
    * has no serial ports to give. `timingClock` is the clock the timing self-check keeps its periods with: the
    * loop's own unless a test gives one that does not wait. `real` is what a test may give for a real arm: the
-   * clock its robot, its line and its guard keep (the page's own without one), how long the operator's answer
-   * is awaited, ms (ARMING_LIMIT_MS without one), and who is shown the line's guard when the line is opened,
-   * to see the guard's state: the guard is all of the line that is ever given out. */
+   * clock its robot, its line, its guard and its task's console keep (the page's own without one), how long the
+   * operator's answer is awaited, ms (ARMING_LIMIT_MS without one), who is shown the line's guard when the line
+   * is opened, to see the guard's state (the guard is all of the line that is ever given out), and what makes
+   * the requests of the model client of a task on it (the runtime's fetch without one). `simulated` is what a test may
+   * give for the simulated arm and a task on it: the clock its chain, its camera, its robot and its console keep
+   * (the page's own without one), and what makes the requests of the task's model client (the runtime's fetch
+   * without one). */
   constructor(
     private readonly post: (message: FromStation) => void,
     private readonly serial: SerialSource | null = null,
@@ -696,6 +763,11 @@ export class StationHost {
       readonly clock?: MonotonicClock;
       readonly armingLimitMs?: number;
       readonly onGuard?: (guard: StationLine["guard"]) => void;
+      readonly fetch?: typeof fetch;
+    } = {},
+    private readonly simulated: {
+      readonly clock?: MonotonicClock;
+      readonly fetch?: typeof fetch;
     } = {},
   ) {}
 
@@ -741,6 +813,8 @@ export class StationHost {
         return this.enableReal(id, request);
       case "arm":
         return this.arm(request.requestId, request.isConfirmed);
+      case "task":
+        return this.task(request);
     }
   }
 
@@ -777,7 +851,11 @@ export class StationHost {
   }
 
   private async enableOn(positions: MotorSteps): Promise<EnableResult> {
-    const chain = simulatedArm(SIM_CALIBRATION, positions, { speed: SIM_SPEED_STEPS_S });
+    const clock = this.simulated.clock;
+    const chain = simulatedArm(SIM_CALIBRATION, positions, {
+      speed: SIM_SPEED_STEPS_S,
+      ...(clock === undefined ? {} : { clock: { now: () => clock.monotonic() * 1000, sleep: (ms: number) => clock.sleep(ms / 1000) } }),
+    });
     const timing = await this.timingCheck(chain, 0);
     this.event({ type: "timing", timing });
     if (timing.failures.length > 0) {
@@ -786,14 +864,17 @@ export class StationHost {
 
     // the wrist camera on the frames the window sends: every observation holds the frame a turn would send, and
     // without a fresh one it fails as PEAR's does
-    const frames = new WindowFrames();
+    const frames = clock === undefined ? new WindowFrames() : new WindowFrames(clock);
     this.frames = frames;
+    const cameraFeed = new CameraFeed(new WristCamera(STATION_CONFIG.robot, frames, { clock: clock ?? realTimeClock() }));
     const robot = new StationRobot(STATION_CONFIG, {
-      cameras: new CameraFeed(new WristCamera(STATION_CONFIG.robot, frames, { clock: realTimeClock() })),
+      ...(clock === undefined ? {} : { clock }),
+      cameras: cameraFeed,
       line: {
         transport: chain,
         calibration: SIM_CALIBRATION,
         onWarning: (message, error) => this.log("warning", "so101.hardware", message, error),
+        ...(clock === undefined ? {} : { clock }),
       },
       log: (logger, level, message, error) => this.log(level, logger, message, error),
       uuid4,
@@ -805,6 +886,7 @@ export class StationHost {
     await robot.open();
     this.robot = robot;
     this.chain = chain;
+    this.cameraFeed = cameraFeed;
     this.feedback = null;
     this.statusTimer = setInterval(() => this.tellStatus(), STATUS_PERIOD_MS);
     this.tellStatus();
@@ -1199,9 +1281,10 @@ export class StationHost {
       isOpening = true;
       const frames = clock === undefined ? new WindowFrames() : new WindowFrames(clock);
       this.frames = frames;
+      const cameraFeed = new CameraFeed(new WristCamera(REAL_STATION_CONFIG.robot, frames, { clock: clock ?? realTimeClock() }));
       const robot = new StationRobot(REAL_STATION_CONFIG, {
         ...(clock === undefined ? {} : { clock }),
-        cameras: new CameraFeed(new WristCamera(REAL_STATION_CONFIG.robot, frames, { clock: clock ?? realTimeClock() })),
+        cameras: cameraFeed,
         line: {
           transport: held.guard,
           calibration: request.calibrationFile ?? heldCalibration(servos),
@@ -1220,6 +1303,7 @@ export class StationHost {
       this.robot = robot;
       this.line = held;
       this.chain = null;
+      this.cameraFeed = cameraFeed;
       this.feedback = null;
       isOpening = false;
       this.statusTimer = setInterval(() => this.tellStatus(), STATUS_PERIOD_MS);
@@ -1282,38 +1366,77 @@ export class StationHost {
     this.statusTimer = null;
     this.robot = null;
     this.line = null;
+    this.cameraFeed = null;
     this.tellStatus();
 
     return { positions: {}, isLineClosed };
   }
 
+  /** The request "disable". It is refused while a task holds the arm: the task is cleared first, which ends its
+   * turn and its model session as PEAR ends them. It is never refused when the arm needs it: with the robot in
+   * FAULT or OFF, or a real arm's line lost, a task that is there does not hold the arm any more and goes with
+   * its console. The console is closed before the robot it was made for, and the model service is forgotten
+   * with it. */
   private async disable(): Promise<DisableResult> {
     const robot = this.open;
+    if (this.isTaskThere && !this.isArmInNeed(robot)) throw new RuntimeError("Clear the task before the station is disabled");
     this.approval?.(false);
-    if (this.line !== null) return this.disableReal(robot, this.line);
+    this.isDisabling = true;
     try {
-      await robot.close();
-    } catch (error) {
-      // a close that arrives while an action is under way can reject and has closed the arm all the same
-      if (robot.status().status !== "OFF") throw error;
-    }
-    const chain = this.chain as SimServoChain;
-    chain.advance();
-    const positions = Object.fromEntries(
-      Object.entries(followerMotors()).map(([motor, { id }]) => [motor, Math.round(chain.servo(id).position)]),
-    );
-    if (this.statusTimer !== null) clearInterval(this.statusTimer);
-    this.statusTimer = null;
-    this.robot = null;
-    this.chain = null;
-    this.tellStatus();
+      await this.closeConsole();
+      if (this.line !== null) return await this.disableReal(robot, this.line);
+      try {
+        await robot.close();
+      } catch (error) {
+        // a close that arrives while an action is under way can reject and has closed the arm all the same
+        if (robot.status().status !== "OFF") throw error;
+      }
+      const chain = this.chain as SimServoChain;
+      chain.advance();
+      const positions = Object.fromEntries(
+        Object.entries(followerMotors()).map(([motor, { id }]) => [motor, Math.round(chain.servo(id).position)]),
+      );
+      if (this.statusTimer !== null) clearInterval(this.statusTimer);
+      this.statusTimer = null;
+      this.robot = null;
+      this.chain = null;
+      this.cameraFeed = null;
+      this.tellStatus();
 
-    return { positions, isLineClosed: true };
+      return { positions, isLineClosed: true };
+    } finally {
+      this.isDisabling = false;
+    }
+  }
+
+  /** Whether the arm is in a state that only a disable ends: the robot in FAULT or OFF, or a real arm's line
+   * lost. A status that cannot be read counts as such a state. */
+  private isArmInNeed(robot: StationRobot): boolean {
+    if (this.line !== null && this.line.isLost()) return true;
+    try {
+      const { status } = robot.status();
+
+      return status === "FAULT" || status === "OFF";
+    } catch {
+      return true;
+    }
   }
 
   // ---------------------------------------------------------------- stopping
 
+  /** The request "stop". While a task holds the arm it is PEAR's STOP MOTION, which latches; otherwise it is the
+   * robot's own stop. */
   private async stop(): Promise<null> {
+    const taskHost = this.taskHost;
+    if (taskHost === null || !this.isTaskThere) return this.stopRobot();
+    await this.stopMotion(taskHost);
+    this.tellStatus();
+
+    return null;
+  }
+
+  /** The robot's own stop, and a refusal for whoever waits for the operator's answer. */
+  private async stopRobot(): Promise<null> {
     this.approval?.(false);
     // an enabling of a real arm that has not been confirmed yet is refused by a stop
     if (this.isArming) this.isArmingStopped = true;
@@ -1323,12 +1446,159 @@ export class StationHost {
     return null;
   }
 
+  /** PEAR's STOP MOTION on the console: the task's turn ends, the arm is braked into a hold, and nothing starts
+   * until "reset_stop". Should the console fail at it, the robot's own stop is called all the same. */
+  private async stopMotion(taskHost: TaskHost<Uint8Array>): Promise<Readonly<Record<string, unknown>>> {
+    try {
+      return await taskHost.run("stop");
+    } catch (error) {
+      await this.robot?.stop();
+      throw error;
+    }
+  }
+
+  /** The request "visibility". A hidden page stops the arm, and a task that runs is paused first, as the
+   * operator pauses it, so that its turn ends as PEAR ends a paused turn. */
   private async setHidden(isHidden: boolean): Promise<null> {
     this.isHidden = isHidden;
-    if (isHidden) await this.stop();
+    if (isHidden) {
+      const taskHost = this.taskHost;
+      if (taskHost !== null && taskHost.isBusy) {
+        try {
+          await taskHost.pauseFor("hidden");
+        } catch (error) {
+          this.log("warning", "station", "The task could not be paused for the hidden page", error);
+        }
+      }
+      await this.stopRobot();
+    }
     this.tellStatus();
 
     return null;
+  }
+
+  // ---------------------------------------------------------------- a task
+
+  /** Whether a task holds the arm: one is there, running or paused, or an operation of the console runs. The
+   * host's own motions and its disable are refused meanwhile, and a stop is PEAR's STOP MOTION. */
+  private get isTaskThere(): boolean {
+    const taskHost = this.taskHost;
+
+    return taskHost !== null && (taskHost.isBusy || taskHost.snapshot().task !== null);
+  }
+
+  /** The request "task": one command of PEAR's console for the robot that is open, on the simulated arm and on
+   * a real arm's line alike (there every write of the task goes through the line's guard, as every other write
+   * of the robot). The answer is PEAR's answer and what the console tells right after it; what PEAR refuses is
+   * the request's error, in PEAR's words. A "start" whose limits are not a task's limits is refused before a
+   * console is made. Nothing of the request is logged or told on: the model service stays in this Worker. */
+  private async task(request: TaskRequest): Promise<TaskAnswer> {
+    const robot = this.open;
+    if (this.isDisabling) throw new RuntimeError("The station is being disabled");
+    const { command } = request;
+    if (command === "start" || command === "resume") {
+      // a task's turns move the arm: they are refused where an action is
+      if (this.isHidden) throw new RuntimeError("The page is hidden: no action is started");
+      if (this.action !== null) throw new RuntimeError("Another action is under way");
+    }
+    let taskHost = this.taskHost;
+    let answer: Readonly<Record<string, unknown>>;
+    if (command === "start") {
+      const { service, instruction } = request;
+      if (service === undefined || service === null || typeof instruction !== "string") {
+        throw new RuntimeError("A task is started with its instruction and the model service");
+      }
+      const limits = hostLimits(request.limits);
+      taskHost = this.consoleFor(robot, service);
+      // limits that are still held are of a task that is gone
+      if (taskHost.snapshot().task === null) this.taskLimits = null;
+      const told = limitsTold(limits);
+      const isOnlyStart = this.startLimits === null;
+      if (isOnlyStart) this.startLimits = told;
+      try {
+        answer = await taskHost.run("start", { instruction }, limits);
+        // an accepted "start" made the task and launched its turns with these limits; a refused one changed none
+        this.taskLimits = told;
+      } finally {
+        if (isOnlyStart) this.startLimits = null;
+      }
+    } else {
+      if (taskHost === null) throw new RuntimeError("No task was started since the station was enabled");
+      answer = command === "stop" ? await this.stopMotion(taskHost) : await taskHost.run(command);
+    }
+    // the console's events, then the status: what the answer tells of has been told by then
+    this.tellStatus();
+
+    return { answer, task: taskHost.snapshot() };
+  }
+
+  /** Returns the console a "start" with `service` runs on: the one that is there, or a new one on the robot that
+   * is open when there is none, or when the one that is there was made with another service and may go. A
+   * console that holds a task, runs an operation or is latched stays and answers the "start" itself, in PEAR's
+   * words. */
+  private consoleFor(robot: StationRobot, service: TaskService): TaskHost<Uint8Array> {
+    const old = this.taskHost;
+    if (old !== null) {
+      const made = this.taskService;
+      const isSame = made !== null && made.baseUrl === service.baseUrl && made.model === service.model && made.apiKey === service.apiKey;
+      const told = old.snapshot();
+      if (isSame || old.isBusy || told.task !== null || told.isStopLatched) return old;
+      // it holds nothing and runs nothing: its closing costs no motion and is not awaited
+      void this.closeConsole();
+    }
+    let taskHost: TaskHost<Uint8Array>;
+    try {
+      taskHost = this.madeConsole(robot, service);
+    } catch (error) {
+      // named and not quoted: what failed was given the service
+      throw new RuntimeError(`The task's console could not be made (${pythonErrorName(error)})`);
+    }
+    this.taskHost = taskHost;
+    this.taskService = { baseUrl: service.baseUrl, model: service.model, apiKey: service.apiKey };
+
+    return taskHost;
+  }
+
+  /** Makes PEAR's console for `robot`, the robot that is open, with the model service `service`: on the robot's
+   * own camera feed and frames, and on the clock the robot keeps. */
+  private madeConsole(robot: StationRobot, service: TaskService): TaskHost<Uint8Array> {
+    const given = this.line === null ? this.simulated : this.real;
+    const clock = given.clock;
+    const frames = this.frames;
+
+    return new TaskHost<Uint8Array>({
+      robot,
+      agentRobot: new AgentRobotAdapter<ModelState, SingleArmDelta, Uint8Array>(robot, (frame) => frame),
+      cameraFeed: this.cameraFeed as CameraFeed<Uint8Array>,
+      camera: () => frames.numbers(),
+      service: { baseUrl: service.baseUrl, model: service.model, apiKey: service.apiKey },
+      ...(clock === undefined ? {} : { clock: () => clock.monotonic(), sleep: sleepOn(clock) }),
+      ...(given.fetch === undefined ? {} : { fetch: given.fetch }),
+      log: (logger, level, message, error) => this.log(level, logger, message, error),
+    });
+  }
+
+  /** Forgets the console and its model service, and closes the console: its watchdog and its model session end.
+   * What it has not told yet is posted first, and then a status that tells of no console. The error of a close
+   * that fails is named and not quoted: nothing that could hold the service's key is told on. */
+  private async closeConsole(): Promise<void> {
+    const taskHost = this.taskHost;
+    if (taskHost === null) return;
+    this.tellTaskEvents();
+    this.taskHost = null;
+    this.taskService = null;
+    this.tellStatus();
+    try {
+      await taskHost.close();
+    } catch (error) {
+      this.log("warning", "station", `The task's console did not close as it should (${pythonErrorName(error)})`);
+    }
+  }
+
+  /** Posts the console's events since the last time, oldest first, when there are any. */
+  private tellTaskEvents(): void {
+    const events = this.taskHost?.takeEvents() ?? [];
+    if (events.length > 0) this.event({ type: "task", events });
   }
 
   // ---------------------------------------------------------------- actions
@@ -1336,6 +1606,7 @@ export class StationHost {
   /** Runs `body` as the one action under way. */
   private async asAction<Result>(type: "jog" | "home", requestId: number, body: (robot: StationRobot) => Promise<Result>): Promise<Result> {
     const robot = this.open;
+    if (this.isTaskThere) throw new RuntimeError("Clear the task first: a task holds the arm");
     if (this.isHidden) throw new RuntimeError("The page is hidden: no action is started");
     if (this.action !== null) throw new RuntimeError("Another action is under way");
     this.action = { type, requestId };
@@ -1436,6 +1707,10 @@ export class StationHost {
 
   private status(): StationStatus {
     const periods = stepPeriods(stepStamps, performance.now());
+    const taskHost = this.taskHost;
+    const task = taskHost === null ? null : taskHost.snapshot();
+    // an operation of the console is told as the action while no jog and no Home runs
+    const action = this.action?.type ?? (taskHost !== null && taskHost.isBusy ? "task" : null);
     const off: StationStatus = {
       robot: "OFF",
       control: null,
@@ -1455,13 +1730,20 @@ export class StationHost {
       isHidden: this.isHidden,
       arm: null,
       line: null,
+      task: null,
+      taskPausedBy: null,
+      taskLimits: null,
     };
     const robot = this.robot;
     if (robot === null) return off;
     const arm = this.line === null ? "simulated" : "real";
     const line = this.lineStatus();
     const status = robot.status(true);
-    if (!("arms" in status)) return { ...off, robot: status.status, arm, line };
+    const taskPausedBy = taskHost === null ? null : taskHost.pausedBy;
+    // the limits are told while a task is there: the ones its "start" was accepted with or, until that "start" is
+    // answered, the ones it is under way with
+    const taskLimits = task === null || task.task === null ? null : (this.taskLimits ?? this.startLimits);
+    if (!("arms" in status)) return { ...off, robot: status.status, action, arm, line, task, taskPausedBy, taskLimits };
     const detailed = status as DetailedStatus;
     const joints = [...detailed.arms[ARM]!.position];
     let state: StationStatus["state"] = null;
@@ -1488,10 +1770,13 @@ export class StationHost {
       since: off.since,
       clock: off.clock,
       camera: off.camera,
-      action: this.action?.type ?? null,
+      action,
       isHidden: this.isHidden,
       arm,
       line,
+      task,
+      taskPausedBy,
+      taskLimits,
     };
   }
 
@@ -1510,8 +1795,11 @@ export class StationHost {
     };
   }
 
+  /** Posts the status, and before it the console's events: a status never tells of a turn whose events have not
+   * been posted. */
   private tellStatus(): void {
     try {
+      this.tellTaskEvents();
       this.event({ type: "status", status: this.status() });
     } catch (error) {
       this.log("error", "station", "The status could not be told", error);

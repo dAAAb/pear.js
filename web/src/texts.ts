@@ -6,7 +6,7 @@ export const EN = {
   "page.title": "pear.js: PEAR's robot station in the browser",
   "page.tagline": "PEAR's robot station in the browser, for a LeRobot SO-101.",
   "page.notice":
-    "pear.js is an unofficial, experimental port of PEAR's robot station (MIT Han Lab). The station runs in a Worker of this page and drives a simulated arm. With a real arm connected the page reads: it shows your arm, your camera and your model service. It writes to the servos only after you press “Enable the station on this arm” and confirm; then it can hold the arm, move it one small step at a time, move it to Home, stop it and release it. It executes a model's action only one at a time, each when you press “Execute this action” for that action. Nothing runs by itself.",
+    "pear.js is an unofficial, experimental port of PEAR's robot station (MIT Han Lab). The station runs in a Worker of this page and drives a simulated arm. With a real arm connected the page reads: it shows your arm, your camera and your model service. It writes to the servos only after you press “Enable the station on this arm” and confirm; then it can hold the arm, move it one small step at a time, move it to Home, stop it and release it, each at your own press, and it executes a model's action when you press “Execute this action” for that action. You can also start a task, on the simulated arm and, after a confirmation of its own, on a real arm: from then on the model is asked and its action is executed, turn after turn, so the model moves the arm by itself, without another press, until it is paused or the limit of turns you set is reached.",
   "page.skip": "Skip to the arm",
   "page.language": "Language",
   "page.noscript": "This page needs JavaScript.",
@@ -246,7 +246,16 @@ export const EN = {
   "model.nameHint": "The name the service serves the model under. Leave it empty if the service serves one model.",
   "model.key": "API key",
   "model.keyHint":
-    "Kept in this page's memory only, until you close or reload it. It is never stored and never written to the log. Leave it empty for a service that asks for none.",
+    "Kept in this page's memory only, until you close or reload it, unless you tick the box below. It is never written to the log. Leave it empty for a service that asks for none.",
+  "model.remember": "Remember the address, the model's name and the key on this browser",
+  "model.remember.off":
+    "Nothing is kept now. If you tick this, the address, the model's name and the key are kept in this browser's storage for this site, on this computer, until you take the tick away. Whoever uses this browser's profile can read them there, and so can any page served from this site's address: that is the whole host, not only this page's folder.",
+  "model.remember.on":
+    "The address, the model's name and the key are now kept in this browser's storage for this site, on this computer, until you take the tick away. Whoever uses this browser's profile can read them there, and so can any page served from this site's address: that is the whole host, not only this page's folder.",
+  "model.remember.refused":
+    "Nothing could be kept: this browser refuses this page its storage. The tick was taken away, and the page works as before.",
+  "model.remember.notRemoved":
+    "This browser's storage could not be reached, so what was kept there may still be there. Clear this site's data in the browser's settings to be sure it is gone.",
   "model.check": "Check",
   "model.checking": "Checking…",
   "model.unchecked": "Not checked yet.",
@@ -295,12 +304,104 @@ export const EN = {
 
   "task.title": "Task",
   "task.notice":
-    "The station below drives a simulated arm, in a Worker of this page. With a real arm connected the page reads; it writes to the servos only after “Enable the station on this arm” and its confirmation, and then it can hold the arm, move it one small step at a time, move it to Home, stop it and release it. It can ask a model once and show the answer. It executes a model's action only one at a time, each when you press “Execute this action” for that action, and on a real arm only after a second press. Nothing runs by itself. On the simulated arm you can try all of this without an arm.",
+    "The station below drives a simulated arm, in a Worker of this page. With a real arm connected the page reads; it writes to the servos only after “Enable the station on this arm” and its confirmation, and then it can hold the arm, move it one small step at a time, move it to Home, stop it and release it. It can ask a model once and show the answer, and it executes that answer's action when you press “Execute this action” for it (on a real arm you press once more to confirm). Enable, Home, a step by hand and Execute are each time your own press. A task is different: after your press of “Start” (on a real arm: after the confirmation that then shows) the model moves the arm by itself, turn after turn, until it is paused or the limit of turns you set is reached. On the simulated arm you can try all of this without an arm.",
   "task.instruction": "Instruction",
   "task.placeholder": "Put the red block into the box.",
   "task.start": "Start",
   "task.startNote":
-    "“Start”, a task the model runs by itself, is not in this version. This version offers one ask and one action at a time: “Ask the model once” above, then “Execute this action” for the action it answered with.",
+    "“Start” runs a task, on the simulated arm at once and on a real arm after a confirmation: the model is asked, its action is executed, and the next turn follows by itself, without another press. So the model moves the arm by itself until it is paused (by “Pause”, by the stop bar, by a hidden page or by a turn that fails) or the limit of turns you set below is reached. A task has no end of its own: a paused task is resumed or cleared. Still your own press each time: Enable, Home, a step by hand and “Execute this action”.",
+  "task.limit.turns": "Pause the task after this many turns (0 to 1,000; 0: no limit). “Resume” then runs as many again.",
+  "task.limit.action":
+    "Do not execute an action of more than {cm} cm along an axis or {rad} rad of a rotation: the model is told so and asks again. Unticked, an action is as large as the model asks, as PEAR has it.",
+  "task.confirm.ask":
+    "Start this task on the real arm? From your press of “Start on the arm” the model moves the real arm by itself, one action after another, without a press of yours between them. {ends} {size} Nothing looks for the table or for an obstacle in the arm's way. Keep the stop bar and the servos' power switch within your reach.",
+  "task.confirm.ends.limit":
+    "It goes on until you press “Pause” or the stop bar, or until its limit of turns is reached, which is set to {turns}: then the task is paused, and “Resume” runs {turns} more.",
+  "task.confirm.ends.none": "It goes on until you pause it, with “Pause” or the stop bar: no limit of turns is set.",
+  "task.confirm.size.limit":
+    "An action of more than {cm} cm along an axis or {rad} rad of a rotation is not executed: the model is told so and asks again.",
+  "task.confirm.size.none": "An action is as large as the model asks: the limit of an action's size is switched off.",
+  "task.confirm.unlimited":
+    "Both limits are switched off: the task is not paused after a count of turns, and nothing limits how far one action moves the arm. It is yours to pause, with “Pause” or the stop bar.",
+  "task.confirm.go": "Start on the arm",
+  "task.confirm.keep": "Don't",
+  "task.pausedBy.limit": "The task is paused: its limit of turns, set to {turns}, was reached. “Resume” runs {turns} more.",
+  "task.pausedBy.limitUnknown": "The task is paused: its limit of turns was reached. “Resume” runs as many again.",
+  "task.pausedBy.hidden":
+    "The task is paused: this page was hidden. It does not go on by itself: press “Resume” when you are back at the arm.",
+  "task.limits.none":
+    "The station tells no limits for this task: it runs without limits. It is not paused after a count of turns, and nothing limits how far one action moves the arm. It is yours to pause, with “Pause” or the stop bar.",
+  "task.resume.ask":
+    "Resume this task on the real arm? From your press of “Resume on the arm” the model moves the real arm again by itself, one action after another, without a press of yours between them. {ends} {size} Nothing looks for the table or for an obstacle in the arm's way. Keep the stop bar and the servos' power switch within your reach.",
+  "task.resume.go": "Resume on the arm",
+  "task.ended.lost":
+    "The station's Worker was lost during this task, so the page ended the Worker: a task must not go on asking the model and moving an arm that the page can no longer stop. The task was ended with the Worker and cannot be resumed. Reload the page to start again.",
+  "task.ended.lostReal":
+    "The station's Worker was lost during this task, so the page ended the Worker: a task must not go on asking the model and moving an arm that the page can no longer stop. The task was ended with the Worker and cannot be resumed. The servos hear nothing now: they keep their torque and hold their last goal until their power is switched off. Reload the page to start again.",
+  "task.run.title": "Run a task",
+  "task.pause": "Pause",
+  "task.resume": "Resume",
+  "task.clear": "Clear the task",
+  "task.resetStop": "Reset STOP MOTION",
+  "task.why.disabled": "Start needs the station enabled, on the simulated arm or on a real arm: enable the station above first.",
+  "task.why.failed":
+    "The station cannot run a task now: the robot is in FAULT or off, or the arm's line is lost. Disable the station and enable it again.",
+  "task.why.task": "A task is there. Pause it and clear it before another one is started.",
+  "task.why.stopLatched": "STOP MOTION is latched: nothing starts until it is reset. Press “Reset STOP MOTION”.",
+  "task.why.busy": "An action is under way: wait until it has ended.",
+  "task.why.hidden": "The page is hidden: a task starts only while the page is visible.",
+  "task.why.camera": "Still missing: the camera. Start it in step 2: the model of a task sees the arm through it.",
+  "task.why.model":
+    "Still missing: a checked model service. Check it in step 3; after a change of the address, the name or the key, check again.",
+  "task.why.instruction": "Still missing: the instruction. Write above what the arm is to do.",
+  "task.why.long": "The instruction is too long: PEAR takes a task of 1 to 20,000 characters.",
+  "task.why.limit": "The limit of turns must be a whole number from 0 to 1,000, written in digits (0: no limit).",
+  "task.blocks.steps":
+    "A task is there and the arm is the task's. To move it by hand or to Home, pause the task and clear it first.",
+  "task.blocks.disable":
+    "A task is there: pause it and clear it first, then the station can be disabled. Stop works at any time.",
+  "task.blocks.ask": "A task is there and asks the model itself. To ask once by hand, pause the task and clear it first.",
+  "task.blocks.execute":
+    "A task has started since this answer was asked for, so the arm is no longer as the model saw it and the answer is spent. Clear the task first, then ask again.",
+  "task.status.none": "No task.",
+  "task.status.latched": "No task. STOP MOTION is latched: reset it before a task is started.",
+  "task.status.noTurn": "{phase} No turn has begun yet. Actions completed: {steps}.",
+  "task.status.turn": "{phase} Turn {turn}. Actions completed: {steps}.",
+  "task.phase.holding": "The station holds the arm; the task does not run.",
+  "task.phase.observing": "Observing: the station reads the arm and takes the camera's frame.",
+  "task.phase.thinking": "Thinking: the model is asked and answers.",
+  "task.phase.planning": "Planning: the station plans the motion of the model's action.",
+  "task.phase.executing": "Executing: the arm moves.",
+  "task.phase.settling": "Settling: the arm comes to rest.",
+  "task.phase.compacting": "Compacting: the model's session is being shortened.",
+  "task.phase.stopping": "Stopping: the arm brakes and the running turn ends.",
+  "task.phase.paused": "Paused: the station holds the arm and no turn runs.",
+  "task.phase.stopped": "Stopped: STOP MOTION is latched, and nothing starts until it is reset.",
+  "task.phase.other": "PEAR's phase: {phase}.",
+  "task.error.resume":
+    "The task is paused after a failure; it keeps its model session. “Resume” tells the model what became of its last answer and runs the task on; “Clear the task” ends it. PEAR's words: {error}",
+  "task.error.reset":
+    "A failure is shown, and STOP MOTION is latched: press “Reset STOP MOTION”; then a paused task can be resumed or cleared. PEAR's words: {error}",
+  "task.error.noTask":
+    "A failure is shown and no task is there: when what it names is mended, press “Start” again. PEAR's words: {error}",
+  "task.error.running": "A failure is shown while the task runs. PEAR's words: {error}",
+  "task.refused": "The station refused “{command}”. PEAR's words: {error}",
+  "task.stopMessage": "A stop was asked. PEAR's words: {message}",
+  "task.cleared": "This task was cleared. Its turns stay listed here until the next task starts.",
+  "task.gap":
+    "{count} events of this task did not reach the page (their numbers have gaps): the turns below may lack an action or a result. The task itself is not touched by this.",
+  "task.turn.number": "Turn {turn}",
+  "task.turn.line": "Turn {turn}. {action} {result}",
+  "task.turn.result": "Result: {status}.",
+  "task.turn.resultError": "Result: {status}. {error}",
+  "task.turn.ended": "The turn ended without a result: {phase}.",
+  "task.turn.endedMessage": "The turn ended without a result: {phase}. {message}",
+  "task.turn.running": "The turn runs.",
+  "task.turn.noAction": "The answer held no action.",
+  "task.turn.noActionYet": "No action yet.",
+  "task.turns.title": "The task's turns",
+  "task.turns.note": "The newest turn first; the list keeps the newest {kept} turns.",
+  "task.turns.forgotten": "{count} older turns are no longer listed.",
   "ask.title": "Ask the model once",
   "ask.lead":
     "Sends the model what the first turn of a task would send: PEAR's system prompt with the instruction above, the arm's state, and the camera's frame of this moment. The state is this window's reading (step 1) or, while the station holds the arm, what the station measures. The answer is shown as it arrives, and the action the model asks for is shown in words. Asking sends nothing to the arm: an action is executed only when you press “Execute this action” for it, and that is offered for an answer asked while the station holds the arm.",
@@ -468,7 +569,7 @@ export const EN = {
   "station.arming.blocker.guard":
     "The Worker's guard refused packets ({refused}) while the line was only read. Nothing was written, but this is a defect of the page: do not enable the station on this arm with this version, and please copy the log at the bottom of the page and send it.",
   "station.arming.confirm.untried":
-    "Enabling, Home and Disable have run on one real arm so far (an SO-101). Stop during a move, a step by hand and the execution of a model's action have run on simulated servos only and never on a real arm.",
+    "Enabling, Home and Disable have run on one real arm so far (an SO-101). Stop during a move, a step by hand, the execution of a model's action and a task that a model runs have run on simulated servos only and never on a real arm.",
   "station.arming.confirm.title": "Before the torque is switched on",
   "station.arming.confirm.lead":
     "The Worker has read the arm and has written nothing yet. This is what happens when you confirm, and afterwards:",
@@ -493,7 +594,9 @@ export const EN = {
   "station.arming.confirm.steps":
     "A step by hand moves the arm at once when you press it: by 1 cm, by 0.05 rad or by the gripper's command, at PEAR's usual speed (at most 57 degrees a second, three times that of Home). It shows no plan first and does not look for obstacles.",
   "station.arming.confirm.execute":
-    "A model's action is executed only when you press “Execute this action” for it and then “Execute on the arm”: one action each time, at PEAR's usual speed, and as large as the model asked. Read its numbers before the second press. Nothing runs by itself.",
+    "A model's action is executed only when you press “Execute this action” for it and then “Execute on the arm”: one action each time, at PEAR's usual speed, and as large as the model asked. Read its numbers before the second press. Outside a task, nothing runs by itself.",
+  "station.arming.confirm.task":
+    "A task started on this arm, after a confirmation of its own, lets the model move the arm by itself, one action after another without a press of yours, with the limits you set: a limit of turns and a limit of an action's size, both on at first and both yours to switch off. “Pause” and the stop bar end it at any time.",
   "station.arming.confirm.stop": "Stop brakes (about 0.15 s) and holds: the torque stays on.",
   "station.arming.confirm.disable": "Disable switches the torque off: the arm goes limp and falls if nothing holds it.",
   "station.arming.confirm.lost":
@@ -667,7 +770,7 @@ export const ZH_TW: Record<TextKey, string> = {
   "page.title": "pear.js：在瀏覽器裡執行的 PEAR robot station",
   "page.tagline": "在瀏覽器裡執行的 PEAR robot station，搭配 LeRobot SO-101 使用。",
   "page.notice":
-    "pear.js 是 PEAR（MIT Han Lab）robot station 的非官方移植，仍在實驗階段。工作站在這個頁面的 Worker 裡執行，驅動的是模擬手臂。連接真實的手臂時，頁面會讀取：顯示手臂、攝影機與模型服務的狀態。只有在你按下「在這支手臂上啟用工作站」並確認之後，它才會對伺服馬達寫入；之後它可以撐住手臂、一次移動一小步、讓手臂回到 Home、停止，以及放開手臂。模型要求的動作一次只執行一個，而且每一個都要你為它按下「執行這個動作」才會執行。不會有任何動作自行執行。",
+    "pear.js 是 PEAR（MIT Han Lab）robot station 的非官方移植，仍在實驗階段。工作站在這個頁面的 Worker 裡執行，驅動的是模擬手臂。連接真實的手臂時，頁面會讀取：顯示手臂、攝影機與模型服務的狀態。只有在你按下「在這支手臂上啟用工作站」並確認之後，它才會對伺服馬達寫入；之後它可以撐住手臂、一次移動一小步、讓手臂回到 Home、停止，以及放開手臂。在真實的手臂上，模型要求的動作一次只執行一個，而且每一個都要你為它按下「執行這個動作」才會執行。上面這些，每一項都要你自己按。你還可以開始一個任務，在模擬手臂上可以，在真實的手臂上經過另一次確認之後也可以：從那時起，頁面會一回合接一回合地詢問模型並執行它的動作，也就是由模型自行移動手臂，不需要再按，直到任務被暫停，或達到你設定的回合數上限為止。",
   "page.skip": "跳到手臂區塊",
   "page.language": "語言",
   "page.noscript": "這個頁面需要 JavaScript 才能運作。",
@@ -900,7 +1003,15 @@ export const ZH_TW: Record<TextKey, string> = {
   "model.nameHint": "服務對外提供這個模型時所用的名稱。如果服務只提供一個模型，可以留空。",
   "model.key": "API 金鑰",
   "model.keyHint":
-    "只會留在這個頁面的記憶體裡，關閉或重新整理頁面就消失；不會被儲存，也不會寫進紀錄。服務不需要金鑰的話請留空。",
+    "只會留在這個頁面的記憶體裡，關閉或重新整理頁面就消失，除非你勾選下面的選項；它不會寫進紀錄。服務不需要金鑰的話請留空。",
+  "model.remember": "在這個瀏覽器上記住服務網址、模型名稱和金鑰",
+  "model.remember.off":
+    "目前沒有保存任何東西。勾選之後，服務網址、模型名稱和金鑰會保存在這台電腦上、這個瀏覽器給本網站使用的儲存空間裡，直到你取消勾選為止。使用這個瀏覽器設定檔的人都讀得到，從本網站的位址提供的任何頁面也讀得到：範圍是整個主機，不只是這個頁面所在的資料夾。",
+  "model.remember.on":
+    "服務網址、模型名稱和金鑰現在保存在這台電腦上、這個瀏覽器給本網站使用的儲存空間裡，直到你取消勾選為止。使用這個瀏覽器設定檔的人都讀得到，從本網站的位址提供的任何頁面也讀得到：範圍是整個主機，不只是這個頁面所在的資料夾。",
+  "model.remember.refused": "沒辦法保存任何東西：這個瀏覽器不讓本頁使用儲存空間。勾選已經取消，頁面照常運作。",
+  "model.remember.notRemoved":
+    "這個瀏覽器的儲存空間現在無法使用，先前保存的內容可能還在。要確定它已經移除，請到瀏覽器的設定裡清除本網站的資料。",
   "model.check": "檢查",
   "model.checking": "檢查中…",
   "model.unchecked": "尚未檢查。",
@@ -942,12 +1053,98 @@ export const ZH_TW: Record<TextKey, string> = {
 
   "task.title": "任務",
   "task.notice":
-    "下面的工作站驅動的是模擬手臂，在這個頁面的 Worker 裡執行。連接真實的手臂時，頁面會讀取；只有在按下「在這支手臂上啟用工作站」並確認之後才會對伺服馬達寫入，之後它可以撐住手臂、一次移動一小步、讓手臂回到 Home、停止，以及放開手臂。它可以問模型一次並顯示回答。模型要求的動作一次只執行一個，而且每一個都要你為它按下「執行這個動作」才會執行，在真實的手臂上還要再按一次確認。不會有任何動作自行執行。這些在模擬手臂上都可以先試，不需要手臂。",
+    "下面的工作站驅動的是模擬手臂，在這個頁面的 Worker 裡執行。連接真實的手臂時，頁面會讀取；只有在按下「在這支手臂上啟用工作站」並確認之後才會對伺服馬達寫入，之後它可以撐住手臂、一次移動一小步、讓手臂回到 Home、停止，以及放開手臂。它可以問模型一次並顯示回答；回答裡的動作，要你為它按下「執行這個動作」才會執行（在真實的手臂上還要再按一次確認）。啟用、Home、單步動作和執行，每一次都要你自己按。任務則不同：你按下「開始」之後（在真實的手臂上，要先通過接著出現的確認），模型會一回合接一回合地自行移動手臂，直到任務被暫停，或達到你設定的回合數上限為止。這些在模擬手臂上都可以先試，不需要手臂。",
   "task.instruction": "指令",
   "task.placeholder": "把紅色積木放進盒子裡。",
   "task.start": "開始",
   "task.startNote":
-    "「開始」是讓模型自行執行整個任務，這個版本還沒有。這個版本提供的是一次問一次、一次執行一個動作：先按上面的「問模型一次」，再為它回答的那個動作按下「執行這個動作」。",
+    "「開始」會執行任務，在模擬手臂上一按就開始，在真實的手臂上要先經過一次確認：詢問模型、執行它的動作，接著自動進入下一回合，不需要再按。也就是說，模型會自行移動手臂，直到任務被暫停（按「暫停」、按停止列、頁面被隱藏，或某一回合失敗），或達到你在下面設定的回合數上限為止。任務本身不會自行結束：暫停的任務可以繼續，或是清除。仍然每一次都要你自己按的有：啟用、Home、單步動作，以及「執行這個動作」。",
+  "task.limit.turns": "執行這麼多個回合之後暫停任務（0 到 1,000；0 代表不設上限）。之後按「繼續」會再執行同樣多的回合。",
+  "task.limit.action":
+    "任何一軸超過 {cm} 公分、或任何一個旋轉超過 {rad} 弧度的動作都不執行，並告知模型，讓它重新提出。取消勾選的話，動作的幅度就是模型要求的大小，和 PEAR 原本的做法一樣。",
+  "task.confirm.ask":
+    "要在真實的手臂上開始這個任務嗎？從你按下「在手臂上開始」起，模型會自行移動真實的手臂，一個動作接著一個動作，中間不需要你再按。{ends}{size}不會有任何東西偵測桌面，或手臂路徑上的障礙物。請讓停止列和伺服馬達電源的開關都保持在你伸手可及的地方。",
+  "task.confirm.ends.limit":
+    "它會一直進行，直到你按下「暫停」或停止列，或是跑完 {turns} 個回合：那時任務會暫停，按「繼續」會再執行 {turns} 個回合。",
+  "task.confirm.ends.none": "它會一直進行，直到你暫停為止（按「暫停」或停止列）：目前沒有設定回合數上限。",
+  "task.confirm.size.limit":
+    "任何一軸超過 {cm} 公分、或任何一個旋轉超過 {rad} 弧度的動作都不會執行：模型會被告知，然後重新提出。",
+  "task.confirm.size.none": "動作的幅度就是模型要求的大小：動作幅度的限制已經關閉。",
+  "task.confirm.unlimited":
+    "兩個限制都已經關閉：任務不會因為回合數而暫停，單一動作能讓手臂移動多遠也沒有限制。要由你自己按「暫停」或停止列讓它停下來。",
+  "task.confirm.go": "在手臂上開始",
+  "task.confirm.keep": "不要",
+  "task.pausedBy.limit": "任務已暫停：已經達到 {turns} 個回合的上限。按「繼續」會再執行 {turns} 個回合。",
+  "task.pausedBy.limitUnknown": "任務已暫停：已經達到回合數上限。按「繼續」會再執行同樣多的回合。",
+  "task.pausedBy.hidden": "任務已暫停：這個頁面剛才被隱藏了。任務不會自己繼續：回到手臂旁邊之後，請按「繼續」。",
+  "task.limits.none":
+    "工作站沒有回報這個任務的限制：它是在沒有任何限制的情況下執行的。任務不會因為回合數而暫停，單一動作能讓手臂移動多遠也沒有限制。要由你自己按「暫停」或停止列讓它停下來。",
+  "task.resume.ask":
+    "要在真實的手臂上繼續這個任務嗎？從你按下「在手臂上繼續」起，模型會再次自行移動真實的手臂，一個動作接著一個動作，中間不需要你再按。{ends}{size}不會有任何東西偵測桌面，或手臂路徑上的障礙物。請讓停止列和伺服馬達電源的開關都保持在你伸手可及的地方。",
+  "task.resume.go": "在手臂上繼續",
+  "task.ended.lost":
+    "工作站的 Worker 在這個任務進行期間失去聯繫，因此頁面已經把 Worker 結束：任務不能在頁面無法讓它停下來的情況下，繼續詢問模型、移動手臂。任務已經隨著 Worker 一起結束，無法繼續。請重新載入頁面再開始。",
+  "task.ended.lostReal":
+    "工作站的 Worker 在這個任務進行期間失去聯繫，因此頁面已經把 Worker 結束：任務不能在頁面無法讓它停下來的情況下，繼續詢問模型、移動手臂。任務已經隨著 Worker 一起結束，無法繼續。伺服馬達現在收不到任何指令：它們會維持扭力，停在最後的目標位置，直到電源被關掉。請重新載入頁面再開始。",
+  "task.run.title": "執行任務",
+  "task.pause": "暫停",
+  "task.resume": "繼續",
+  "task.clear": "清除任務",
+  "task.resetStop": "重設 STOP MOTION",
+  "task.why.disabled": "「開始」需要工作站已經啟用（在模擬手臂或真實的手臂上都可以）：請先在上面啟用工作站。",
+  "task.why.failed": "工作站現在無法執行任務：機器人處於 FAULT 或已關閉，或是手臂的線路中斷了。請停用工作站，再重新啟用。",
+  "task.why.task": "目前已經有任務。請先暫停並清除它，才能開始另一個任務。",
+  "task.why.stopLatched": "STOP MOTION 已鎖定：重設之前不會開始任何動作。請按「重設 STOP MOTION」。",
+  "task.why.busy": "有動作正在進行：請等它結束。",
+  "task.why.hidden": "頁面目前被隱藏：只有頁面看得見的時候才能開始任務。",
+  "task.why.camera": "還缺：攝影機。請在步驟 2 啟動；任務中的模型要透過它看手臂。",
+  "task.why.model": "還缺：檢查過的模型服務。請在步驟 3 檢查；位址、名稱或金鑰改過之後，請再檢查一次。",
+  "task.why.instruction": "還缺：指令。請在上面寫下要手臂做什麼。",
+  "task.why.long": "指令太長：PEAR 接受 1 到 20,000 個字元的任務。",
+  "task.why.limit": "回合數上限必須是 0 到 1,000 的整數，請用數字填寫（0 代表不設上限）。",
+  "task.blocks.steps": "目前有任務，手臂由任務使用。要手動移動手臂或讓它回到 Home，請先暫停並清除任務。",
+  "task.blocks.disable": "目前有任務：請先暫停並清除任務，之後才能停用工作站。「停止」隨時都能用。",
+  "task.blocks.ask": "目前有任務，它會自己詢問模型。要手動問一次，請先暫停並清除任務。",
+  "task.blocks.execute":
+    "提出這次詢問之後已經開始了任務，手臂已經不是模型看到的樣子，這個回答不能再用。請先清除任務，再問一次。",
+  "task.status.none": "沒有任務。",
+  "task.status.latched": "沒有任務。STOP MOTION 已鎖定：請先重設，才能開始任務。",
+  "task.status.noTurn": "{phase}還沒有開始任何回合。已完成的動作：{steps}。",
+  "task.status.turn": "{phase}第 {turn} 回合。已完成的動作：{steps}。",
+  "task.phase.holding": "工作站撐住手臂；任務沒有在執行。",
+  "task.phase.observing": "觀察中：工作站讀取手臂的狀態，並擷取攝影機的畫面。",
+  "task.phase.thinking": "思考中：正在詢問模型，等它回答。",
+  "task.phase.planning": "規劃中：工作站正在規劃模型這個動作的運動。",
+  "task.phase.executing": "執行中：手臂正在移動。",
+  "task.phase.settling": "穩定中：手臂正在停穩。",
+  "task.phase.compacting": "壓縮中：正在縮短模型的對話紀錄。",
+  "task.phase.stopping": "停止中：手臂煞車，進行中的回合結束。",
+  "task.phase.paused": "已暫停：工作站撐住手臂，沒有回合在執行。",
+  "task.phase.stopped": "已停止：STOP MOTION 已鎖定，重設之前不會開始任何動作。",
+  "task.phase.other": "PEAR 的階段：{phase}。",
+  "task.error.resume":
+    "任務因為發生錯誤而暫停，並保留模型的對話。「繼續」會告訴模型它上一個回答的結果，然後接著執行任務；「清除任務」則結束任務。PEAR 的原話：{error}",
+  "task.error.reset":
+    "發生了錯誤，而且 STOP MOTION 已鎖定：請按「重設 STOP MOTION」；之後暫停的任務可以繼續或清除。PEAR 的原話：{error}",
+  "task.error.noTask": "發生了錯誤，目前沒有任務：把它指出的問題排除之後，請再按一次「開始」。PEAR 的原話：{error}",
+  "task.error.running": "任務執行期間發生了錯誤。PEAR 的原話：{error}",
+  "task.refused": "工作站拒絕了「{command}」。PEAR 的原話：{error}",
+  "task.stopMessage": "已要求停止。PEAR 的原話：{message}",
+  "task.cleared": "這個任務已清除。它的回合會留在這裡，直到下一個任務開始。",
+  "task.gap":
+    "這個任務有 {count} 個事件沒有送到頁面（編號不連續）：下面的回合可能少了動作或結果。任務本身不受影響。",
+  "task.turn.number": "第 {turn} 回合",
+  "task.turn.line": "第 {turn} 回合。{action} {result}",
+  "task.turn.result": "結果：{status}。",
+  "task.turn.resultError": "結果：{status}。{error}",
+  "task.turn.ended": "這一回合沒有結果就結束了：{phase}。",
+  "task.turn.endedMessage": "這一回合沒有結果就結束了：{phase}。{message}",
+  "task.turn.running": "這一回合正在進行。",
+  "task.turn.noAction": "回答裡沒有動作。",
+  "task.turn.noActionYet": "還沒有動作。",
+  "task.turns.title": "任務的回合",
+  "task.turns.note": "最新的回合在最上面；清單保留最新的 {kept} 個回合。",
+  "task.turns.forgotten": "另有 {count} 個較早的回合不再列出。",
   "ask.title": "問模型一次",
   "ask.lead":
     "把任務第一回合會送出的內容送給模型：帶有上面指令的 PEAR 系統提示、手臂的狀態，以及攝影機此刻的畫面。狀態來自這個視窗的讀數（步驟 1）；工作站接手手臂期間，則來自工作站的量測。回答會邊收邊顯示，模型要求的動作也會用白話顯示。詢問不會送任何東西給手臂：只有你為某個動作按下「執行這個動作」，它才會執行，而只有工作站接手手臂期間問到的回答才會提供這個按鈕。",
@@ -1099,7 +1296,7 @@ export const ZH_TW: Record<TextKey, string> = {
   "station.arming.blocker.guard":
     "在只讀取線路的期間，Worker 的保護機制擋下了 {refused} 個封包。沒有寫入任何東西，但這是頁面的缺陷：請不要用這個版本在這支手臂上啟用工作站，並請複製頁面最下方的紀錄傳回來。",
   "station.arming.confirm.untried":
-    "到目前為止，啟用、Home 和停用只在一支真實的手臂（SO-101）上執行過。移動中的停止、單步動作，以及執行模型的動作，都只在模擬的伺服馬達上執行過，還沒有在真實的手臂上執行過。",
+    "到目前為止，啟用、Home 和停用只在一支真實的手臂（SO-101）上執行過。移動中的停止、單步動作、執行模型的動作，以及由模型執行的任務，都只在模擬的伺服馬達上執行過，還沒有在真實的手臂上執行過。",
   "station.arming.confirm.title": "打開扭力之前",
   "station.arming.confirm.lead": "Worker 已經讀完手臂，還沒有寫入任何東西。你確認之後以及接下來會發生的事：",
   "station.arming.confirm.limp":
@@ -1122,7 +1319,9 @@ export const ZH_TW: Record<TextKey, string> = {
   "station.arming.confirm.steps":
     "單步動作在你按下的當下就會讓手臂移動：1 公分、0.05 弧度，或夾爪的指令，用的是 PEAR 平常的速度（最快每秒 57 度，是 Home 的三倍）。它不會先顯示計畫，也不會偵測障礙物。",
   "station.arming.confirm.execute":
-    "模型要求的動作，只有在你為它按下「執行這個動作」、再按下「在手臂上執行」之後才會執行：一次一個，用 PEAR 平常的速度，幅度就是模型要求的大小。按第二次之前，請先看清楚數字。不會有任何動作自行執行。",
+    "模型要求的動作，只有在你為它按下「執行這個動作」、再按下「在手臂上執行」之後才會執行：一次一個，用 PEAR 平常的速度，幅度就是模型要求的大小。按第二次之前，請先看清楚數字。在任務之外，不會有任何動作自行執行。",
+  "station.arming.confirm.task":
+    "在這支手臂上開始的任務，經過它自己的確認之後，會讓模型自行移動手臂：一個動作接著一個動作，中間不需要你再按，並且受你設定的限制約束：回合數上限，以及單一動作幅度的限制，兩者一開始都是開啟的，也都可以由你關閉。「暫停」和停止列隨時都能讓它停下來。",
   "station.arming.confirm.stop": "停止會煞車（大約 0.15 秒）並撐住：扭力維持開啟。",
   "station.arming.confirm.disable": "停用會關掉扭力：手臂會變得鬆軟，沒有東西撐住就會掉下來。",
   "station.arming.confirm.lost":

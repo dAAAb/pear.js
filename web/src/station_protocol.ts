@@ -9,6 +9,7 @@
 
 import type { MotorCalibration } from "../../src/feetech/index";
 import type { ModelState } from "../../src/so101/kinematics/index";
+import type { TaskEvent, TaskSnapshot } from "./task_host";
 
 /** Where each servo of the simulated arm stands, steps, by the motor's name. */
 export type MotorSteps = Readonly<Record<string, number>>;
@@ -96,9 +97,70 @@ export type StationRequest =
   /** The operator's answer to the event "arming" of the request "enableReal" that waits for it. `requestId` is
    * that event's: an answer that names another request than the one that waits is refused with an error, so that
    * a confirmation shown for an earlier request cannot arm a later one. */
-  | { readonly type: "arm"; readonly requestId: number; readonly isConfirmed: boolean };
+  | { readonly type: "arm"; readonly requestId: number; readonly isConfirmed: boolean }
+  /** One of the operator's commands of a task, as PEAR's console takes them (src/console/commands.ts, through
+   * task_host.ts). "start" makes a task of `instruction` and runs its turns: the model is asked, its action is
+   * executed, and the next turn follows without a press. "pause" stops the arm and ends the running turn;
+   * "resume" runs the paused task's turns again. "stop" is PEAR's STOP MOTION: it stops as "pause" does and
+   * latches, so that nothing starts until "reset_stop". "clear" ends the task and its model session, stopping
+   * it first if it runs. `service` is the model service the task's model is asked at; it is given with "start"
+   * and with no other command, and the Worker tells it to nobody: no event, status, log line or error holds the
+   * key. `limits` is what the operator set for the task, given with "start" and holding for the task's whole
+   * life; without it the task runs as PEAR runs it, without a limit. A task runs on the simulated arm and on a
+   * real arm's line alike: the Worker cannot tell whose press a request is, so the page sends "start" on a real
+   * arm only after the operator has confirmed it there.
+   * A refusal of PEAR's comes as the request's error, in PEAR's words. */
+  | {
+      readonly type: "task";
+      readonly command: TaskCommand;
+      readonly instruction?: string;
+      readonly service?: TaskService;
+      readonly limits?: TaskLimits;
+    };
 
 export type StationRequestType = StationRequest["type"];
+
+/** The operator's commands of a task that the page gives; PEAR's other commands (enable, disable, home and the
+ * rest) are not given through the console in this version: the page keeps its own. */
+export type TaskCommand = "start" | "pause" | "resume" | "clear" | "stop" | "reset_stop";
+
+/** The model service a task's model is asked at: what the page's model step holds once its check has passed.
+ * `baseUrl` ends in "/v1". */
+export interface TaskService {
+  readonly baseUrl: string;
+  readonly model: string;
+  readonly apiKey: string;
+}
+
+/** What the operator sets for a task when it starts. Neither is PEAR's: PEAR's task run goes on until the
+ * operator pauses it, and executes an action as large as the model asks. */
+export interface TaskLimits {
+  /** The Worker pauses the task between two turns once this many turns have ended since it was started or last
+   * resumed: the turn that reaches the limit ends with its result, and no turn after it starts. A whole number
+   * from 0 to TURNS_LIMIT_MAX; 0: no limit. */
+  readonly turns: number;
+  /** Whether an action that asks for more than ACTION_LIMIT_CM in x, y or z, or more than ACTION_LIMIT_RAD in
+   * pitch or roll, either way, is not executed. Nothing moves; the model is answered as PEAR answers an action
+   * the arm cannot reach, with a message that names the operator's limit and the part that is over it, and the
+   * task goes on (after PEAR's count of such answers in a row it pauses, as PEAR's does). false: as PEAR. */
+  readonly isActionLimited: boolean;
+}
+
+/** The largest limit of turns a task can be started with (TaskLimits.turns): the Worker refuses a "start" that
+ * asks for more, and the page offers no more. */
+export const TURNS_LIMIT_MAX = 1000;
+/** The largest translation along one axis that a limited task executes in one action, cm. */
+export const ACTION_LIMIT_CM = 5;
+/** The largest rotation that a limited task executes in one action, rad. */
+export const ACTION_LIMIT_RAD = 0.5;
+
+/** How a command of a task was answered: PEAR's answer to the command ("start", "resume" and "clear":
+ * `{ accepted: true }`; "pause" and "stop": `{ stop_requested: true, stop_request_seconds }`; "reset_stop":
+ * `{ reset: true }`), and what the console tells of the task right after it. */
+export interface TaskAnswer {
+  readonly answer: Readonly<Record<string, unknown>>;
+  readonly task: TaskSnapshot;
+}
 
 /** The control periods the loop began in the last second. */
 export interface StepPeriods {
@@ -198,8 +260,9 @@ export interface StationStatus {
   readonly clock: ClockNumbers;
   /** The wrist camera as the station sees it. No frame is in a status. */
   readonly camera: CameraNumbers;
-  /** What is under way: "jog", "home" or nothing. */
-  readonly action: "jog" | "home" | null;
+  /** What is under way: "jog", "home", "task" (an operation of the console: a task's turns, or the clearing of a
+   * task) or nothing. */
+  readonly action: "jog" | "home" | "task" | null;
   /** Whether the page is hidden: actions are refused. */
   readonly isHidden: boolean;
   /** Which arm the robot holds: the Worker's simulated one or a real one on its line; null while the robot is
@@ -207,6 +270,19 @@ export interface StationStatus {
   readonly arm: "simulated" | "real" | null;
   /** A real arm's line; null on the simulated arm and while the robot is off. */
   readonly line: RealLineStatus | null;
+  /** What PEAR's console tells of a task (task_host.ts): its phase, whether an operation of it runs, whether STOP
+   * MOTION is latched, the failure it shows, the task, its running or last turn and the count of its completed
+   * actions. null while no console is there: no "start" was asked since the station was enabled. */
+  readonly task: TaskSnapshot | null;
+  /** Why the Worker itself paused the task, when it was the Worker and not the operator's press: "limit", the
+   * task's limit of turns was reached; "hidden", the page was hidden. null otherwise, and again after the next
+   * "start", "resume" or "clear". */
+  readonly taskPausedBy: "limit" | "hidden" | null;
+  /** The limits the task that is there runs with, as the Worker holds them: what it took of the "start" that made
+   * the task, which is what the page shows, and not what the page sent. A task that was started without limits
+   * has a limit of 0 turns and no limit of an action's size. null while no task is there; null with a task only
+   * when no "start" was accepted for it, and such a task is to be taken as running without limits. */
+  readonly taskLimits: TaskLimits | null;
 }
 
 /** A real arm's line as the station has it: what its guard let through and refused, and whether it is there. */
@@ -430,6 +506,7 @@ export interface StationResults {
   preflight: PreflightReport;
   enableReal: EnableRealResult;
   arm: null;
+  task: TaskAnswer;
 }
 
 export type StationEvent =
@@ -453,7 +530,10 @@ export type StationEvent =
     }
   /** The frame the observation of the request `requestId` held, told once: the JPEG's bytes as the observation
    * holds them, the frame's number among those the wrist camera has seen, and how old it was then, ms. */
-  | { readonly type: "frame"; readonly requestId: number; readonly jpeg: Uint8Array; readonly number: number; readonly ageMs: number };
+  | { readonly type: "frame"; readonly requestId: number; readonly jpeg: Uint8Array; readonly number: number; readonly ageMs: number }
+  /** The console's events since the last event of this type, oldest first (TaskHost.takeEvents): what a task
+   * does, turn by turn, as PEAR's page is told it. A gap in their ids tells that events were dropped. */
+  | { readonly type: "task"; readonly events: readonly TaskEvent[] };
 
 /** A request of the window, which the Worker answers once. */
 export interface StationAsk {
@@ -497,6 +577,8 @@ export const REQUEST_LIMIT_MS: Readonly<Record<StationRequestType, number>> = {
   // the reads of a preflight, the operator's answer (ARMING_LIMIT_MS) and the robot's opening
   enableReal: 180_000,
   arm: 3_000,
+  // "clear" of a running task waits for the turn's end and for the arm to settle
+  task: 40_000,
 };
 
 /** How long the Worker waits for the operator's answer to the event "arming", ms; no answer counts as refused. */

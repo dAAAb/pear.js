@@ -200,9 +200,16 @@ describe.each(LANGUAGES)("enabling on a real arm, in %s", (language) => {
   it("lists what the operator confirms, with this line's numbers", () => {
     const items = confirmationItems(reportOf(), wordingOf(language));
     expect(items.map((item) => item.kind)).toEqual([
-      "untried", "limp", "rest", "eeprom", "ram", "factory", "home", "steps", "execute", "stop", "disable", "lost",
+      "untried", "limp", "rest", "eeprom", "ram", "factory", "home", "steps", "execute", "task", "stop", "disable", "lost",
       "warnings", "limit",
     ]);
+    // a task is among what has run on simulated servos only, and has an item of its own: started on this arm
+    // after its own confirmation, it lets the model move the arm by itself, with the limits the operator sets
+    expect(items[0]?.text).toContain(language === "en" ? "a task that a model runs" : "由模型執行的任務");
+    const task = items.find((item) => item.kind === "task")?.text ?? "";
+    expect(task).toContain(language === "en" ? "after a confirmation of its own" : "經過它自己的確認之後");
+    expect(task).toContain(language === "en" ? "lets the model move the arm by itself" : "讓模型自行移動手臂");
+    expect(task).toContain(language === "en" ? "with the limits you set" : "受你設定的限制約束");
     // the list says first, as a warning, that this step has not yet run on a real arm
     expect(items[0]?.tone).toBe("warn");
     expect(items[0]?.text).toContain(

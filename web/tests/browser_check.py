@@ -12,7 +12,7 @@ default; never a directory of the repository).
 
 Parts: load, stamp, sim, expected, guard, cable, faults, calibration, serial, diagnostics, camera, model,
 privacy, ask, languages, keyboard, layout, folder, subpath, hosted, insecure, log, transport, timing, selftest,
-station, preflight, real.
+station, preflight, real, task.
 """
 
 from __future__ import annotations
@@ -91,6 +91,12 @@ class ModelService(http.server.BaseHTTPRequestHandler):
     stream_pause_s = 0.0
     stream_stalls_after: int | None = None
     is_gone = False
+    # for a task, which asks by itself: the answers to its requests in turn (the list begins again after its
+    # last; empty: every request is answered with ``stream``), how many requests were answered from the list,
+    # and how many answers are being sent right now
+    answers: list[list[str]] = []
+    answered = 0
+    open_posts = 0
     seen: list[dict] = []
 
     def log_message(self, *arguments):
@@ -198,8 +204,15 @@ class ModelService(http.server.BaseHTTPRequestHandler):
         for name, value in self._cors().items():
             self.send_header(name, value)
         self.end_headers()
+        stream = self.stream
+        if self.answers:
+            number = type(self).answered
+            type(self).answered += 1
+            stream = self.answers[number % len(self.answers)]
+            type(self).seen[-1]["answer"] = number
+        type(self).open_posts += 1
         try:
-            for index, piece in enumerate(self.stream):
+            for index, piece in enumerate(stream):
                 if self.stream_stalls_after is not None and index >= self.stream_stalls_after:
                     self.connection.settimeout(30)
                     while self.rfile.read(1):  # nothing more is sent, until the browser closes the connection
@@ -213,6 +226,8 @@ class ModelService(http.server.BaseHTTPRequestHandler):
             self.wfile.write(b"0\r\n\r\n")
         except OSError:
             pass  # the browser gave up on the answer
+        finally:
+            type(self).open_posts -= 1
 
     @classmethod
     def configure(cls, **settings) -> None:
@@ -227,6 +242,8 @@ class ModelService(http.server.BaseHTTPRequestHandler):
             "stream_pause_s": 0.0,
             "stream_stalls_after": None,
             "is_gone": False,
+            "answers": [],
+            "answered": 0,
         }
         for name, value in {**defaults, **settings}.items():
             setattr(cls, name, value)
@@ -602,7 +619,7 @@ def part_load(check: Check, context: BrowserContext, base: str) -> None:
     check.ok("the notice says unofficial and experimental", "unofficial, experimental" in page.locator("#notice").inner_text())
     notice = page.locator("#notice").inner_text()
     check.ok("the notice says that the station runs in a Worker of the page and drives a simulated arm", "The station runs in a Worker of this page and drives a simulated arm." in notice, notice)
-    check.ok("the notice says that with a real arm the page reads, that it writes to the servos only after \"Enable the station on this arm\" and the confirmation, that it executes a model's action only one at a time, each at a press of “Execute this action”, and that nothing runs by itself", "With a real arm connected the page reads" in notice and "It writes to the servos only after you press “Enable the station on this arm” and confirm" in notice and "It executes a model's action only one at a time, each when you press “Execute this action” for that action. Nothing runs by itself." in notice and "No model moves an arm" not in notice, notice)
+    check.ok("the notice says that with a real arm the page reads, that it writes to the servos only after \"Enable the station on this arm\" and the confirmation, that it executes a model's action at a press of “Execute this action”, and that a task can be started, from which on the model moves the arm by itself until it is paused or the limit of turns is reached", "With a real arm connected the page reads" in notice and "It writes to the servos only after you press “Enable the station on this arm” and confirm" in notice and "it executes a model's action when you press “Execute this action” for that action" in notice and "You can also start a task, on the simulated arm and, after a confirmation of its own, on a real arm: from then on the model is asked and its action is executed, turn after turn, so the model moves the arm by itself, without another press, until it is paused or the limit of turns you set is reached." in notice and "Nothing runs by itself" not in notice, notice)
     check.ok("the notice no longer says that the page cannot move the arm at all", "cannot move the arm" not in notice and "first version only reads" not in notice, notice)
     links = page.evaluate("[...document.querySelectorAll('a[href]')].map(link => link.getAttribute('href'))")
     outside = sorted({link for link in links if not link.startswith("#")})
@@ -620,16 +637,25 @@ def part_load(check: Check, context: BrowserContext, base: str) -> None:
     check.ok("Stop is laid out and disabled", page.locator("#task-stop").is_disabled() and page.locator("#task-stop").is_visible())
     check.ok("Stop stays in view at the bottom", page.evaluate("getComputedStyle(document.getElementById('stopbar')).position") == "fixed")
     check.ok("Start is disabled", page.locator("#task-start").is_disabled())
+    check.equal("the page says why Start is not offered: the station is not enabled", [page.locator("#task-why").get_attribute("data-why"), "Start needs the station enabled, on the simulated arm or on a real arm" in page.locator("#task-why").inner_text()], ["task.why.disabled", True])
     check.ok("the instruction can be written", page.locator("#task-instruction").is_enabled())
     check.ok("Ask the model once is not offered before an arm is read", page.locator("#ask-once").is_disabled())
     task_text = page.locator("#task").inner_text()
     check.ok("the task says that the station drives a simulated arm, in a Worker of the page", "The station below drives a simulated arm, in a Worker of this page." in task_text, task_text[:300])
     check.ok("the task says that with a real arm the page reads, and writes to the servos only after \"Enable the station on this arm\" and its confirmation", "With a real arm connected the page reads; it writes to the servos only after “Enable the station on this arm” and its confirmation" in task_text, task_text[:300])
     check.ok(
-        "the task says that it can ask a model once, that it executes a model's action only one at a time, each at a press of “Execute this action” and on a real arm after a second press, and that nothing runs by itself",
-        "It can ask a model once and show the answer. It executes a model's action only one at a time, each when you press “Execute this action” for that action, and on a real arm only after a second press. Nothing runs by itself. On the simulated arm you can try all of this without an arm." in task_text
+        "the task says that it can ask a model once, that it executes the answer's action at a press of “Execute this action” and on a real arm after one more press, that these are each time the operator's own press, and that a task is different: after Start the model moves the arm by itself until it is paused or the limit of turns is reached",
+        "It can ask a model once and show the answer, and it executes that answer's action when you press “Execute this action” for it (on a real arm you press once more to confirm). Enable, Home, a step by hand and Execute are each time your own press. A task is different: after your press of “Start” (on a real arm: after the confirmation that then shows) the model moves the arm by itself, turn after turn, until it is paused or the limit of turns you set is reached. On the simulated arm you can try all of this without an arm." in task_text
+        and "Nothing runs by itself" not in task_text
         and "does not execute the action" not in task_text,
-        task_text[:700],
+        task_text[:900],
+    )
+    check.ok(
+        "the note at Start says that a task runs turn after turn without another press, what pauses it, that it has no end of its own, and what stays the operator's own press",
+        "“Start” runs a task, on the simulated arm at once and on a real arm after a confirmation: the model is asked, its action is executed, and the next turn follows by itself, without another press." in task_text
+        and "until it is paused (by “Pause”, by the stop bar, by a hidden page or by a turn that fails) or the limit of turns you set below is reached" in task_text
+        and "A task has no end of its own: a paused task is resumed or cleared. Still your own press each time: Enable, Home, a step by hand and “Execute this action”." in task_text,
+        task_text[-900:],
     )
     jog_lead = page.locator("[data-i18n='station.jogLead']").text_content() or ""
     check.ok(
@@ -1605,6 +1631,30 @@ def part_model(check: Check, context: BrowserContext, base: str, service: str, c
     check.page_for_privacy = page  # the privacy part looks at this page as it was left
 
 
+NOTHING_KEPT = {"local": [], "session": [], "cookie": "", "databases": [], "caches": [], "jar": []}
+
+
+def kept_on_browser(page: Page, context: BrowserContext) -> dict:
+    """Returns all that the page's site holds in the browser: its two storages, cookies, databases and caches."""
+    held = page.evaluate(
+        """async () => ({
+            local: Object.entries(localStorage), session: Object.entries(sessionStorage), cookie: document.cookie,
+            databases: (await indexedDB.databases()).map(database => database.name),
+            caches: 'caches' in window ? await caches.keys() : [],
+        })"""
+    )
+    return {**held, "jar": context.cookies()}
+
+
+def check_kept(check: Check, page: Page, context: BrowserContext, label: str, wanted: dict) -> None:
+    """Holds that the browser keeps the model step's three fields as ``wanted``, in one item, and nothing else."""
+    held = kept_on_browser(page, context)
+    check.equal(f"remember, {label}: one item is stored, under the one name", [name for name, _ in held["local"]], ["pearjs.model"])
+    check.equal(f"remember, {label}: it holds the three fields as they stand", [json.loads(value) for _, value in held["local"]], [wanted])
+    check.equal(f"remember, {label}: nothing else is stored anywhere", {**held, "local": []}, NOTHING_KEPT)
+    check.ok(f"remember, {label}: the key is in no line of the log", KEY not in page.locator("#log-output").input_value())
+
+
 def part_privacy(check: Check, context: BrowserContext, service: str) -> None:
     page = check.page_for_privacy
     page.fill("#model-key", KEY)
@@ -1674,6 +1724,73 @@ def part_privacy(check: Check, context: BrowserContext, service: str) -> None:
     page.reload()
     page.wait_for_function("window.pearjs !== undefined")
     check.equal("after a reload the key is gone", page.locator("#model-key").input_value(), "")
+
+    # the tick of the model step: while it is set, the three fields are kept on this browser in one item, and
+    # nothing is kept without it; the key is in no line of the log in any of this
+    api = f"{service}/v1"
+    fields = {"baseUrl": api, "model": MODEL, "apiKey": KEY}
+    note = page.locator("#model-remember-note")
+    log_text = page.locator("#log-output").input_value
+    ready = "window.pearjs !== undefined && window.pearjs.selfTest() !== null"
+    ModelService.configure(keys=[KEY])
+    check.equal("remember: the box is not ticked at first", (page.is_checked("#model-remember"), note.get_attribute("data-kept")), (False, "false"))
+    check.ok("remember: the note says that nothing is kept", "Nothing is kept now" in note.inner_text(), note.inner_text())
+    check.equal("remember: a check with the key, without the tick", run_model_check(page, api, MODEL, KEY), "ok")
+    check.equal("remember: without the tick nothing is stored", kept_on_browser(page, context), NOTHING_KEPT)
+    page.check("#model-remember")
+    check_kept(check, page, context, "ticked", fields)
+    check.equal("remember: the note says that the three are kept", (note.get_attribute("data-kept"), "are now kept in this browser's storage for this site" in note.inner_text()), ("true", True))
+    check.ok("remember: the log says that they are kept", "Model service: its address, the model's name and the key are kept on this browser" in log_text())
+    page.fill("#model-name", "another")
+    check_kept(check, page, context, "a field changed", {**fields, "model": "another"})
+    page.fill("#model-name", MODEL)
+    page.uncheck("#model-remember")
+    check.equal("remember: unticking removes it at once", kept_on_browser(page, context), NOTHING_KEPT)
+    check.equal("remember: the note says that nothing is kept any more", (note.get_attribute("data-kept"), "Nothing is kept now" in note.inner_text()), ("false", True))
+    check.ok("remember: the log says that nothing is kept any more", "Model service: nothing is kept on this browser any more" in log_text())
+    page.fill("#model-key", KEY)
+    check.equal("remember: a field changed after unticking stores nothing", kept_on_browser(page, context), NOTHING_KEPT)
+
+    # a reload with the tick set fills the fields and sets the tick, and sends nothing: the person presses the check
+    page.check("#model-remember")
+    seen_before, asked_before = len(ModelService.seen), len(check.requests)
+    page.reload()
+    page.wait_for_function(ready)
+    check.equal("remember, after a reload: the fields are filled", [page.input_value(f"#model-{name}") for name in ("url", "name", "key")], [api, MODEL, KEY])
+    check.equal("remember, after a reload: the box is ticked", (page.is_checked("#model-remember"), note.get_attribute("data-kept")), (True, "true"))
+    check.ok("remember, after a reload: the log says that the fields were filled", "Model service: the fields were filled with what this browser kept" in log_text())
+    page.wait_for_timeout(500)
+    check.equal("remember, after a reload: no request reached the model service", len(ModelService.seen), seen_before)
+    check.equal("remember, after a reload: the page asked no host but its own", sorted({urlsplit(entry["url"]).netloc for entry in check.requests[asked_before:]} - {urlsplit(page.url).netloc, ""}), [])
+    check.equal("remember, after a reload: nothing is checked until the check is pressed", page.locator("#model-result").get_attribute("data-outcome"), "")
+    check_kept(check, page, context, "after a reload", fields)
+    page.click("#model-check")
+    page.wait_for_function("!['', 'checking'].includes(document.getElementById('model-result').dataset.outcome)", timeout=20000)
+    check.equal("remember, after a reload: the check passes when pressed", page.locator("#model-result").get_attribute("data-outcome"), "ok")
+    check_kept(check, page, context, "after the check", fields)
+    check.ok("remember, after the check: the key is not in the page's text or markup", KEY not in page.inner_text("body") and KEY not in page.content())
+
+    # a second window of the page keeps nothing once the first took the tick away
+    other = context.new_page()
+    other.goto(page.url)
+    other.wait_for_function(ready)
+    check.equal("remember, a second window: it is ticked as the first", other.is_checked("#model-remember"), True)
+    page.uncheck("#model-remember")
+    other.wait_for_timeout(500)
+    check.equal("remember, a second window: its tick is taken away with the first's", other.is_checked("#model-remember"), False)
+    other.fill("#model-name", "another")
+    check.equal("remember, a second window: a field changed there does not bring back what was removed", kept_on_browser(page, context), NOTHING_KEPT)
+    check.ok("remember, a second window: the key is in no line of its log", KEY not in other.locator("#log-output").input_value())
+    other.close()
+
+    # a browser that refuses its storage: the tick takes itself away, the note says so, the page works as before
+    page.evaluate("() => { Storage.prototype.setItem = () => { throw new DOMException('refused', 'SecurityError') } }")
+    page.click("#model-remember")
+    check.equal("remember, a storage that throws: the tick takes itself away", (page.is_checked("#model-remember"), note.get_attribute("data-kept")), (False, "false"))
+    check.ok("remember, a storage that throws: the note says that nothing could be kept", "Nothing could be kept" in note.inner_text(), note.inner_text())
+    check.equal("remember, a storage that throws: nothing is stored", kept_on_browser(page, context), NOTHING_KEPT)
+    check.equal("remember, a storage that throws: the check works as before", run_model_check(page, api, MODEL, KEY), "ok")
+    check.ok("remember, a storage that throws: the key is in no line of the log", KEY not in log_text())
     page.close()
 
 
@@ -2266,6 +2383,520 @@ def part_ask(check: Check, browser, base: str, service: str) -> None:
     ModelService.configure()
 
 
+# The part "task": a task that the model runs by itself, on the simulated arm with the stand-in model service.
+# The page's sentences of a task that are the operator's instructions, in both languages: why Start is not
+# offered, what a task blocks, why the Worker paused a task, and what can be done about a failure.
+TASK_WHY = {
+    "en": {
+        "task.why.disabled": "Start needs the station enabled, on the simulated arm or on a real arm: enable the station above first.",
+        "task.why.camera": "Still missing: the camera. Start it in step 2: the model of a task sees the arm through it.",
+        "task.why.model": "Still missing: a checked model service. Check it in step 3; after a change of the address, the name or the key, check again.",
+        "task.why.instruction": "Still missing: the instruction. Write above what the arm is to do.",
+        "task.why.limit": "The limit of turns must be a whole number from 0 to 1,000, written in digits (0: no limit).",
+    },
+    "zh-TW": {
+        "task.why.disabled": "「開始」需要工作站已經啟用（在模擬手臂或真實的手臂上都可以）：請先在上面啟用工作站。",
+        "task.why.camera": "還缺：攝影機。請在步驟 2 啟動；任務中的模型要透過它看手臂。",
+        "task.why.model": "還缺：檢查過的模型服務。請在步驟 3 檢查；位址、名稱或金鑰改過之後，請再檢查一次。",
+        "task.why.instruction": "還缺：指令。請在上面寫下要手臂做什麼。",
+        "task.why.limit": "回合數上限必須是 0 到 1,000 的整數，請用數字填寫（0 代表不設上限）。",
+    },
+}
+TASK_BLOCKS = {
+    "en": {
+        "steps": "A task is there and the arm is the task's. To move it by hand or to Home, pause the task and clear it first.",
+        "disable": "A task is there: pause it and clear it first, then the station can be disabled. Stop works at any time.",
+        "ask": "A task is there and asks the model itself. To ask once by hand, pause the task and clear it first.",
+        "execute": "A task has started since this answer was asked for, so the arm is no longer as the model saw it and the answer is spent. Clear the task first, then ask again.",
+    },
+    "zh-TW": {
+        "steps": "目前有任務，手臂由任務使用。要手動移動手臂或讓它回到 Home，請先暫停並清除任務。",
+        "disable": "目前有任務：請先暫停並清除任務，之後才能停用工作站。「停止」隨時都能用。",
+        "ask": "目前有任務，它會自己詢問模型。要手動問一次，請先暫停並清除任務。",
+        "execute": "提出這次詢問之後已經開始了任務，手臂已經不是模型看到的樣子，這個回答不能再用。請先清除任務，再問一次。",
+    },
+}
+TASK_PAUSED = {
+    "en": {
+        "limit": "The task is paused: its limit of turns, set to {turns}, was reached. “Resume” runs {turns} more.",
+        "hidden": "The task is paused: this page was hidden. It does not go on by itself: press “Resume” when you are back at the arm.",
+        "error": "The task is paused after a failure; it keeps its model session. “Resume” tells the model what became of its last answer and runs the task on; “Clear the task” ends it. PEAR's words: {error}",
+    },
+    "zh-TW": {
+        "limit": "任務已暫停：已經達到 {turns} 個回合的上限。按「繼續」會再執行 {turns} 個回合。",
+        "hidden": "任務已暫停：這個頁面剛才被隱藏了。任務不會自己繼續：回到手臂旁邊之後，請按「繼續」。",
+        "error": "任務因為發生錯誤而暫停，並保留模型的對話。「繼續」會告訴模型它上一個回答的結果，然後接著執行任務；「清除任務」則結束任務。PEAR 的原話：{error}",
+    },
+}
+TASK_READY = "view.phase === 'on' && view.status !== null && view.status.robot === 'READY' && view.action === null"
+# The Worker's message of an action over the operator's limit of an action's size, for z -15 cm, and PEAR's error
+# of an answer that ends in no action.
+TASK_OVER = "The operator's limit for one action is 5 cm in x, y and z and 0.5 rad in pitch and roll, either way. This action is over it: z -15 cm is 10 cm over."
+TASK_NO_ACTION = "RuntimeError: Final answer must end with a fenced json action"
+# A script's click of a button, both ways a script can make one: neither is a person's press.
+SCRIPT_CLICK = """(id) => {
+  const button = document.getElementById(id);
+  button.click();
+  button.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
+}"""
+# The list of turns as the page shows it: each line's turn, its status and its text.
+TASK_LISTED = "[...document.querySelectorAll('#task-turns > li')].map(item => [item.dataset.turn, item.dataset.status, item.textContent])"
+# Keeps every state that the newest turn's result shows from now on (window.taskResultsShown): its status and
+# its text. The next turn begins right after a result, so a check that only looks now and then would miss one.
+TASK_WATCH_RESULT = """(() => {
+  window.taskResultsShown = [];
+  const node = document.getElementById('task-result');
+  const keep = () => window.taskResultsShown.push([node.dataset.status, node.textContent]);
+  new MutationObserver(keep).observe(node, { attributes: true, childList: true, characterData: true, subtree: true });
+})()"""
+
+
+def task_answer(x: float = 0.0, z: float = 0.0) -> list[str]:
+    """Returns the recorded answer with another action in it: the fingertip moved by ``x`` and ``z`` cm."""
+    pieces, _ = recorded_answer()
+    return [piece.replace('\\"x\\": 0.0', f'\\"x\\": {x:.1f}').replace('\\"z\\": 1.5', f'\\"z\\": {z:.1f}') for piece in pieces]
+
+
+def task_wait(page: Page, condition: str, argument: object = None, timeout_ms: int = 30000) -> bool:
+    """Waits until ``condition``, a function of JavaScript, holds; returns False when it did not in time: the
+    check after it tells what the page shows instead."""
+    try:
+        page.wait_for_function(condition, arg=argument, timeout=timeout_ms)
+        return True
+    except WaitTimeout:
+        return False
+
+
+def task_is(page: Page, state: str, timeout_ms: int = 30000) -> bool:
+    """Waits until the page shows the task in ``state`` ("none", "running", "paused") with no command waiting."""
+    return task_wait(page, "state => { const data = document.getElementById('task-run').dataset; return data.task === state && data.command === ''; }", state, timeout_ms)
+
+
+def task_press(page: Page, selector: str) -> bool:
+    """Presses a button as a person does; False when it was not offered within ten seconds."""
+    try:
+        page.click(selector, timeout=10000)
+        return True
+    except Exception:  # not offered: the check that follows tells what the page shows
+        return False
+
+
+def task_text(page: Page, selector: str) -> str:
+    return (page.locator(selector).text_content() or "").strip()
+
+
+def task_results(page: Page, since: int) -> list[dict]:
+    """Returns the results of the turns that the log holds after its first ``since`` lines, in their order."""
+    found = []
+    for line in log_lines(page)[since:]:
+        match = re.fullmatch(r"Task: turn (\d+) result (\{.*\})", line)
+        if match is not None:
+            found.append({"turn": int(match.group(1)), **json.loads(match.group(2))})
+    return found
+
+
+def task_wait_results(page: Page, since: int, count: int, status: str = "completed", timeout_ms: int = 60000) -> bool:
+    """Waits until the log holds, after its first ``since`` lines, ``count`` results of a turn with ``status``
+    ("" for any status)."""
+    return task_wait(
+        page,
+        "([since, count, status]) => document.getElementById('log-output').value.split('\\n').slice(since).filter(line => /Task: turn \\d+ result /.test(line) && line.includes('\"status\":\"' + status)).length >= count",
+        [since, count, status],
+        timeout_ms,
+    )
+
+
+def task_pose(page: Page) -> dict:
+    return station_view(page)["status"]["state"]["arm"]
+
+
+def task_moved(before: dict, after: dict) -> dict:
+    return {axis: round(after[axis] - before[axis], 2) for axis in ("x", "y", "z")}
+
+
+def task_service_idle() -> bool:
+    """Waits, at most five seconds, until the stand-in model service is sending no answer."""
+    ends = time.monotonic() + 5
+    while ModelService.open_posts > 0 and time.monotonic() < ends:
+        time.sleep(0.1)
+    return ModelService.open_posts == 0
+
+
+def task_why(page: Page, wanted: str) -> list:
+    """Waits, at most five seconds, until the page names ``wanted`` as why Start is not offered ("" when it is);
+    returns the reason's key, its sentence and whether Start is offered then."""
+    task_wait(page, "wanted => document.getElementById('task-why').dataset.why === wanted", wanted, 5000)
+    start = page.locator("#task-start")
+    return [page.locator("#task-why").get_attribute("data-why"), task_text(page, "#task-why"), start.is_visible() and start.is_enabled()]
+
+
+def task_page(check: Check, browser, base: str, service: str, language: str) -> tuple[BrowserContext, Page]:
+    """Opens a page of its own in ``language`` and brings it to where Start is offered on the simulated arm.
+    At each step Start is not offered, and the page says why in that language: the station, the model's check,
+    the instruction, and a limit of turns that is no whole number."""
+    label = "task" if language == "en" else "task (Chinese)"
+    sentences = TASK_WHY[language]
+    own = browser.new_context(viewport={"width": 1280, "height": 800}, locale="en-US")
+    check.watch(own)
+    page = open_page(check, own, base, f"?lang={language}")
+
+    def missing(name: str, key: str) -> None:
+        check.equal(f"{label}: {name}: Start is not offered, and the page says why", task_why(page, key), [key, sentences[key], False])
+
+    missing("before the station is enabled", "task.why.disabled")
+    page.click("#arm-sim")
+    wait_phase(page, "reading")
+    page.wait_for_function("window.pearjs.arm.view.live !== null && window.pearjs.arm.view.live.turnText !== null")
+    page.wait_for_function("document.querySelector('#camera-status').dataset.phase === 'live'")
+    missing("the simulated arm read and its camera live, the station not enabled", "task.why.disabled")
+    page.click("#station-enable")
+    wait_station(page, TASK_READY)
+    missing("the station enabled, no model service checked", "task.why.model")
+    check.equal(f"{label}: the service is checked", run_model_check(page, f"{service}/v1", MODEL, KEY), "ok")
+    missing("the service checked, no instruction written", "task.why.instruction")
+    page.fill("#task-instruction", INSTRUCTION)
+    seen = task_why(page, "")
+    check.equal(f"{label}: the station enabled, the camera live, the service checked, an instruction written: Start is offered", [seen[0], seen[2]], ["", True])
+    check.equal(f"{label}: the limits at load are 30 turns and the limit of an action's size", [page.locator("#task-limits").get_attribute("data-turns"), page.locator("#task-limits").get_attribute("data-action")], ["30", "true"])
+    for written in ("2.5", "-1", "1001", ""):
+        page.fill("#task-limit-turns", written)
+        missing(f"a limit of turns written as {written!r}", "task.why.limit")
+        check.equal(f"{label}: a limit of turns written as {written!r} is read as no limit at all", page.locator("#task-limits").get_attribute("data-turns"), "")
+    page.fill("#task-limit-turns", "30")
+    seen = task_why(page, "")
+    check.equal(f"{label}: with the limit of turns a whole number again, Start is offered", [seen[0], seen[2]], ["", True])
+    return own, page
+
+
+def task_camera(check: Check, page: Page, label: str, sentences: dict) -> None:
+    """The camera stopped while everything else is there: Start is not offered and the page says why; with the
+    camera live again Start is offered."""
+    page.click("#camera-stop")
+    check.equal(f"{label}: the camera stopped: Start is not offered, and the page says why", task_why(page, "task.why.camera"), ["task.why.camera", sentences["task.why.camera"], False])
+    page.click("#camera-start")
+    task_wait(page, "() => document.querySelector('#camera-status').dataset.phase === 'live'", None, 15000)
+    seen = task_why(page, "")
+    check.equal(f"{label}: the camera live again: Start is offered", [seen[0], seen[2]], ["", True])
+
+
+def task_blocked(check: Check, page: Page, label: str, sentences: dict, has_answer: bool) -> None:
+    """What a task blocks while it is there: the steps by hand and Home, Disable, "Ask the model once" and, when
+    an answer was asked before, "Execute this action"; each with its sentence."""
+    task_wait(page, "() => !document.getElementById('station-task-note').hidden", None, 5000)
+    are_disabled = page.evaluate("[...document.querySelectorAll('#station-jog button')].every(button => button.disabled)")
+    check.equal(
+        f"{label}: the steps by hand and Home are not offered, and the station's part says why",
+        [are_disabled, page.locator("#station-home").is_disabled(), page.locator("#station-task-note").is_visible(), task_text(page, "#station-task-note")],
+        [True, True, True, sentences["steps"]],
+    )
+    check.equal(
+        f"{label}: Disable is not offered, and the page says why",
+        [page.locator("#station-disable").is_disabled(), page.locator("#station-disable-task").is_visible(), task_text(page, "#station-disable-task")],
+        [True, True, sentences["disable"]],
+    )
+    check.equal(
+        f"{label}: \"Ask the model once\" is not offered, and the page says why",
+        [page.locator("#ask-once").is_disabled(), page.locator("#ask-missing").get_attribute("data-missing"), task_text(page, "#ask-missing")],
+        [True, "task.blocks.ask", sentences["ask"]],
+    )
+    if has_answer:
+        check.equal(
+            f"{label}: \"Execute this action\" is not offered, and the page says why",
+            [page.locator("#ask-execute-run").is_disabled(), page.locator("#ask-execute").get_attribute("data-why"), task_text(page, "#ask-execute-why")],
+            [True, "task.blocks.execute", sentences["execute"]],
+        )
+
+
+def task_run(check: Check, browser, base: str, service: str) -> None:
+    """A task on the simulated arm, on one page: Start at a person's press only, three turns by themselves,
+    what a task blocks, Pause and Resume, the stop bar, Clear, the limit of turns, the limit of an action's
+    size, an answer without an action, a hidden page, and the control periods through all of it."""
+    cycle = [task_answer(z=1.5), task_answer(x=1.0), task_answer(z=-1.5), task_answer(x=-1.0)]
+    ModelService.configure(keys=[KEY], stream=cycle[0])
+    own, page = task_page(check, browser, base, service, "en")
+    run = page.locator("#task-run")
+    numbers = check.numbers.setdefault("task", {})
+
+    def state() -> list:
+        return [run.get_attribute("data-task"), run.get_attribute("data-latched")]
+
+    def completed(since: int) -> int:
+        return sum(1 for result in task_results(page, since) if result["status"] == "completed")
+
+    def rest() -> None:
+        """Waits until the station is idle with the arm at rest; the checks after it tell if it is not."""
+        try:
+            wait_station(page, f"{TASK_READY} && view.status.isSettled === true", 30000)
+        except WaitTimeout:
+            pass
+
+    def start(answers: list, pause_s: float = 0.05) -> tuple[int, int, dict]:
+        """Tells the service its answers and presses Start; returns the counts of the log's lines and of the
+        service's requests before, and the arm's pose at rest before."""
+        ModelService.configure(keys=[KEY], answers=answers, stream_pause_s=pause_s)
+        rest()
+        before = (len(log_lines(page)), len(ModelService.seen), task_pose(page))
+        task_press(page, "#task-start")
+        return before
+
+    def pause() -> bool:
+        task_press(page, "#task-pause")
+        return task_is(page, "paused")
+
+    def clear() -> bool:
+        """Pauses the task if it runs, clears it, and waits until the arm is at rest."""
+        if run.get_attribute("data-task") == "running":
+            pause()
+        task_press(page, "#task-clear")
+        is_gone = task_is(page, "none", 20000)
+        rest()
+        return is_gone
+
+    # one answer asked by hand before any task, so that "Execute this action" is offered when the task starts
+    page.click("#ask-once")
+    check.equal("before a task: one ask by hand is answered, and its action is offered", [wait_asked(page), task_wait(page, "() => document.getElementById('ask-execute').dataset.offered === 'true'", None, 5000)], ["action", True])
+
+    # b. a script's click starts nothing; a person's press starts the task, and three turns run by themselves
+    ModelService.configure(keys=[KEY], answers=cycle, stream_pause_s=0.2)
+    first = settled_status(page)
+    since_before = first.get("since") or {}
+    log_before, seen_before, pose = len(log_lines(page)), len(ModelService.seen), first["state"]["arm"]
+    page.evaluate(SCRIPT_CLICK, "task-start")
+    page.wait_for_timeout(1000)
+    check.equal("a script's click on Start starts nothing: no task, no line in the log, no request to the model", [state()[0], log_lines(page)[log_before:], len(ModelService.seen) - seen_before], ["none", [], 0])
+    check.ok("a person's press of Start starts the task", task_press(page, "#task-start") and task_is(page, "running", 10000), state())
+    wanted = f"Task: start on the simulated arm (turns limit: 30; action limit: 5 cm, 0.5 rad), instruction of {len(INSTRUCTION)} characters: {json.dumps(INSTRUCTION[:80])}"
+    check.equal("the log's line of the start names the simulated arm, the two limits and the instruction", [line for line in log_lines(page)[log_before:] if line.startswith("Task: start")], [wanted])
+    check.ok("while the task runs, Start is hidden and Pause is offered", page.locator("#task-start").is_hidden() and page.locator("#task-pause").is_enabled(), state())
+
+    # c. what the running task blocks, each with its sentence
+    task_blocked(check, page, "while the task runs", TASK_BLOCKS["en"], True)
+
+    is_streamed = task_wait(page, "() => document.getElementById('task-turn').dataset.turn === '1' && document.getElementById('task-answer').textContent.includes('Moving up.') && !document.getElementById('log-output').value.includes('Task: turn 1 action')", None, 30000)
+    check.ok("turn 1: the answer is shown as it is streamed, before the turn's action is known", is_streamed, task_text(page, "#task-answer")[:200])
+    poses, shown = [pose], []
+    for turn in (1, 2, 3):
+        task_wait(page, "turn => document.getElementById('log-output').value.includes(`Task: turn ${turn} action `) && document.getElementById('task-action').textContent.includes('In words')", turn, 40000)
+        shown.append([page.locator("#task-turn").get_attribute("data-turn"), task_text(page, "#task-turn-number"), "Moving up." in task_text(page, "#task-answer"), "In words: move the fingertip by" in task_text(page, "#task-action")])
+        task_wait(page, "turn => document.getElementById('log-output').value.includes(`Task: turn ${turn} result `)", turn, 40000)
+        poses.append(task_pose(page))
+    # d. Pause, pressed right after the third turn's result
+    is_paused = pause()
+    lines = log_lines(page)[log_before:]
+    check.equal("three turns: the page shows each turn's number, its answer and its action in words while the turn runs", shown, [[str(turn), f"Turn {turn}", True, True] for turn in (1, 2, 3)])
+    actions = {}
+    for line in lines:
+        match = re.fullmatch(r"Task: turn (\d+) action (\{.*\})", line)
+        if match is not None:
+            actions[int(match.group(1))] = json.loads(match.group(2))
+    asked = [[(actions.get(turn) or {}).get("arm", {}).get(axis) for axis in ("x", "y", "z")] for turn in (1, 2, 3)]
+    check.equal("three turns: the log holds each turn's action, another one each turn, as the service answered them", asked, [[0, 0, 1.5], [1, 0, 0], [0, 0, -1.5]])
+    results = task_results(page, log_before)
+    check.equal("three turns: the log holds each turn's result, completed without an error", [[result["turn"], result["status"], result["error"]] for result in results[:3]], [[turn, "completed", None] for turn in (1, 2, 3)])
+    moves = [task_moved(poses[index], poses[index + 1]) for index in range(3)]
+    check.ok(
+        "three turns: the simulated arm's tip moved by each action as the action says",
+        all(abs(moves[index][axis] - (asked[index][number] or 0)) < 0.2 for index in range(3) for number, axis in enumerate(("x", "y", "z"))),
+        [asked, moves],
+    )
+    served = [entry.get("answer") for entry in ModelService.seen[seen_before:] if entry["method"] == "POST"]
+    check.equal("three turns: the service was asked once a turn, in the turns' order", served[:3], [0, 1, 2])
+    numbers["three turns"] = {"actions": asked, "moves, cm": moves, "requests to the service": len(served)}
+
+    check.ok("Pause: the task is paused, and the log holds the press and PEAR's words", is_paused and "Task: pause" in lines + log_lines(page) and "Task: Paused by operator" in log_lines(page), [state(), [line for line in log_lines(page)[log_before:] if line.startswith("Task: ") and "turn" not in line]])
+    listed = page.evaluate("[...document.querySelectorAll('#task-turns > li')].map(item => [item.dataset.turn, item.dataset.status])")
+    check.ok("paused: the list of turns holds the three completed turns, the newest first", page.locator("#task-turns-part").is_visible() and [entry for entry in listed if entry[0] in ("1", "2", "3")] == [[str(turn), "completed"] for turn in (3, 2, 1)], listed)
+    check.equal("paused: the state's line counts the completed actions", page.locator("#task-status").get_attribute("data-steps"), str(completed(log_before)))
+    held = settled_status(page)
+    posts = len(ModelService.seen)
+    is_idle = task_service_idle()
+    page.wait_for_timeout(1500)
+    later = station_view(page)["status"]
+    check.equal(
+        "paused: nothing moves any more, no request is open at the service and none is made",
+        [task_moved(held["state"]["arm"], later["state"]["arm"]), later["targets"] == held["targets"], is_idle, len(ModelService.seen) - posts, state()],
+        [{"x": 0.0, "y": 0.0, "z": 0.0}, True, True, 0, ["paused", "false"]],
+    )
+    lines_before = len(log_lines(page))
+    page.evaluate(SCRIPT_CLICK, "task-resume")
+    page.wait_for_timeout(1000)
+    check.equal("paused: a script's click on Resume starts nothing", [state()[0], log_lines(page)[lines_before:], len(ModelService.seen) - posts], ["paused", [], 0])
+    done = completed(log_before)
+    check.ok("paused: a person's press of Resume: the task runs again", task_press(page, "#task-resume") and task_is(page, "running", 10000), state())
+    check.ok("after Resume the turns go on: another action completes", task_wait_results(page, log_before, done + 1), task_results(page, log_before)[-2:])
+
+    # e. the stop bar during a turn: STOP MOTION latches; after Reset, Resume works
+    try:
+        wait_station(page, "view.status.task !== null && view.status.task.isBusy === true", 10000)
+    except WaitTimeout:
+        pass
+    page.click("#task-stop")
+    is_latched = task_wait(page, "() => { const data = document.getElementById('task-run').dataset; return data.latched === 'true' && data.task === 'paused' && data.command === '' && !document.getElementById('task-reset-stop').hidden; }", None, 20000)
+    check.equal(
+        "the stop bar during a turn: STOP MOTION is latched; Resume is not offered, Reset and Clear are",
+        [is_latched, state(), page.locator("#task-resume").is_hidden(), page.locator("#task-reset-stop").is_visible(), page.locator("#task-clear").is_visible()],
+        [True, ["paused", "true"], True, True, True],
+    )
+    check.ok("the stop bar during a turn: the log holds PEAR's words of it", "Task: STOP MOTION activated" in log_lines(page)[log_before:], [line for line in log_lines(page)[log_before:] if "STOP" in line])
+    task_press(page, "#task-reset-stop")
+    is_reset = task_wait(page, "() => document.getElementById('task-run').dataset.latched === 'false' && !document.getElementById('task-resume').hidden && !document.getElementById('task-resume').disabled", None, 15000)
+    done = completed(log_before)
+    check.equal("after Reset the latch is gone and Resume is offered; a press of it runs the task on, and an action completes", [is_reset, task_press(page, "#task-resume") and task_is(page, "running", 10000), task_wait_results(page, log_before, done + 1)], [True, True, True])
+
+    # j. Clear: the task is gone, what it blocked is offered again, and Start is offered again
+    pause()
+    lines_before = len(log_lines(page))
+    is_gone = clear()
+    lines = log_lines(page)[lines_before:]
+    check.equal("Clear: the task is gone, and the log holds the press and the task's end", [is_gone, state(), "Task: clear" in lines, "Task: cleared" in lines], [True, ["none", "false"], True, True])
+    seen = task_why(page, "")
+    are_offered = page.evaluate("[...document.querySelectorAll('#station-jog button')].every(button => !button.disabled)")
+    check.equal(
+        "Clear: the steps by hand, Home, Disable and \"Ask the model once\" are offered again, their sentences gone, and Start is offered",
+        [are_offered, page.locator("#station-home").is_enabled(), page.locator("#station-task-note").is_hidden(), page.locator("#station-disable").is_enabled(), page.locator("#station-disable-task").is_hidden(), wait_missing(page, ""), page.locator("#ask-once").is_enabled(), seen[0], seen[2]],
+        [True, True, True, True, True, "", True, "", True],
+    )
+    ModelService.configure(keys=[KEY], stream=cycle[0])
+    page.click("#ask-once")
+    check.equal("Clear: a new answer asked by hand is offered for Execute again", [wait_asked(page), task_wait(page, "() => document.getElementById('ask-execute').dataset.offered === 'true'", None, 5000)], ["action", True])
+
+    # f. the limit of turns set to 2: a new task pauses after two turns by itself, and Resume runs two more
+    page.fill("#task-limit-turns", "2")
+    log_before, seen_before, pose = start(cycle)
+    by_limit = "() => { const data = document.getElementById('task-run').dataset; return data.task === 'paused' && data.command === '' && document.getElementById('task-paused-by').dataset.by === 'limit'; }"
+    at_limit = task_wait(page, by_limit, None, 60000)
+    check.equal("a limit of 2 turns: a new task runs after Clear and is paused after two turns by itself", [at_limit, [result["status"] for result in task_results(page, log_before)]], [True, ["completed", "completed"]])
+    check.ok("a limit of 2 turns: the log's line of the start names it", any(line.startswith("Task: start on the simulated arm (turns limit: 2; action limit: 5 cm, 0.5 rad)") for line in log_lines(page)[log_before:]), [line for line in log_lines(page)[log_before:] if line.startswith("Task: start")])
+    check.equal("a limit of 2 turns: the page says why the task is paused, and what Resume does", [page.locator("#task-paused-by").is_visible(), task_text(page, "#task-paused-by")], [True, TASK_PAUSED["en"]["limit"].format(turns=2)])
+    check.equal(
+        "paused at the limit: the newest turn shows its number, its answer, its action in words and its result",
+        [page.locator("#task-turn").get_attribute("data-turn"), task_text(page, "#task-turn-number"), "Moving up." in task_text(page, "#task-answer"), "In words: move the fingertip by" in task_text(page, "#task-action"), page.locator("#task-result").get_attribute("data-status"), task_text(page, "#task-result")],
+        ["2", "Turn 2", True, True, "completed", "Result: completed."],
+    )
+    check.ok("paused at the limit: no request is open at the service", task_service_idle(), ModelService.open_posts)
+    task_press(page, "#task-resume")
+    ran_on = task_wait_results(page, log_before, 4)
+    check.equal("a limit of 2 turns: Resume runs two more turns, and the task is paused at the limit again", [ran_on, task_wait(page, by_limit, None, 30000), [result["status"] for result in task_results(page, log_before)]], [True, True, ["completed"] * 4])
+    clear()
+
+    # g. the limit of an action's size: z -15 cm is not executed, the model is told, a smaller action is executed
+    page.fill("#task-limit-turns", "30")
+    page.evaluate(TASK_WATCH_RESULT)
+    log_before, seen_before, pose = start([task_answer(z=-15.0), task_answer(z=-1.0)])
+    is_refused = task_wait_results(page, log_before, 1, "rejected", 30000)
+    at_refusal, listed_then = task_pose(page), page.evaluate(TASK_LISTED)
+    is_executed = task_wait_results(page, log_before, 1, "completed", 40000)
+    pause()
+    results = task_results(page, log_before)
+    refusal = next((result for result in results if result["status"] == "rejected"), {})
+    newest_shown = [entry for entry in page.evaluate("window.taskResultsShown") if entry[0] == "rejected"]
+    listed = [entry for entry in listed_then + page.evaluate(TASK_LISTED) if entry[1] == "rejected"]
+    check.equal("an action of z -15 cm over the limit: its result is \"rejected\" with the limit's message whole, in the log", [is_refused, (refusal.get("error") or {}).get("message")], [True, TASK_OVER])
+    check.ok("an action over the limit: the list of turns shows the turn's result with the refusal's message whole", any(TASK_OVER in entry[2] for entry in listed), listed[:2])
+    # the next turn begins with the refusal, in the same batch of events: whether the newest turn's result ever
+    # showed the refusal is written into the numbers and not held
+    numbers["an action over the limit: what the newest turn's result showed"] = {"showed the refusal": any(TASK_OVER in entry[1] for entry in newest_shown), "states": page.evaluate("window.taskResultsShown.slice(0, 8)")}
+    check.equal("an action over the limit: the arm does not move", task_moved(pose, at_refusal), {"x": 0.0, "y": 0.0, "z": 0.0})
+    bodies = [(entry.get("body") or b"").decode("utf-8", "replace") for entry in ModelService.seen[seen_before:] if entry["method"] == "POST"]
+    told = f"Nothing moved: the whole action was discarded (arm and gripper). {TASK_OVER}"
+    check.ok("an action over the limit: the next request tells the model that nothing moved, with the message", len(bodies) >= 2 and told not in bodies[0] and told in bodies[1], [len(bodies), [told in body for body in bodies]])
+    rest()
+    moved, count = task_moved(pose, task_pose(page)), sum(1 for result in results if result["status"] == "completed")
+    check.ok("an action over the limit: the smaller action the model asks then, z -1 cm, is executed", is_executed and count >= 1 and abs(moved["z"] + count) < 0.2 and abs(moved["x"]) < 0.2, [results, moved])
+    numbers["an action over the limit"] = {"results": results, "moved, cm": moved, "the refusal in the newest turn's result": newest_shown[:1], "the refusal in the list of turns": listed[:1]}
+    clear()
+
+    # the same answer with the tick taken away before the start: it is executed whole
+    page.uncheck("#task-limit-action")
+    check.equal("the limit of an action's size switched off: the page reads it so", page.locator("#task-limits").get_attribute("data-action"), "false")
+    log_before, seen_before, pose = start([task_answer(z=-15.0), task_answer(z=15.0)])
+    has_result = task_wait_results(page, log_before, 1, "", 60000)
+    results, moved = task_results(page, log_before), task_moved(pose, task_pose(page))
+    check.ok("the limit of an action's size switched off: the log's line of the start says so", any("(turns limit: 30; action limit: none)" in line for line in log_lines(page)[log_before:] if line.startswith("Task: start")), [line for line in log_lines(page)[log_before:] if line.startswith("Task: start")])
+    check.ok("the limit of an action's size switched off: the same answer, z -15 cm, is executed whole", has_result and results[0]["status"] == "completed" and abs(moved["z"] + 15) < 0.3, [results[:1], moved])
+    numbers["an action of z -15 cm without the limit"] = {"results": results[:1], "moved, cm": moved}
+    task_wait_results(page, log_before, 2, "", 60000)
+    clear()
+    page.check("#task-limit-action")
+
+    # h. an answer without an action: the task is paused with the console's error and what can be done about it
+    pieces, _ = recorded_answer()
+    log_before, seen_before, pose = start([[piece for piece in pieces if "```" not in piece]])
+    has_failed = task_wait(page, "() => document.getElementById('task-run').dataset.task === 'paused' && !document.getElementById('task-error').hidden", None, 40000)
+    check.equal("an answer without an action: the task is paused, and the page shows the console's error with what can be done about it", [has_failed, task_text(page, "#task-error")], [True, TASK_PAUSED["en"]["error"].format(error=TASK_NO_ACTION)])
+    check.ok("an answer without an action: the log holds the error, and Resume and Clear are offered", f"Task: {TASK_NO_ACTION}" in log_lines(page)[log_before:] and page.locator("#task-resume").is_visible() and page.locator("#task-clear").is_visible(), [line for line in log_lines(page)[log_before:] if line.startswith("Task: ")][-4:])
+    check.equal("an answer without an action: nothing moved", task_moved(pose, task_pose(page)), {"x": 0.0, "y": 0.0, "z": 0.0})
+    clear()
+
+    # i. the page hidden during a turn: the task is paused; shown again, nothing resumes by itself
+    log_before, seen_before, pose = start(cycle, 0.2)
+    task_is(page, "running", 10000)
+    try:
+        wait_station(page, "view.status.task !== null && view.status.task.isBusy === true", 10000)
+    except WaitTimeout:
+        pass
+    set_hidden(page, True)
+    is_hidden = task_wait(page, "() => { const data = document.getElementById('task-run').dataset; return data.task === 'paused' && document.getElementById('task-paused-by').dataset.by === 'hidden'; }", None, 30000)
+    check.equal("the page hidden during a turn: the task is paused, and the page says why and that it does not go on by itself", [is_hidden, task_text(page, "#task-paused-by")], [True, TASK_PAUSED["en"]["hidden"]])
+    set_hidden(page, False)
+    task_service_idle()
+    lines_before, posts = len(log_lines(page)), len(ModelService.seen)
+    page.wait_for_timeout(2000)
+    check.equal("the page shown again: nothing resumes by itself: the task stays paused, no turn begins, the model is not asked", [state()[0], [line for line in log_lines(page)[lines_before:] if line.startswith("Task: ")], len(ModelService.seen) - posts], ["paused", [], 0])
+    check.ok("the page shown again: Resume is offered", page.locator("#task-resume").is_visible() and page.locator("#task-resume").is_enabled(), state())
+    clear()
+
+    # m. the control periods from before the first task to after the last
+    since_after = settled_status(page).get("since") or {}
+    periods = {name: since_after.get(name, 0) - since_before.get(name, 0) for name in ("count", "over25", "over40")}
+    numbers["control periods from before the first task to after the last"] = {**periods, "longest since the station was enabled, ms": since_after.get("maxMs"), "longest before the first task, ms": since_before.get("maxMs")}
+    check.ok("the control periods while the tasks ran: none was over 40 ms", is_number(since_after.get("maxMs")) and periods["count"] > 0 and periods["over40"] == 0, numbers["control periods from before the first task to after the last"])
+
+    # a. the camera stopped, at the end: the station is held idle and no task is there
+    task_camera(check, page, "task", TASK_WHY["en"])
+
+    # k. the key the service was given is in no line of the page's log
+    check.ok("the log holds no key, in all of the above", KEY not in page.locator("#log-output").input_value())
+    own.close()
+
+
+def task_chinese(check: Check, browser, base: str, service: str) -> None:
+    """The operator's instructions of a task in Chinese: why Start is not offered, what a task blocks, and why
+    the Worker paused the task (its limit of turns, a hidden page, a failure)."""
+    label = "task (Chinese)"
+    cycle = [task_answer(z=1.5), task_answer(z=-1.5)]
+    ModelService.configure(keys=[KEY], answers=cycle, stream_pause_s=0.05)
+    own, page = task_page(check, browser, base, service, "zh-TW")
+    paused = TASK_PAUSED["zh-TW"]
+    page.fill("#task-limit-turns", "1")
+    task_press(page, "#task-start")
+    at_limit = task_wait(page, "() => { const data = document.getElementById('task-run').dataset; return data.task === 'paused' && data.command === '' && document.getElementById('task-paused-by').dataset.by === 'limit'; }", None, 60000)
+    check.equal(f"{label}: paused at a limit of 1 turn: the page says why, and what Resume does", [at_limit, task_text(page, "#task-paused-by")], [True, paused["limit"].format(turns=1)])
+    task_blocked(check, page, f"{label}: while a task is there", TASK_BLOCKS["zh-TW"], False)
+    ModelService.configure(keys=[KEY], answers=cycle, stream_pause_s=0.3)
+    task_press(page, "#task-resume")
+    task_is(page, "running", 10000)
+    set_hidden(page, True)
+    is_hidden = task_wait(page, "() => { const data = document.getElementById('task-run').dataset; return data.task === 'paused' && document.getElementById('task-paused-by').dataset.by === 'hidden'; }", None, 30000)
+    check.equal(f"{label}: paused by a hidden page: the page says why, and that the task does not go on by itself", [is_hidden, task_text(page, "#task-paused-by")], [True, paused["hidden"]])
+    set_hidden(page, False)
+    pieces, _ = recorded_answer()
+    ModelService.configure(keys=[KEY], answers=[[piece for piece in pieces if "```" not in piece]])
+    task_press(page, "#task-resume")
+    has_failed = task_wait(page, "() => document.getElementById('task-run').dataset.task === 'paused' && !document.getElementById('task-error').hidden", None, 40000)
+    check.equal(f"{label}: paused by an answer without an action: the page says what can be done, with PEAR's words", [has_failed, task_text(page, "#task-error")], [True, paused["error"].format(error=TASK_NO_ACTION)])
+    task_press(page, "#task-clear")
+    task_is(page, "none", 20000)
+    check.ok(f"{label}: the log holds no key", KEY not in page.locator("#log-output").input_value())
+    own.close()
+
+
+def part_task(check: Check, browser, base: str, service: str) -> None:
+    task_run(check, browser, base, service)
+    task_chinese(check, browser, base, service)
+    ModelService.configure()
+
+
 def part_languages(check: Check, browser, base: str, service: str) -> None:
     for locale, wanted in (("zh-TW", "zh-Hant-TW"), ("zh-HK", "zh-Hant-TW"), ("en-GB", "en"), ("ja-JP", "en")):
         context = browser.new_context(viewport={"width": 1280, "height": 800}, locale=locale)
@@ -2283,9 +2914,10 @@ def part_languages(check: Check, browser, base: str, service: str) -> None:
     check.ok("the title is Chinese", has_han(page.title()), page.title())
     check.equal("no text is missing at the start (Chinese)", texts_filled(page), [])
     check.ok(
-        "the notice says unofficial, experimental, a station in a Worker that drives a simulated arm, and that a real arm is written to only after its Enable and the confirmation, that a model's action is executed only one at a time, each at its own press, and that nothing runs by itself",
-        all(word in page.locator("#notice").inner_text() for word in ("非官方", "實驗", "工作站在這個頁面的 Worker 裡執行，驅動的是模擬手臂", "連接真實的手臂時，頁面會讀取", "只有在你按下「在這支手臂上啟用工作站」並確認之後，它才會對伺服馬達寫入", "一次移動一小步", "模型要求的動作一次只執行一個，而且每一個都要你為它按下「執行這個動作」才會執行", "不會有任何動作自行執行"))
-        and "不會有任何模型讓手臂動" not in page.locator("#notice").inner_text(),
+        "the notice says unofficial, experimental, a station in a Worker that drives a simulated arm, that a real arm is written to only after its Enable and the confirmation, that a model's action is executed at its own press, and that a task can be started, from which on the model moves the arm by itself until it is paused or the limit of turns is reached",
+        all(word in page.locator("#notice").inner_text() for word in ("非官方", "實驗", "工作站在這個頁面的 Worker 裡執行，驅動的是模擬手臂", "連接真實的手臂時，頁面會讀取", "只有在你按下「在這支手臂上啟用工作站」並確認之後，它才會對伺服馬達寫入", "一次移動一小步", "模型要求的動作一次只執行一個，而且每一個都要你為它按下「執行這個動作」才會執行", "你還可以開始一個任務", "在真實的手臂上經過另一次確認之後也可以", "由模型自行移動手臂，不需要再按，直到任務被暫停，或達到你設定的回合數上限為止"))
+        and "不會有任何模型讓手臂動" not in page.locator("#notice").inner_text()
+        and "不會有任何動作自行執行" not in page.locator("#notice").inner_text(),
         page.locator("#notice").inner_text(),
     )
     check.ok(
@@ -2294,10 +2926,11 @@ def part_languages(check: Check, browser, base: str, service: str) -> None:
         page.locator("#task").inner_text()[:200],
     )
     check.ok(
-        "the task says in Chinese that it can ask a model once, that a model's action is executed only one at a time, each at its own press and on a real arm after a second press, and that nothing runs by itself",
-        all(word in page.locator("#task").inner_text() for word in ("它可以問模型一次並顯示回答", "模型要求的動作一次只執行一個，而且每一個都要你為它按下「執行這個動作」才會執行", "在真實的手臂上還要再按一次確認", "不會有任何動作自行執行", "這些在模擬手臂上都可以先試，不需要手臂"))
-        and "不會執行模型要求的動作" not in page.locator("#task").inner_text(),
-        page.locator("#task").inner_text()[:400],
+        "the task says in Chinese that it can ask a model once, that the answer's action is executed at its own press and on a real arm after one more press, and that a task is different: after Start the model moves the arm by itself until it is paused or the limit of turns is reached; and the note at Start says what pauses a task and that it has no end of its own",
+        all(word in page.locator("#task").inner_text() for word in ("它可以問模型一次並顯示回答", "回答裡的動作，要你為它按下「執行這個動作」才會執行", "在真實的手臂上還要再按一次確認", "啟用、Home、單步動作和執行，每一次都要你自己按", "任務則不同：你按下「開始」之後", "模型會一回合接一回合地自行移動手臂，直到任務被暫停，或達到你設定的回合數上限為止", "這些在模擬手臂上都可以先試，不需要手臂", "「開始」會執行任務，在模擬手臂上一按就開始，在真實的手臂上要先經過一次確認", "任務本身不會自行結束：暫停的任務可以繼續，或是清除"))
+        and "不會執行模型要求的動作" not in page.locator("#task").inner_text()
+        and "不會有任何動作自行執行" not in page.locator("#task").inner_text(),
+        page.locator("#task").inner_text()[:600],
     )
     jog_lead = page.locator("[data-i18n='station.jogLead']").text_content() or ""
     check.ok(
@@ -2382,6 +3015,27 @@ def part_languages(check: Check, browser, base: str, service: str) -> None:
         check.equal(f"model {outcome} (for its texts)", run_model_check(page, case["url"], case["model"], case["key"]), outcome)
         both(f"model {outcome}", ["#model-result .box > p:not(.detail), #model-result .box li, #model-result .box h4"])
     ModelService.configure()
+
+    # the tick that keeps the model service on this browser: its note says what is kept, where, until when and
+    # who can read it, in both languages and in both of its states
+    remember_words = {
+        "#language-zh": ("服務網址、模型名稱和金鑰", "這個瀏覽器給本網站使用的儲存空間", "這台電腦", "直到你取消勾選為止", "使用這個瀏覽器設定檔的人都讀得到", "從本網站的位址提供的任何頁面也讀得到", "整個主機，不只是這個頁面所在的資料夾"),
+        "#language-en": ("address, the model's name and the key", "in this browser's storage for this site", "on this computer", "until you take the tick away", "Whoever uses this browser's profile can read them", "any page served from this site's address", "the whole host, not only this page's folder"),
+    }
+    for is_kept, state in ((False, ("目前沒有保存任何東西", "Nothing is kept now")), (True, ("現在保存在", "are now kept"))):
+        page.set_checked("#model-remember", is_kept)
+        both(f"the tick that remembers the model service ({'ticked' if is_kept else 'not ticked'})", [".remember label", "#model-remember-note"])
+        for (button, words), said in zip(remember_words.items(), state):
+            page.click(button)
+            text = page.locator("#model-remember-note").inner_text()
+            check.ok(
+                f"the note of the tick ({'ticked' if is_kept else 'not ticked'}, {button}) says what is kept, where, until when and who can read it",
+                said in text and all(word in text for word in words),
+                text,
+            )
+    page.set_checked("#model-remember", False)
+    check.equal("the tick taken away again: nothing is left stored", page.evaluate("localStorage.length"), 0)
+    page.click("#language-zh")
 
     page.click("#timing-run")
     page.wait_for_function("document.getElementById('timing-result').dataset.state === 'running'")
@@ -4225,8 +4879,8 @@ def part_preflight(check: Check, browser, base: str, service: str) -> None:
     ModelService.configure()
 
 
-REAL_UNTRIED = "Enabling, Home and Disable have run on one real arm so far (an SO-101). Stop during a move, a step by hand and the execution of a model's action have run on simulated servos only and never on a real arm."
-REAL_UNTRIED_CHINESE = "到目前為止，啟用、Home 和停用只在一支真實的手臂（SO-101）上執行過。移動中的停止、單步動作，以及執行模型的動作，都只在模擬的伺服馬達上執行過，還沒有在真實的手臂上執行過。"
+REAL_UNTRIED = "Enabling, Home and Disable have run on one real arm so far (an SO-101). Stop during a move, a step by hand, the execution of a model's action and a task that a model runs have run on simulated servos only and never on a real arm."
+REAL_UNTRIED_CHINESE = "到目前為止，啟用、Home 和停用只在一支真實的手臂（SO-101）上執行過。移動中的停止、單步動作、執行模型的動作，以及由模型執行的任務，都只在模擬的伺服馬達上執行過，還沒有在真實的手臂上執行過。"
 # The last sentence of the control's note: what has run on a real arm so far, and what has not.
 REAL_NOTE_TRIED = "Enabling, Home and Disable have run on one real arm so far; everything else has run on simulated servos only."
 REAL_REPORT = "Station: arming report "
@@ -4725,11 +5379,12 @@ def real_station(check: Check, browser, base: str, service: str) -> None:
     check.ok(f"{label}: until the press the report's guard has let through reads only and refused nothing", real_reads_only(report.get("guard")), report.get("guard"))
     check.equal(f"{label}: the box is unticked and \"Switch the torque on\" is disabled", [shown["hasConfirm"], shown["isTicked"], shown["isGoDisabled"], shown["go"]], [True, False, True, "Switch the torque on"])
     kinds = [item["kind"] for item in shown["items"]]
-    check.equal(f"{label}: the list, in its order (the warnings' line only when the report has some)", [kind for kind in kinds if kind != "warnings"], ["untried", "limp", "rest", "eeprom", "ram", "factory", "home", "steps", "execute", "stop", "disable", "lost", "limit"])
+    check.equal(f"{label}: the list, in its order (the warnings' line only when the report has some)", [kind for kind in kinds if kind != "warnings"], ["untried", "limp", "rest", "eeprom", "ram", "factory", "home", "steps", "execute", "task", "stop", "disable", "lost", "limit"])
     check.equal(f"{label}: the list says first, as a warning, what has run on one real arm so far and what on simulated servos only", shown["items"][:1], [{"kind": "untried", "tone": "warn", "text": REAL_UNTRIED}])
     texts = {item["kind"]: item["text"] for item in shown["items"]}
     check.ok(f"{label}: the list says that a step by hand moves the arm at once when it is pressed, and shows no plan first", "A step by hand moves the arm at once when you press it" in texts.get("steps", "") and "It shows no plan first" in texts.get("steps", ""), texts.get("steps"))
-    check.ok(f"{label}: the list says that a model's action is executed only at the two presses of Execute, names both buttons, and says that nothing runs by itself", all(name in texts.get("execute", "") for name in REAL_EXECUTE_BUTTONS) and "Nothing runs by itself." in texts.get("execute", ""), texts.get("execute"))
+    check.ok(f"{label}: the list says that a model's action is executed only at the two presses of Execute, names both buttons, and says that outside a task nothing runs by itself", all(name in texts.get("execute", "") for name in REAL_EXECUTE_BUTTONS) and "Outside a task, nothing runs by itself." in texts.get("execute", ""), texts.get("execute"))
+    check.ok(f"{label}: the list says that a task, after a confirmation of its own, lets the model move the arm by itself with the limits the operator sets, and that Pause and the stop bar end it", "after a confirmation of its own, lets the model move the arm by itself" in texts.get("task", "") and "a limit of turns and a limit of an action's size" in texts.get("task", "") and "the stop bar end it at any time" in texts.get("task", ""), texts.get("task"))
     reads = report.get("singleReads") or {}
     kept = [setting for setting in report.get("settings") or [] if setting.get("area") == "eeprom"]
     check.ok(f"{label}: the list has this line's numbers: the limp time measured just now and how many transactions it is the time of", f"about {round(reads.get('totalMs', -1))} ms on this line (the time of {reads.get('count')} transactions" in texts.get("limp", ""), [reads, texts.get("limp")])
@@ -5192,6 +5847,547 @@ def real_bounds(check: Check, browser, base: str) -> None:
     check.equal(f"{label}: the station is off, step 1 reads the arm, and the control is offered again", [station_view(page)["phase"], phase(page), offered], ["off", "reading", True])
 
 
+# What the page says of a task on a real arm, word for word: the row of Start and of Resume with its two parts,
+# the plain warning with both limits off, the pause's sentences, the log's lines, and the Worker's message of an
+# action over the limit of its size.
+REAL_TASK_ASK = "Start this task on the real arm? From your press of “Start on the arm” the model moves the real arm by itself, one action after another, without a press of yours between them. {ends} {size} Nothing looks for the table or for an obstacle in the arm's way. Keep the stop bar and the servos' power switch within your reach."
+REAL_TASK_RESUME_ASK = "Resume this task on the real arm? From your press of “Resume on the arm” the model moves the real arm again by itself, one action after another, without a press of yours between them. {ends} {size} Nothing looks for the table or for an obstacle in the arm's way. Keep the stop bar and the servos' power switch within your reach."
+REAL_TASK_ENDS = "It goes on until you press “Pause” or the stop bar, or until its limit of turns is reached, which is set to {turns}: then the task is paused, and “Resume” runs {turns} more."
+REAL_TASK_ENDS_NONE = "It goes on until you pause it, with “Pause” or the stop bar: no limit of turns is set."
+REAL_TASK_SIZE = "An action of more than 5 cm along an axis or 0.5 rad of a rotation is not executed: the model is told so and asks again."
+REAL_TASK_SIZE_NONE = "An action is as large as the model asks: the limit of an action's size is switched off."
+REAL_TASK_UNLIMITED = "Both limits are switched off: the task is not paused after a count of turns, and nothing limits how far one action moves the arm. It is yours to pause, with “Pause” or the stop bar."
+REAL_TASK_ASK_CHINESE = "要在真實的手臂上開始這個任務嗎？從你按下「在手臂上開始」起，模型會自行移動真實的手臂，一個動作接著一個動作，中間不需要你再按。{ends}{size}不會有任何東西偵測桌面，或手臂路徑上的障礙物。請讓停止列和伺服馬達電源的開關都保持在你伸手可及的地方。"
+REAL_TASK_ENDS_NONE_CHINESE = "它會一直進行，直到你暫停為止（按「暫停」或停止列）：目前沒有設定回合數上限。"
+REAL_TASK_SIZE_NONE_CHINESE = "動作的幅度就是模型要求的大小：動作幅度的限制已經關閉。"
+REAL_TASK_UNLIMITED_CHINESE = "兩個限制都已經關閉：任務不會因為回合數而暫停，單一動作能讓手臂移動多遠也沒有限制。要由你自己按「暫停」或停止列讓它停下來。"
+REAL_TASK_PAUSED = "The task is paused: its limit of turns, set to {turns}, was reached. “Resume” runs {turns} more."
+REAL_TASK_PAUSED_HIDDEN = "The task is paused: this page was hidden. It does not go on by itself: press “Resume” when you are back at the arm."
+REAL_TASK_LIMITS = "turns limit: {turns}; action limit: 5 cm, 0.5 rad"
+REAL_TASK_AT_LIMIT = "Task: Paused at the operator's limit of turns"
+REAL_TASK_OVER = "The operator's limit for one action is 5 cm in x, y and z and 0.5 rad in pitch and roll, either way. This action is over it: z -15 cm is 10 cm over."
+# What the page shows of a task: its state, the row of Start or Resume on a real arm, the limits, why the Worker
+# paused it, and the newest turn's result.
+REAL_TASK_VIEW = """(() => {
+    const node = id => document.getElementById(id);
+    const visible = id => node(id) !== null && node(id).getClientRects().length > 0;
+    const words = id => (visible(id) ? node(id).textContent.replace(/\\s+/g, ' ').trim() : '');
+    const offered = id => visible(id) && !node(id).disabled;
+    const run = node('task-run');
+    const row = node('task-start-confirm');
+    return {
+        task: run.dataset.task ?? '', isLatched: run.dataset.latched === 'true',
+        hasRow: visible('task-start-confirm'), rowFor: row.dataset.for ?? '', isUnlimited: row.dataset.unlimited === 'true',
+        ask: words('task-start-ask'), warning: words('task-start-unlimited'), go: words('task-start-go'), keep: words('task-start-keep'),
+        canStart: offered('task-start'), canPause: offered('task-pause'), canResume: offered('task-resume'),
+        canClear: offered('task-clear'), canReset: offered('task-reset-stop'),
+        why: node('task-why').dataset.why ?? '',
+        turns: node('task-limit-turns').value, isActionLimited: node('task-limit-action').checked,
+        pausedBy: visible('task-paused-by') ? node('task-paused-by').dataset.by ?? '' : null, paused: words('task-paused-by'),
+        result: visible('task-result') ? node('task-result').textContent : '', resultStatus: node('task-result').dataset.status ?? '',
+    };
+})()"""
+# What the page does not offer while a task is there: the steps by hand, Home, "Ask the model once", "Execute this
+# action" and Disable, with the notes that say why.
+REAL_TASK_BLOCKED = """(() => {
+    const node = id => document.getElementById(id);
+    const visible = id => node(id).getClientRects().length > 0;
+    return {
+        steps: [...document.querySelectorAll('#station-jog button')].every(button => button.disabled),
+        stepsNote: visible('station-task-note'),
+        home: node('station-home').disabled,
+        ask: node('ask-once').disabled, askWhy: node('ask-missing').dataset.missing ?? '',
+        execute: node('ask-execute-run').disabled, isExecuteOffered: node('ask-execute').dataset.offered === 'true',
+        disable: node('station-disable').disabled, disableNote: visible('station-disable-task'),
+    };
+})()"""
+# Where the page shows a turn's result: the newest turn's, and the list of the turns.
+REAL_TASK_RESULTS = """(() => ({
+    newest: document.getElementById('task-result').textContent,
+    list: [...document.querySelectorAll('#task-turns > li')].map(item => item.textContent),
+}))()"""
+
+
+def real_task_view(page: Page) -> dict:
+    return page.evaluate(REAL_TASK_VIEW)
+
+
+def real_task_status(page: Page) -> dict:
+    """Returns the Worker's last status as the page holds it; {} when it holds none."""
+    return station_view(page)["status"] or {}
+
+
+def real_task_held(page: Page) -> dict:
+    """Returns what stays as it is while no task is started or resumed: how many requests of a task the window
+    has sent the Worker, how many lines of the log tell of a start or a resume, and what real_held() returns."""
+    return {
+        "task requests": len(real_asked(page, "task")),
+        "lines": len([line for line in log_lines(page) if line.startswith(("Task: start", "Task: resume"))]),
+        **real_held(page),
+    }
+
+
+def real_task_answers(z: float, pause_s: float = 0.0) -> None:
+    """Tells the stand-in model service to answer every request from now on with the recorded answer, its action
+    moving the arm's tip by ``z`` cm, each piece of the answer ``pause_s`` after the one before. An answer that
+    is under way keeps its action."""
+    pieces, _ = recorded_answer()
+    ModelService.configure(keys=[KEY], stream=[piece.replace('\\"z\\": 1.5', f'\\"z\\": {z}') for piece in pieces], stream_pause_s=pause_s)
+
+
+def real_task_posts() -> int:
+    """Returns how many answers the stand-in model service has been asked for."""
+    return len([entry for entry in ModelService.seen if entry["method"] == "POST"])
+
+
+def real_task_wait_posts(page: Page, count: int, timeout_ms: int = 20000) -> bool:
+    """Waits until the stand-in model service has been asked for ``count`` answers; returns whether it was."""
+    for _ in range(timeout_ms // 100):
+        if real_task_posts() >= count:
+            return True
+        page.wait_for_timeout(100)
+    return False
+
+
+def real_task_count(page: Page, words: str) -> int:
+    """Returns how many times the page's log holds ``words``."""
+    return page.evaluate("words => document.getElementById('log-output').value.split(words).length - 1", words)
+
+
+def real_task_wait_count(page: Page, words: str, count: int, timeout_ms: int = 60000) -> bool:
+    """Waits until the page's log holds ``words`` ``count`` times; returns whether it did in that time."""
+    try:
+        page.wait_for_function("([words, count]) => document.getElementById('log-output').value.split(words).length - 1 >= count", arg=[words, count], timeout=timeout_ms)
+        return True
+    except WaitTimeout:
+        return False
+
+
+def real_task_turns(lines: list) -> list:
+    """Returns the lines of a task's turns in a log, each as [the turn's number, "action" or "result", the
+    action's z in cm or the result's status, what the line holds as JSON]."""
+    found = []
+    for line in lines:
+        matched = re.match(r"Task: turn (\d+) (action|result) (.*)$", line)
+        told = json_or_none(matched.group(3)) if matched else None
+        if isinstance(told, dict):
+            found.append([int(matched.group(1)), matched.group(2), (told.get("arm") or {}).get("z") if matched.group(2) == "action" else told.get("status"), told])
+    return found
+
+
+def real_task_writes(status: dict) -> dict:
+    """Returns the writes that a real arm's guard has let through, of a status: its counts whose name is a write's."""
+    passed = (status.get("line") or {}).get("passed") or {}
+    return {name: count for name, count in passed.items() if "WRITE" in name.upper()}
+
+
+def real_task_grown(before: dict, after: dict) -> dict:
+    """Returns by how much each count of writes of the guard grew from one status to a later one; {} when none did."""
+    earlier, later = real_task_writes(before), real_task_writes(after)
+    return {name: count - earlier.get(name, 0) for name, count in later.items() if count != earlier.get(name, 0)}
+
+
+def real_task_press(page: Page, selector: str) -> bool:
+    """Presses a control with real input, as the operator does; returns whether it took the press in time."""
+    return real_input(lambda: page.click(selector, timeout=5000))
+
+
+def real_task_row(page: Page, is_shown: bool) -> bool:
+    """Waits until the row of Start or Resume on a real arm is shown, or is gone; returns whether it came to that."""
+    return real_wait(page, f"(document.getElementById('task-start-confirm').getClientRects().length > 0) === {'true' if is_shown else 'false'}", 5000)
+
+
+def real_task_rest(page: Page) -> bool:
+    """Waits until the station holds the real arm at rest with no turn of a task under way, and a moment more for
+    the servos; returns whether it came to that."""
+    is_idle = real_wait_station(page, "view.phase === 'on' && view.status !== null && view.status.robot === 'READY' && view.status.control === 'HOLD' && (view.status.task === null || view.status.task.isBusy === false)", 20000)
+    page.wait_for_timeout(600)
+    return is_idle
+
+
+def real_task_resumed(page: Page) -> bool:
+    """Resumes the paused task as the operator does on a real arm: Resume, then "Resume on the arm" in the row;
+    returns whether both took the press."""
+    return real_task_press(page, "#task-resume") and real_task_row(page, True) and real_task_press(page, "#task-start-go")
+
+
+def real_task_request(service: str) -> dict:
+    """Returns the request that starts a task without limits, as the page's debug hook is asked for it."""
+    return {"type": "task", "command": "start", "instruction": INSTRUCTION, "service": {"baseUrl": f"{service}/v1", "model": MODEL, "apiKey": KEY}, "limits": {"turns": 0, "isActionLimited": False}}
+
+
+def real_task_enabled(check: Check, page: Page, service: str) -> bool:
+    """Brings the page to where a task on a real arm starts from: the simulated arm connected, the model service
+    checked with its key, the station enabled on the real arm's path at the operator's tick and press, and the
+    camera's test picture running. Returns whether the station holds the arm and gets the camera's frames."""
+    connect_sim(page)
+    page.wait_for_function("window.pearjs.arm.view.live !== null")
+    real_task_answers(1.5)
+    is_checked = run_model_check(page, f"{service}/v1", MODEL, KEY) == "ok"
+    is_asking = real_offered(page) and real_input(lambda: page.click("#station-arming-run", timeout=5000)) and real_asking(page)
+    if is_asking:
+        page.check("#station-arming-tick")
+        real_wait(page, "document.getElementById('station-arming-go').disabled === false", 5000)
+        real_input(lambda: page.click("#station-arming-go", timeout=5000))
+    is_on = is_asking and real_wait_station(page, "view.phase === 'on' && view.status !== null && view.status.robot === 'READY' && view.status.line !== null", 45000)
+    camera_start = page.locator("#camera-start")
+    if is_on and camera_start.is_visible() and camera_start.is_enabled():
+        camera_start.click()
+    has_frames = is_on and real_wait_station(page, "view.status.camera != null && view.status.camera.isRunning === true && view.status.camera.perSecond >= 5", 20000)
+    check.equal("a task: the model service is checked with its key, the station is enabled on the real arm's path at the operator's tick and press, it gets the frames of the camera's test picture, and its status tells a real arm", [is_checked, is_asking, is_on, has_frames, real_task_status(page).get("arm")], [True, True, True, True, "real"])
+    return is_on and has_frames
+
+
+def real_task_start(check: Check, page: Page, numbers: dict) -> bool:
+    """Start on a real arm. A script's click on Start shows no row; the operator's press shows the row, which says
+    both limits as they are set and starts nothing; "Don't", a change of the instruction and a change of a limit
+    take it away; a script's click on "Start on the arm" starts nothing; the operator's press there starts the
+    task, whose turns run by themselves until its limit of two turns pauses it. Returns whether it paused so."""
+    label = "a task: Start"
+    real_task_answers(1.5, 0.1)
+    page.fill("#task-instruction", INSTRUCTION)
+    real_settled(page)
+    is_offered = real_wait(page, "(() => { const start = document.getElementById('task-start'); return start.getClientRects().length > 0 && !start.disabled; })()", 10000)
+    shown = real_task_view(page)
+    check.equal(f"{label}: while the station holds the real arm with the camera running and the model service checked, Start is offered, with the limits as the page sets them at load: 30 turns, and an action's size limited", [is_offered, shown["why"], shown["turns"], shown["isActionLimited"], shown["hasRow"]], [True, "", "30", True, False])
+    held, pose = real_task_held(page), real_pose(page)
+    page.evaluate("document.getElementById('task-start').click()")
+    page.wait_for_timeout(600)
+    check.equal(f"{label}: a script's click on Start shows no row and starts nothing on a real arm: no request of a task reaches the Worker, the log has no line of a start, and neither a joint nor a servo's goal moved", [real_task_view(page)["hasRow"], real_task_held(page), real_travel(page, pose) < REAL_STILL], [False, held, True])
+    is_pressed = real_task_press(page, "#task-start")
+    is_asked = real_task_row(page, True)
+    page.wait_for_timeout(600)
+    shown = real_task_view(page)
+    numbers["a task: the row of Start"] = shown
+    check.equal(f"{label}: the operator's press shows the row of Start, whose sentence says the limit of turns as it is set, 30, and the limit of an action's size", [is_pressed, is_asked, shown["rowFor"], shown["ask"]], [True, True, "start", REAL_TASK_ASK.format(ends=REAL_TASK_ENDS.format(turns=30), size=REAL_TASK_SIZE)])
+    check.equal(f"{label}: the row's buttons are \"Start on the arm\" and \"Don't\", it shows no warning of a task without limits, and Start is disabled while it shows", [shown["go"], shown["keep"], shown["isUnlimited"], shown["warning"], shown["canStart"]], ["Start on the arm", "Don't", False, "", False])
+    check.equal(f"{label}: that press starts nothing: no request of a task reaches the Worker, the log has no line of a start, the servos stand, and the page shows no task", [real_task_held(page), real_travel(page, pose) < REAL_STILL, shown["task"]], [held, True, "none"])
+    real_task_press(page, "#task-start-keep")
+    is_gone = real_task_row(page, False)
+    check.equal(f"{label}: \"Don't\" takes the row away and starts nothing, and Start is offered again", [is_gone, real_task_held(page), real_task_view(page)["canStart"]], [True, held, True])
+    real_task_press(page, "#task-start")
+    is_asked = real_task_row(page, True)
+    page.fill("#task-instruction", INSTRUCTION + " Slowly.")
+    is_gone = real_task_row(page, False)
+    check.equal(f"{label}: shown again, a change of the instruction takes the row away, and nothing started", [is_asked, is_gone, real_task_held(page)], [True, True, held])
+    page.fill("#task-instruction", INSTRUCTION)
+    real_task_press(page, "#task-start")
+    is_asked = real_task_row(page, True)
+    page.fill("#task-limit-turns", "2")
+    is_gone = real_task_row(page, False)
+    check.equal(f"{label}: shown again, a change of the limit of turns takes the row away, and nothing started", [is_asked, is_gone, real_task_held(page)], [True, True, held])
+    real_task_press(page, "#task-start")
+    is_asked = real_task_row(page, True)
+    shown = real_task_view(page)
+    check.equal(f"{label}: shown again, the row's sentence says the limit of 2 turns", [is_asked, shown["ask"]], [True, REAL_TASK_ASK.format(ends=REAL_TASK_ENDS.format(turns=2), size=REAL_TASK_SIZE)])
+    page.evaluate("document.getElementById('task-start-go').click()")
+    page.wait_for_timeout(700)
+    check.equal(f"{label}: a script's click on \"Start on the arm\" starts nothing: the row still waits, no request of a task reaches the Worker, the log has no line of a start, and the servos stand", [real_task_view(page)["hasRow"], real_task_held(page), real_travel(page, pose) < REAL_STILL], [True, held, True])
+    before = real_task_status(page)
+    lines, pauses = len(log_lines(page)), real_task_count(page, REAL_TASK_AT_LIMIT)
+    is_pressed = real_task_press(page, "#task-start-go")
+    is_busy = real_wait_station(page, "view.status !== null && view.status.task !== null && view.status.action === 'task'", 10000)
+    running = real_task_status(page)
+    is_paused = real_task_wait_count(page, REAL_TASK_AT_LIMIT, pauses + 1) and real_wait_station(page, "view.status !== null && view.status.taskPausedBy === 'limit'", 10000)
+    real_task_rest(page)
+    gained = log_lines(page)[lines:]
+    turns = real_task_turns(gained)
+    after = real_task_status(page)
+    shown = real_task_view(page)
+    numbers["a task: the lines of the start and its two turns"] = [line[:200] for line in gained]
+    started = "Task: start on the real arm (" + REAL_TASK_LIMITS.format(turns=2) + f"), instruction of {len(INSTRUCTION)} characters: {json.dumps(INSTRUCTION)}"
+    check.equal(f"{label}: the operator's press of \"Start on the arm\" starts the task: the log has the line of a start on the real arm with both limits, and the window sent the Worker one request of a task", [is_pressed, [line for line in gained if line.startswith("Task: start")], real_task_held(page)["task requests"] - held["task requests"]], [True, [started], 1])
+    check.equal(f"{label}: while it runs the status tells a real arm, the task and its limits", [is_busy, running.get("arm"), running.get("task") is not None, running.get("taskLimits")], [True, "real", True, {"turns": 2, "isActionLimited": True}])
+    numbered = [entry[0] for entry in turns if entry[1] == "action"]
+    check.equal(f"{label}: the turns run by themselves: two turns, one after the other without a press between them, each with the model's action, z +1.5 cm, and its result, completed", [[entry[1:3] for entry in turns], len(numbered) == 2 and numbered[1] == numbered[0] + 1], [[["action", 1.5], ["result", "completed"]] * 2, True])
+    check.ok(f"{label}: the servos move by each action: the arm's tip is 3 cm higher after the two", real_travel(page, pose) > 0.01 and abs(real_height(after) - real_height(before) - 3.0) < 0.3, [real_travel(page, pose), real_height(before), real_height(after)])
+    line = after.get("line") or {}
+    grown = real_task_grown(before, after)
+    numbers["a task: the writes the guard let through during the two turns"] = grown
+    check.ok(f"{label}: the guard refused nothing, the line reported no error and is not lost, and the only writes the guard let through during the turns are goals", [line.get("refused"), line.get("lineErrors"), line.get("isLost")] == [0, 0, False] and "SYNC WRITE 42" in grown and all(name.endswith(" 42") for name in grown), [line.get("refused"), line.get("lineErrors"), line.get("isLost"), grown])
+
+    label = "a task: the limit of turns"
+    task = after.get("task") or {}
+    check.equal(f"{label}: set to 2, it pauses the task after two turns: the log says so, the page shows the task paused and why, and offers Resume", [is_paused, any(line.startswith(REAL_TASK_AT_LIMIT) for line in gained), shown["task"], shown["pausedBy"], shown["paused"], shown["canResume"]], [True, True, "paused", "limit", REAL_TASK_PAUSED.format(turns=2), True])
+    check.equal(f"{label}: the status tells the pause at the limit, and the arm holds with the torque on: the robot is ready and the loop holds", [after.get("taskPausedBy"), task.get("phase"), task.get("isBusy"), task.get("isStopLatched"), after.get("robot"), after.get("control"), "torque on" in page.locator("#station-status").inner_text()], ["limit", "Paused", False, False, "READY", "HOLD", True])
+    rest = real_pose(page)
+    page.wait_for_timeout(1500)
+    check.equal(f"{label}: no third turn follows: a moment later the log has no further turn and the servos stand", [len(real_task_turns(log_lines(page)[lines:])), real_travel(page, rest) < REAL_STILL], [len(turns), True])
+    return is_paused
+
+
+def real_task_resume(check: Check, page: Page, numbers: dict) -> None:
+    """Resume on a real arm: a script's click on Resume shows no row; the operator's press shows the row of a
+    resume and resumes nothing; "Don't" takes it away; a script's click on "Resume on the arm" resumes nothing;
+    the operator's press there resumes the task for two more turns."""
+    label = "a task: Resume"
+    real_task_answers(-1.5, 0.1)
+    real_task_rest(page)
+    held, pose = real_task_held(page), real_pose(page)
+    page.evaluate("document.getElementById('task-resume').click()")
+    page.wait_for_timeout(600)
+    check.equal(f"{label}: a script's click on Resume shows no row and resumes nothing on a real arm: no request of a task reaches the Worker, the log has no line of a resume, and the servos stand", [real_task_view(page)["hasRow"], real_task_held(page), real_travel(page, pose) < REAL_STILL], [False, held, True])
+    is_pressed = real_task_press(page, "#task-resume")
+    is_asked = real_task_row(page, True)
+    page.wait_for_timeout(600)
+    shown = real_task_view(page)
+    numbers["a task: the row of Resume"] = shown
+    check.equal(f"{label}: the operator's press shows the row of a resume, whose sentence says the task's limits, and whose buttons are \"Resume on the arm\" and \"Don't\"", [is_pressed, is_asked, shown["rowFor"], shown["ask"], shown["go"], shown["keep"], shown["isUnlimited"]], [True, True, "resume", REAL_TASK_RESUME_ASK.format(ends=REAL_TASK_ENDS.format(turns=2), size=REAL_TASK_SIZE), "Resume on the arm", "Don't", False])
+    check.equal(f"{label}: that press resumes nothing: no request of a task reaches the Worker, the log has no line of a resume, the servos stand, the task is still paused, and Resume is disabled while the row shows", [real_task_held(page), real_travel(page, pose) < REAL_STILL, shown["task"], shown["canResume"]], [held, True, "paused", False])
+    real_task_press(page, "#task-start-keep")
+    is_gone = real_task_row(page, False)
+    check.equal(f"{label}: \"Don't\" takes the row away and resumes nothing, and Resume is offered again", [is_gone, real_task_held(page), real_task_view(page)["canResume"]], [True, held, True])
+    real_task_press(page, "#task-resume")
+    is_asked = real_task_row(page, True)
+    page.evaluate("document.getElementById('task-start-go').click()")
+    page.wait_for_timeout(700)
+    check.equal(f"{label}: shown again, a script's click on \"Resume on the arm\" resumes nothing: the row still waits, no request of a task reaches the Worker, the log has no line of a resume, and the servos stand", [is_asked, real_task_view(page)["hasRow"], real_task_held(page), real_travel(page, pose) < REAL_STILL], [True, True, held, True])
+    before = real_task_status(page)
+    lines, pauses = len(log_lines(page)), real_task_count(page, REAL_TASK_AT_LIMIT)
+    is_pressed = real_task_press(page, "#task-start-go")
+    is_paused = real_task_wait_count(page, REAL_TASK_AT_LIMIT, pauses + 1)
+    real_task_rest(page)
+    gained = log_lines(page)[lines:]
+    turns = real_task_turns(gained)
+    after = real_task_status(page)
+    numbers["a task: the lines of the resume and its two turns"] = [line[:200] for line in gained]
+    check.equal(f"{label}: the operator's press of \"Resume on the arm\" resumes the task: the log has the line of a resume on the real arm with both limits, and the window sent the Worker one request of a task", [is_pressed, [line for line in gained if line.startswith("Task: resume")], real_task_held(page)["task requests"] - held["task requests"]], [True, ["Task: resume on the real arm (" + REAL_TASK_LIMITS.format(turns=2) + ")"], 1])
+    check.equal(f"{label}: two more turns run by themselves, each with the model's action, z -1.5 cm, and its result, completed, and the task pauses at its limit of turns again", [[entry[1:3] for entry in turns], is_paused, after.get("taskPausedBy")], [[["action", -1.5], ["result", "completed"]] * 2, True, "limit"])
+    check.ok(f"{label}: the servos move by each action: the arm's tip is 3 cm lower after the two, and the guard refused nothing", abs(real_height(after) - real_height(before) + 3.0) < 0.3 and (after.get("line") or {}).get("refused") == 0, [real_height(before), real_height(after), (after.get("line") or {}).get("refused")])
+
+
+def real_task_pause_twice(check: Check, page: Page, numbers: dict) -> None:
+    """A double press meant for Pause: when the task is paused Resume shows where Pause was, and the second of two
+    quick presses must not resume the task on a real arm."""
+    label = "a task: Pause pressed twice"
+    real_task_rest(page)
+    real_task_answers(1.5, 0.4)
+    posts = real_task_posts()
+    is_resumed = real_task_resumed(page)
+    is_running = real_task_wait_posts(page, posts + 1) and real_wait(page, "(() => { const pause = document.getElementById('task-pause'); return document.getElementById('task-run').dataset.task === 'running' && pause.getClientRects().length > 0 && !pause.disabled; })()", 10000)
+    held, lines = real_task_held(page), len(log_lines(page))
+    box = None
+    if is_running:
+        page.locator("#task-pause").scroll_into_view_if_needed()
+        box = page.locator("#task-pause").bounding_box()
+    if box is not None:
+        place = [box["x"] + box["width"] / 2, box["y"] + box["height"] / 2]
+        page.mouse.click(place[0], place[1])
+        page.wait_for_timeout(120)
+        page.mouse.click(place[0], place[1])
+    is_paused = real_wait(page, "document.getElementById('task-run').dataset.task === 'paused'", 15000)
+    page.wait_for_timeout(2000)
+    pose = real_pose(page)
+    page.wait_for_timeout(1000)
+    shown, status, now = real_task_view(page), real_task_status(page), real_task_held(page)
+    gained = log_lines(page)[lines:]
+    numbers["a task: Pause pressed twice"] = {"the row then": [shown["hasRow"], shown["rowFor"]], "requests of a task": now["task requests"] - held["task requests"], "lines": [line[:160] for line in gained]}
+    check.equal(f"{label}: pressed twice in a row at Pause's place while the task runs and the model is asked, the task is paused and stays paused: three seconds later the page shows it paused, the console is not busy, the log has no line of a resume, and the servos stand", [is_resumed, is_running, box is not None, is_paused, shown["task"], (status.get("task") or {}).get("isBusy"), now["lines"] - held["lines"], real_travel(page, pose) < REAL_STILL], [True, True, True, True, "paused", False, 0, True])
+    if shown["hasRow"]:
+        real_task_press(page, "#task-start-keep")
+        real_task_row(page, False)
+
+
+def real_task_limit(check: Check, page: Page, numbers: dict) -> None:
+    """The limit of an action's size: the model asks for z -15 cm, for which no goal is written and whose refusal
+    the turn's result shows whole; the smaller action it asks for next is executed."""
+    label = "a task: the limit of an action's size"
+    real_task_rest(page)
+    writes = real_task_writes(real_task_status(page))
+    page.wait_for_timeout(700)
+    before = real_task_status(page)
+    is_quiet = real_task_writes(before) == writes
+    pose = real_pose(page)
+    lines, posts, pauses = len(log_lines(page)), real_task_posts(), real_task_count(page, REAL_TASK_AT_LIMIT)
+    rejections = real_task_count(page, '"status":"rejected"')
+    real_task_answers(-15.0, 0.3)
+    is_resumed = real_task_resumed(page)
+    is_asked = real_task_wait_posts(page, posts + 1)
+    page.wait_for_timeout(300)
+    # the answer under way keeps its action of z -15 cm; the requests after it get a smaller one
+    real_task_answers(1.5, 0.3)
+    is_refused = real_task_wait_count(page, '"status":"rejected"', rejections + 1, 30000)
+    at_refusal = page.evaluate(REAL_TASK_RESULTS)
+    page.wait_for_timeout(300)
+    refused = real_task_status(page)
+    still = real_travel(page, pose)
+    is_paused = real_task_wait_count(page, REAL_TASK_AT_LIMIT, pauses + 1)
+    real_task_rest(page)
+    gained = log_lines(page)[lines:]
+    turns = real_task_turns(gained)
+    after = real_task_status(page)
+    at_pause = page.evaluate(REAL_TASK_RESULTS)
+    shows = [REAL_TASK_OVER in at_refusal["newest"], any(REAL_TASK_OVER in text for text in at_refusal["list"]), any(REAL_TASK_OVER in text for text in at_pause["list"])]
+    numbers["a task: an action over the limit: the results the page shows when the log has the refusal, and at the pause"] = [at_refusal, at_pause]
+    numbers["a task: an action over the limit: the log's lines"] = [line[:300] for line in gained]
+    check.equal(f"{label}: the service answers z -15 cm: the log has the action as the model asked for it and its result, rejected with the Worker's message", [is_resumed, is_asked, [entry[1:3] for entry in turns[:2]], turns[1][3].get("error") if len(turns) > 1 else None], [True, True, [["action", -15], ["result", "rejected"]], {"code": "UnreachablePoseError", "message": REAL_TASK_OVER}])
+    check.ok(f"{label}: the page shows the refusal's message whole: at the refusal, and in the list of turns after it", is_refused and (shows[0] or shows[1]) and shows[2], [is_refused, shows, at_refusal["newest"][:50], [text[:50] for text in at_pause["list"][:3]]])
+    check.equal(f"{label}: no goal is written for it: the guard's writes stand at rest and until after the refusal, the servos stand", [is_quiet, real_task_grown(before, refused), still < REAL_STILL, (refused.get("line") or {}).get("refused")], [True, {}, True, 0])
+    done = [entry[1:3] for entry in turns[2:]]
+    executed = real_task_grown(refused, after)
+    check.ok(f"{label}: a smaller action is then executed: z +1.5 cm, completed, goals written, the tip 1.5 cm higher", ["action", 1.5] in done and ["result", "completed"] in done and "SYNC WRITE 42" in executed and abs(real_height(after) - real_height(before) - 1.5 * done.count(["result", "completed"])) < 0.3, [done, executed, real_height(before), real_height(after)])
+    check.equal(f"{label}: the task then pauses at its limit of turns again, and the arm holds", [is_paused, after.get("taskPausedBy"), after.get("robot"), after.get("control")], [True, "limit", "READY", "HOLD"])
+
+
+def real_task_stop(check: Check, page: Page, numbers: dict) -> None:
+    """The stop bar while a turn's action is executed: the arm brakes and holds with the torque on, STOP MOTION is
+    latched; after "Reset STOP MOTION" a press of Resume shows the row of a resume again."""
+    label = "a task: the stop bar"
+    real_task_rest(page)
+    real_task_answers(-4.5, 0.05)
+    before = real_task_status(page)
+    lines, actions = len(log_lines(page)), real_task_count(page, " action {")
+    is_resumed = real_task_resumed(page)
+    is_acting = real_task_wait_count(page, " action {", actions + 1, 30000)
+    is_pressed = real_input(lambda: page.click("#task-stop", timeout=5000))
+    is_latched = real_wait(page, "document.getElementById('task-run').dataset.latched === 'true'", 15000)
+    real_task_rest(page)
+    stopped, shown, pose = real_task_status(page), real_task_view(page), real_pose(page)
+    page.wait_for_timeout(800)
+    task = stopped.get("task") or {}
+    went = real_height(before) - real_height(stopped)
+    numbers["a task: the stop bar: how far the tip went down, of the action's 4.5 cm"] = went
+    numbers["a task: the stop bar: the log's lines"] = [line[:160] for line in log_lines(page)[lines:]]
+    check.equal(f"{label}: pressed while a turn's action of z -4.5 cm is executed, STOP MOTION is latched: the page shows it, offers \"Reset STOP MOTION\" and no Resume, and the status tells it", [is_resumed, is_acting, is_pressed, is_latched, shown["isLatched"], shown["canReset"], shown["canResume"], task.get("isStopLatched")], [True, True, True, True, True, True, False, True])
+    check.ok(f"{label}: the arm brakes and holds with the torque on: the action was not completed, the servos stand, the robot is ready and the loop holds, and the guard refused nothing", went < 4.2 and real_travel(page, pose) < REAL_STILL and [stopped.get("robot"), stopped.get("control"), (stopped.get("line") or {}).get("refused")] == ["READY", "HOLD", 0] and "torque on" in page.locator("#station-status").inner_text(), [went, real_travel(page, pose), stopped.get("robot"), stopped.get("control"), (stopped.get("line") or {}).get("refused")])
+    is_reset = real_task_press(page, "#task-reset-stop") and real_wait(page, "document.getElementById('task-run').dataset.latched === 'false'", 15000)
+    real_task_rest(page)
+    held = real_task_held(page)
+    is_asked = real_task_press(page, "#task-resume") and real_task_row(page, True)
+    shown = real_task_view(page)
+    check.equal(f"{label}: after \"Reset STOP MOTION\" Resume is offered again, and its press shows the row of a resume, which resumes nothing", [is_reset, is_asked, shown["rowFor"], shown["go"], real_task_held(page)], [True, True, "resume", "Resume on the arm", held])
+    if shown["hasRow"]:
+        real_task_press(page, "#task-start-keep")
+        real_task_row(page, False)
+
+
+def real_task_blocked(check: Check, page: Page, service: str) -> None:
+    """While the task is there, paused: the steps by hand, Home, "Ask the model once", "Execute this action" and
+    Disable are not offered, and the page's debug hook neither resumes the task nor starts one."""
+    label = "a task: while the task is there"
+    real_task_rest(page)
+    check.equal(f"{label}: the steps by hand, Home, \"Ask the model once\", \"Execute this action\" and Disable are not offered, and the page says why by the steps, by the ask and by Disable", page.evaluate(REAL_TASK_BLOCKED), {"steps": True, "stepsNote": True, "home": True, "ask": True, "askWhy": "task.blocks.ask", "execute": True, "isExecuteOffered": False, "disable": True, "disableNote": True})
+    held, pose, asked = real_task_held(page), real_pose(page), len(real_asked(page))
+    told = real_hook_asked(page, [{"type": "task", "command": "resume"}, real_task_request(service)])
+    page.wait_for_timeout(700)
+    check.equal(f"{label}: the page's hook, asked to resume the task and to start one, rejects both: neither reached the Worker, the log has no line of a start or a resume, the servos stand, and the task is still paused", [told, real_asked(page)[asked:], real_task_held(page), real_travel(page, pose) < REAL_STILL, real_task_view(page)["task"]], [[REAL_HOOK_REFUSES.format(type="task")] * 2, [], held, True, "paused"])
+
+
+def real_task_cleared(check: Check, page: Page, service: str) -> None:
+    """Clear: the task is gone, the steps by hand, Home and Disable are offered again, and the page's debug hook
+    starts no task."""
+    label = "a task: Clear"
+    lines = len(log_lines(page))
+    is_pressed = real_task_press(page, "#task-clear")
+    is_gone = real_wait(page, "document.getElementById('task-run').dataset.task === 'none'", 20000) and real_wait_station(page, "view.status !== null && view.status.taskLimits === null", 10000)
+    real_settled(page)
+    status, offered = real_task_status(page), page.evaluate(REAL_TASK_BLOCKED)
+    check.equal(f"{label}: pressed, the task is gone: the log says that it is cleared, the status tells no limits, the arm is held, and the steps by hand, Home and Disable are offered again", [is_pressed, is_gone, any(line.startswith("Task: cleared") for line in log_lines(page)[lines:]), status.get("taskLimits"), status.get("robot"), status.get("control"), offered["steps"], offered["home"], offered["disable"], offered["disableNote"]], [True, True, True, None, "READY", "HOLD", False, False, False, False])
+    held, asked = real_task_held(page), len(real_asked(page))
+    told = real_hook_asked(page, [real_task_request(service)])
+    page.wait_for_timeout(700)
+    check.equal(f"{label}: with no task there the page's hook, asked to start one, rejects it: nothing reached the Worker, the log has no line of a start, and no task is there", [told, real_asked(page)[asked:], real_task_held(page), real_task_view(page)["task"]], [[REAL_HOOK_REFUSES.format(type="task")], [], held, "none"])
+
+
+def real_task_unlimited(check: Check, page: Page) -> None:
+    """Both limits switched off before a start: the row is the plain warning, in both languages."""
+    label = "a task: both limits off"
+    held = real_task_held(page)
+    page.fill("#task-limit-turns", "0")
+    page.uncheck("#task-limit-action")
+    is_asked = real_task_press(page, "#task-start") and real_task_row(page, True)
+    page.wait_for_timeout(300)
+    english = real_task_view(page)
+    check.equal(f"{label}: with no limit of turns and the limit of an action's size switched off, the row of Start is the plain warning, and its sentence says that neither limit is set", [is_asked, english["rowFor"], english["isUnlimited"], english["warning"], english["ask"]], [True, "start", True, REAL_TASK_UNLIMITED, REAL_TASK_ASK.format(ends=REAL_TASK_ENDS_NONE, size=REAL_TASK_SIZE_NONE)])
+    page.click("#language-zh")
+    real_wait(page, "document.getElementById('task-start-go').textContent.trim() !== 'Start on the arm'", 5000)
+    if not real_task_view(page)["hasRow"]:
+        real_task_press(page, "#task-start")
+        real_task_row(page, True)
+    chinese = real_task_view(page)
+    check.equal(f"{label}: in Chinese the row is the plain warning too, with its sentence and its buttons in Chinese", [chinese["hasRow"], chinese["isUnlimited"], chinese["warning"], chinese["ask"], chinese["go"], chinese["keep"]], [True, True, REAL_TASK_UNLIMITED_CHINESE, REAL_TASK_ASK_CHINESE.format(ends=REAL_TASK_ENDS_NONE_CHINESE, size=REAL_TASK_SIZE_NONE_CHINESE), "在手臂上開始", "不要"])
+    page.click("#language-en")
+    real_wait(page, "document.getElementById('task-start-go').textContent.trim() === 'Start on the arm'", 5000)
+    if real_task_view(page)["hasRow"]:
+        real_task_press(page, "#task-start-keep")
+    is_gone = real_task_row(page, False)
+    check.equal(f"{label}: \"Don't\": the row is gone, and nothing started", [is_gone, real_task_held(page)], [True, held])
+    page.fill("#task-limit-turns", "2")
+    page.check("#task-limit-action")
+
+
+def real_task_hidden(check: Check, page: Page, numbers: dict) -> None:
+    """The page hidden during a turn of a task on the real arm: the Worker pauses the task, and when the page is
+    shown again nothing resumes by itself. The task is cleared at the end."""
+    label = "a task: the page hidden"
+    real_task_answers(1.5, 0.4)
+    real_settled(page)
+    posts = real_task_posts()
+    is_started = real_task_press(page, "#task-start") and real_task_row(page, True) and real_task_press(page, "#task-start-go")
+    is_asked = real_task_wait_posts(page, posts + 1)
+    held, lines = real_task_held(page), len(log_lines(page))
+    set_hidden(page, True)
+    is_paused = real_wait_station(page, "view.status !== null && view.status.taskPausedBy === 'hidden'", 15000)
+    set_hidden(page, False)
+    is_shown = real_wait_station(page, "view.status !== null && view.status.isHidden === false", 15000)
+    real_task_rest(page)
+    pose = real_pose(page)
+    page.wait_for_timeout(3000)
+    shown, status, now = real_task_view(page), real_task_status(page), real_task_held(page)
+    numbers["a task: the page hidden: the log's lines"] = [line[:160] for line in log_lines(page)[lines:]]
+    check.equal(f"{label}: hidden during a turn of a task on the real arm, while the model is asked, the task is paused, and the page says why", [is_started, is_asked, is_paused, shown["task"], shown["pausedBy"], shown["paused"]], [True, True, True, "paused", "hidden", REAL_TASK_PAUSED_HIDDEN])
+    check.equal(f"{label}: shown again, nothing resumes by itself: three seconds later the window has sent no request of a task, the log has no line of a resume, the task is paused by the hidden page and not busy, the arm is held, and the servos stand", [is_shown, now["task requests"] - held["task requests"], now["lines"] - held["lines"], status.get("taskPausedBy"), (status.get("task") or {}).get("isBusy"), status.get("robot"), status.get("control"), real_travel(page, pose) < REAL_STILL], [True, 0, 0, "hidden", False, "READY", "HOLD", True])
+    real_task_press(page, "#task-clear")
+    real_wait(page, "document.getElementById('task-run').dataset.task === 'none'", 20000)
+
+
+def real_task_disabled(check: Check, page: Page, numbers: dict) -> None:
+    """At the end of the tasks: the whole session's line, the key in no line of the log, and Disable with its two
+    presses, after which the Worker has given the line back and the window reads the arm again."""
+    label = "a task: Disable"
+    real_settled(page)
+    last = real_task_status(page).get("line") or {}
+    numbers["a task: the line before Disable"] = last
+    check.equal("a task: the whole session: the guard refused nothing, and the line reported no error and was not lost", [last.get("refused"), last.get("lineErrors"), last.get("isLost")], [0, 0, False])
+    lines = log_lines(page)
+    check.equal("a task: the key that the model service was given is in no line of the page's log", [len(lines) > 0, [line[:120] for line in lines if KEY in line]], [True, []])
+    is_asked = real_task_press(page, "#station-disable") and real_wait(page, "document.getElementById('station-disable-confirm').getClientRects().length > 0", 5000)
+    page.evaluate("document.getElementById('station-disable-go').click()")
+    page.wait_for_timeout(600)
+    check.equal(f"{label}: with the task cleared it is offered; its first press only asks, and a script's click on the button of the second press disables nothing", [is_asked, real_asked(page, "disable"), station_view(page)["phase"]], [True, [], "on"])
+    is_pressed = real_task_press(page, "#station-disable-go")
+    is_off = real_wait_station(page, "view.phase === 'off'", 30000)
+    is_read = real_wait_log(page, REAL_READ_AGAIN, 10000)
+    real_input(lambda: wait_phase(page, "reading", 10000))
+    gained = log_lines(page)[len(lines):]
+    numbers["a task: the lines of Disable"] = [line[:200] for line in gained]
+    check.equal(f"{label}: the second press disables: the Worker is asked once, the log says that the station is disabled on the real arm and that the Worker closed the line, and the window reads the arm again", [is_pressed, is_off, len(real_asked(page, "disable")), any(line.startswith("Station: disabled on the real arm; the Worker closed the line") for line in gained), is_read, phase(page)], [True, True, 1, True, True, "reading"])
+
+
+def real_task(check: Check, browser, base: str, service: str) -> None:
+    """A task on the real arm's path, with ?preflight=sim-configured: Start and Resume behind the operator's own
+    press of a row that says the limits, the limit of turns, the limit of an action's size, a double press of
+    Pause, the stop bar, what is not offered while the task is there, the page's hook, Clear, a start without
+    limits, the page hidden during a turn, the key, and Disable. No fault is made during a task: on this path
+    the simulated servos are the Worker's, and the check has no way to pull their cable."""
+    numbers = check.numbers.setdefault("real", {})
+    page = real_page(check, browser, base, "?lang=en&preflight=sim-configured")
+    if not real_task_enabled(check, page, service):
+        ModelService.configure()
+        return
+    if real_task_start(check, page, numbers):
+        real_task_resume(check, page, numbers)
+        real_task_pause_twice(check, page, numbers)
+        real_task_limit(check, page, numbers)
+        real_task_stop(check, page, numbers)
+        real_task_blocked(check, page, service)
+    real_task_cleared(check, page, service)
+    real_task_unlimited(check, page)
+    real_task_hidden(check, page, numbers)
+    real_task_disabled(check, page, numbers)
+    ModelService.configure()
+
+
 def part_real(check: Check, browser, base: str, service: str) -> None:
     """The station on a real arm (the requests "enableReal" and "arm"): the page asks for the first write only
     after the tick and a real press; Enable, Home, Stop and Disable on the Worker's simulated port that holds
@@ -5200,6 +6396,7 @@ def part_real(check: Check, browser, base: str, service: str) -> None:
     stands outside PEAR's bounds, which is said before the operator is asked. Every way out ends with the arm's
     line given back and the window reading again."""
     real_station(check, browser, base, service)
+    real_task(check, browser, base, service)
     real_changed_settings(check, browser, base)
     real_real_path(check, browser, base)
     real_bounds(check, browser, base)
@@ -5209,7 +6406,7 @@ def part_real(check: Check, browser, base: str, service: str) -> None:
 PARTS = [
     "load", "stamp", "sim", "expected", "guard", "cable", "faults", "calibration", "serial", "diagnostics", "camera",
     "model", "privacy", "ask", "languages", "keyboard", "layout", "folder", "subpath", "hosted", "insecure", "log",
-    "transport", "timing", "selftest", "station", "preflight", "real",
+    "transport", "timing", "selftest", "station", "preflight", "real", "task",
 ]
 
 
@@ -5299,6 +6496,7 @@ def main() -> int:
             run("station", lambda: part_station(check, browser, context, base, dist))
             run("preflight", lambda: part_preflight(check, browser, base, service))
             run("real", lambda: part_real(check, browser, base, service))
+            run("task", lambda: part_task(check, browser, base, service))
 
             check.part = "whole run"
             check.equal("no uncaught error in any page", check.page_errors, [])

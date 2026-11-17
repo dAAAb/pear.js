@@ -6,7 +6,8 @@ frame a turn would send, and checks the model service. It writes to a servo only
 "Enable the station on this arm..." and confirmed what the page then shows ("The station on a real arm" below);
 until then every byte to the port passes a guard that lets only reads through. With the station holding the arm
 the person can move it one step at a time, ask a model once and execute that one action, each at their own press
-("Steps by hand and one action of a model" below); nothing runs by itself. A simulated arm lets anyone try
+("Steps by hand and one action of a model" below), or start a task, in which a model moves the arm by itself
+until it is paused: PEAR's own console, in the page's Worker ("A task that a model runs" below). A simulated arm lets anyone try
 it, and a machine test it, without hardware; on that simulated arm the second version's stage A runs PEAR's
 station in a Worker of the page, driven by hand ("The station in a Worker, on a simulated arm" below).
 
@@ -16,15 +17,17 @@ read-only hand-over of a real arm's line to the Worker, and the station on a rea
 (Enable, Home, Stop, Disable), which ran on a real arm the same day ("What the third try showed"); and steps by
 hand and one action of a model at the operator's press, which have run on simulated servos only. On 2026-11-17 a
 joint that stands outside PEAR's bounds became a reason against enabling that is said before the operator
-confirms.
+confirms, and on the same day the page got PEAR's console: a task that a model runs, on the simulated arm and,
+behind a confirmation and with two limits, on a real arm; and a tick that keeps the model service's address,
+name and key on the browser.
 
 Checked on 2026-11-17, on the files as published: `npm run typecheck` passes; `npm run build:web` gives three
-files; 1,884 browser checks pass in 28 parts, 0 failed; `npx vitest run` passes (91 files, 9,449 tests).
+files; 2,082 browser checks pass in 29 parts, 0 failed; `npx vitest run` passes (95 files, 9,558 tests).
 The read-only part met a real adapter, real servos, a real camera, a browser with a visible window and macOS
 once, on 2026-11-16 ("What the first try showed" below), and on the same day the station's Worker took a real
 arm's line and read it ("What the second try showed"); then the page enabled the station on that arm and sent it
-Home, twice each ("What the third try showed"). **A step by hand and the execution of a model's action have met
-no real arm.** A
+Home, twice each ("What the third try showed"). The owner executed one action of a model on that arm on 2026-11-17
+and saw the arm move; the page's log of it has not been read. **A task that a model runs has met no real arm.** A
 real model service has answered the published page with the simulated arm ("The first answer of a real model")
 and with a real arm's state and its camera's frame ("What the second try showed").
 
@@ -381,7 +384,9 @@ needs no station, and works on a real arm as on the simulated one, because it on
   zero close, zero hold). For an answer without an action, a failure and a cancellation the page shows the
   error's class and message as the library gives them. Every outcome ends with the sentence that nothing was sent
   to the arm.
-- The key stays in the page's memory and goes into the request only. The log gets what happened: asked, with the
+- The key stays in the page's memory and goes into the request only, unless the person ticks "Remember ... on
+  this browser" in the model step: then the address, the model's name and the key are kept in one
+  `localStorage` item (`pearjs.model`) until the tick is taken away. The log gets what happened: asked, with the
   sizes; answered after how long, with how many characters; an action or not; the class of an error. It gets no
   key, no address, no instruction, no answer and no image.
 
@@ -960,6 +965,107 @@ refusal after its self-check. A joint that stands outside its own calibrated ran
 by the servo's own limit when the torque comes on, and nothing says so beforehand. None of this has met a real
 arm.
 
+### A task that a model runs: PEAR's console in the page's Worker (2026-11-17)
+
+Until this stage the page executed one action of a model at the operator's press, and every ask was a new
+conversation. That is not how PEAR works: PEAR's console runs a task, in which the model is asked, its action is
+executed and the next turn follows in the same conversation, until the operator pauses it. The arm's owner tried
+the one-action way on his arm, saw it move a short way and stop, and asked for the mode in which the model goes
+on by itself. This stage is that mode, on the simulated arm and on a real arm. **It has run on simulated servos
+only.**
+
+What it is:
+
+- **PEAR's console on the station's robot** (`web/src/task_host.ts`, `TaskHost`). The library's `Console`,
+  `Commands`, `Watchdog` and `TaskRun` (`src/console`) are made for the robot the Worker holds, with what a page
+  has in place of PEAR's station: records kept in memory (the last 3 tasks; of a task its last 600 records and
+  2,000 events), no uploaded images, tags or recordings (a task that asks for one is refused in words), the
+  camera's state from the page's camera (a frame older than 0.2 s is an error, PEAR's limit for an observation),
+  and one model, the page's service, asked by the library's `VLLMClient` from the Worker. The key goes to the
+  client as a function; every copy that leaves the task host (events, snapshot, records, errors, log) has the
+  key's text replaced.
+- **The commands the page gives** are PEAR's `start`, `pause`, `resume`, `clear`, `stop` (STOP MOTION, which
+  latches until `reset_stop`) and `reset_stop`, through the Worker's request `task`. PEAR's `enable`, `disable`,
+  `home` and the rest are not given through the console in this version: the page keeps its own Enable, Disable
+  and Home.
+- **The task and the page's own actions exclude each other.** While a task is there (running or paused) a step
+  by hand, Home, "Ask the model once", "Execute this action" and Disable are refused; while a step or Home runs,
+  a start or a resume is. Disable is taken all the same when the robot is in FAULT or OFF or a real arm's line
+  is lost: the Worker then ends the task with the station.
+- **What cannot be switched off:** the stop bar, which is STOP MOTION while a task is there; a hidden page,
+  which pauses a running task; the watchdog, which pauses it when the camera goes.
+- **Two limits, neither of them PEAR's**, set before the start, on by default: a limit of turns (30 at first; 0:
+  none), at which the Worker pauses the task between two turns, and Resume runs as many again; and a limit of an
+  action's size (5 cm along an axis, 0.5 rad of a rotation), over which an action is not given to the robot and
+  the model is answered as PEAR answers an action the arm cannot reach, with a message that names the operator's
+  limit and the part that is over it. PEAR's task run asks again, and pauses the task after its own count of
+  such answers in a row. The pause at the limit of turns is asked inside the console's publishing of the turn's
+  result, so that the run finds it at the top of its loop: the turn ends with its result, no request to the
+  model is made and cancelled, and the model's history gets no interrupted turn.
+- **On a real arm Start and Resume are confirmed**: the press shows a row that says that the model will move
+  the real arm by itself, what ends it and how large an action can be with the limits as they are set, and that
+  nothing looks for the table or an obstacle; only a trusted press of "Start on the arm" or "Resume on the arm"
+  sends the command. On the simulated arm each is one trusted press. The page's debug hook sends neither.
+- **What the page shows of a task**: its phase, the running turn's number, the model's reasoning and answer as
+  they stream, the action in words, each turn's result, the count of completed actions, the inference numbers,
+  the console's error with what can be done about it, why the Worker paused the task, and a list of the last 30
+  turns. The limits shown while a task is there are the ones the Worker tells, not the ones the page sent.
+- **A Worker that is lost while a task is there is ended by the page**, on either arm: a task must not go on
+  asking the model and moving an arm that the page can no longer stop. The Worker is taken as silent only when
+  two looks half a second apart find no message, so that a window that stood still itself does not end a task.
+- **PEAR's task run has no "done".** It runs turns until the operator pauses, an action does not complete, or
+  the session ends. An answer without an action is a rejected turn: the task is paused with the console's
+  error, Resume tells the model what became of its answer, Clear ends the task.
+
+What does not hold, and what to know at an arm:
+
+- **Nothing of this has met a real arm**, and no real model has been asked from a Worker of a page in the
+  owner's browser: "Ask the model once" asks from the window, a task from the Worker, and whether the browser's
+  permission for a service on the local network covers the Worker's request is to be seen on his machine.
+- **The console and the 50 Hz loop share one thread here**, which PEAR's do not. In Node, in real time, three
+  turns cost three long control periods: of 238 periods the longest was 32.7 ms, 3 were over 25 ms, none over
+  40 ms. Which piece of work makes them was not found. The arm stands while the model is asked.
+- **The limit of an action's size is each part by itself**: an action of 5 cm along x, y and z at once is within
+  it, and the gripper's command is not limited. The model reads the refusal in the form of PEAR's "out of
+  reach", and PEAR's notice beside it names inverse kinematics though it was the limit.
+- **Nothing looks for the table or an obstacle**, with or without the limits.
+- A robot's fault during a task was held with a lost line only, not with a servo's error on a line that is
+  there. The watchdog's pause and the hidden page's pause were held on the simulated arm; on a real arm's path
+  they are the same code and were not run in Node.
+- The Worker tells the limits it gave the console, not ones read back from it.
+- After the page has ended a lost Worker the station's line says that the Worker died; the task's panel says
+  what happened. Whether ending the Worker frees a real arm's serial port was not seen: the servos keep their
+  torque and hold their last goal until their power is switched off.
+- The task's records stay in the Worker's memory: the page offers no way to read or save them, and the events'
+  `details_url` points at a service a page does not have.
+
+How it was verified. `npx vitest run` passes (95 files, 9,558 tests). New in `tests/web`: `task_host.test.ts`
+(12 tests: a task of three turns on the simulated arm with a stand-in model service; a pause while the model
+answers; STOP MOTION and its reset; clear; the camera; a robot that is not ready; the key; close; the limit of
+turns; the limit of an action's size), `station_task.test.ts` (20 tests through the Worker's requests, on the
+simulated arm and on a real arm's path over simulated servos: the events before each status, what a task and the
+page's own actions exclude, the stop bar, a hidden page, another service, both limits beneath the guard, a line
+lost during a task with clear and disable after it, the limits the status tells), `task_view.test.ts` (57 tests
+of the page's logic) and `remember.test.ts` (11 tests). Breaks in scratch copies, each failing tests: in the
+Worker the limit of turns one turn late, the limit of turns interrupting a turn, the action's limit letting an
+action through, the action's limit refusing one within it, disable refused in FAULT; in the page's logic 28 rules
+one at a time, Resume at one press on a real arm, the host not keeping a start's limits, a lost station not ended.
+
+In headless Chromium every part passes, 2,082 checks in 29 parts: 27 parts in one run, `real` and `task` in a run
+of their own, because the whole check now takes longer than the limit of the tool that runs it here. The new
+part `task` (91 checks) runs tasks on the simulated arm with the stand-in service: three turns by themselves,
+each moving the arm; pause and resume; the stop bar and Reset; the limit of turns; an action of z -15 cm refused
+under the limit and executed whole without it; an answer without an action; a hidden page; clear; what a task
+blocks; the key in no line of the log. The part `real` (253 checks, 49 of them of a task) runs one on a real
+arm's path: a script's click starts and resumes nothing, the row of Start and the row of Resume, two presses of
+Pause in a row leave the task paused, the limits, no goal written for a refused action, the stop bar, the debug
+hook, a hidden page. While tasks ran in the browser, of 1,835 control periods the longest was 25.2 ms and none
+was over 40 ms. The checks fail when the rules go: with the trusted press of Start, of "Start on the arm", of
+Resume and of "Resume on the arm" taken out of the page, `real` fails 9 checks and `task` 7; with the row of a
+real arm's Start taken out, `real` fails 6 and stops early. Not held in a browser: a fault during a task (the
+page has no way to make one on that path), and the tick that remembers the model service in another browser than
+Chromium.
+
 ## What the camera hands to a turn, in PEAR
 
 `hardware/cameras.py` opens lerobot's `OpenCVCamera` with the station's `camera` settings (`config.yaml`: 640 x 480,
@@ -1088,7 +1194,10 @@ and the servos' answer time are the real cost: `docs/progress/sim-bridge.md`), m
 8. **A question PEAR does not ask.** When the check failed without an answer, the page asks the address once more
    in a way that needs no permission of the service (`mode: "no-cors"`, no key, the answer unreadable), to tell
    "nothing is there" from "the browser withheld the answer".
-9. **No storage at all**: no localStorage, sessionStorage or cookie, also for the language.
+9. **No storage unless the person ticks so**: no sessionStorage, cookie, database or cache, also for the
+   language. `localStorage` holds one item (`pearjs.model`: the model service's address, the model's name and the
+   key) only while the tick "Remember ... on this browser" of the model step is set; whoever uses the browser's
+   profile and any page of the same origin can read it, and it is removed when the tick is taken away.
 10. The log shows an address of the model service without its host unless it is this computer, never a query
     string or a user name, and a service's own words with the key replaced.
 11. **A broadcast PING and a baud-rate scan.** When not all six servos answered a ping of their own, the page
@@ -1121,6 +1230,16 @@ and the servos' answer time are the real cost: `docs/progress/sim-bridge.md`), m
 19. **Only a trusted press moves a real arm.** On a real arm the page's controls that move or release the arm
     take only a press the browser calls trusted, a held key presses a button once, and the page's debug hook
     sends nothing but Stop. PEAR's page has no such rule.
+20. **Two limits of a task that PEAR does not have**, on by default and the operator's to switch off: the task
+    is paused after a count of turns, and an action over 5 cm along an axis or 0.5 rad of a rotation is not
+    executed, the model being answered as PEAR answers an action the arm cannot reach, with a message that names
+    the operator's limit.
+21. **Start and Resume of a task on a real arm are confirmed** in a row that says what the model will do by
+    itself; PEAR's page starts and resumes at one press.
+22. **PEAR's console runs the task and nothing else here.** Its commands for enabling, disabling, Home and
+    recovery are not given: the page keeps its own Enable (behind its report and confirmation), Disable and
+    Home. The console's records stay in the Worker's memory; uploads, tags and recordings are not offered. The
+    console and the control loop share the Worker's one thread, where PEAR has a thread for each.
 
 ## Found
 
@@ -1370,6 +1489,14 @@ For the coordinator's files:
   port's close and for the robot's open and close in the Worker; a Recover control; a watchdog for the camera
   while an action runs; whether the guard's limit of 40 steps should grow with a late period; then the task that
   a model drives (Start, Pause, Resume, Clear), on the simulated arm first.
+- A task ("A task that a model runs" above): the first one on a real arm, with the person beside it, and
+  before it one on the simulated arm in the person's own browser, which shows whether the browser lets the
+  Worker ask the model service. The newest turn's panel shows a turn's result only until the next turn begins,
+  which is at once: a refused action is read in the list of turns and in the log. A servo's error during a task
+  on a line that is there. A public reading of the limits the task host holds. A way to read or save a task's
+  records. Which work makes the long control period of a turn.
+- A command-line tool (asked for by the owner): a serial line and a camera for Node, and the station and the
+  console as they are.
 - PEAR's bounds ("A joint outside PEAR's bounds" above): the same finding in the hand-over check's report and
   before the simulated arm's Enable, whose slider runs over the whole calibrated range; a reason against enabling
   for a joint that stands outside its own calibrated range, which the servo's limit moves when the torque comes
